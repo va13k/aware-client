@@ -122,6 +122,8 @@ public class Bluetooth extends Aware_Sensor {
         filter.addAction(BluetoothAdapter.ACTION_DISCOVERY_FINISHED);
         filter.addAction(BluetoothAdapter.ACTION_DISCOVERY_STARTED);
         filter.addAction(BluetoothAdapter.ACTION_STATE_CHANGED);
+        filter.addAction(BluetoothDevice.ACTION_ACL_CONNECTED);
+        filter.addAction(BluetoothDevice.ACTION_ACL_DISCONNECTED);
         registerReceiver(bluetoothMonitor, filter);
 
         Intent backgroundService = new Intent(ACTION_AWARE_BLUETOOTH_REQUEST_SCAN);
@@ -286,6 +288,7 @@ public class Bluetooth extends Aware_Sensor {
             rowData.put(Bluetooth_Data.BT_ADDRESS, Encrypter.hashMac(getApplicationContext(), bluetoothDevice.getAddress()));
             rowData.put(Bluetooth_Data.BT_NAME, Encrypter.hashSsid(getApplicationContext(), bluetoothDevice.getName()));
             rowData.put(Bluetooth_Data.BT_RSSI, result.getRssi());
+            rowData.put(Bluetooth_Data.BT_STATUS, 0); // 0 = DISCOVERED
             rowData.put(Bluetooth_Data.BT_LABEL, scanTimestamp);
 
             try {
@@ -379,6 +382,7 @@ public class Bluetooth extends Aware_Sensor {
                 rowData.put(Bluetooth_Data.BT_ADDRESS, Encrypter.hashMac(context, btDevice.getAddress()));
                 rowData.put(Bluetooth_Data.BT_NAME, Encrypter.hashSsid(context, btDevice.getName()));
                 rowData.put(Bluetooth_Data.BT_RSSI, btDeviceRSSI);
+                rowData.put(Bluetooth_Data.BT_STATUS, 0); // 0 = DISCOVERED
                 rowData.put(Bluetooth_Data.BT_LABEL, scanTimestamp);
 
                 try {
@@ -457,6 +461,54 @@ public class Bluetooth extends Aware_Sensor {
                         }
                     }
                 }
+            }
+
+            if (intent.getAction().equals(BluetoothDevice.ACTION_ACL_CONNECTED)) {
+                BluetoothDevice btDevice = intent.getParcelableExtra(BluetoothDevice.EXTRA_DEVICE);
+                if (btDevice == null) return;
+
+                ContentValues rowData = new ContentValues();
+                rowData.put(Bluetooth_Data.DEVICE_ID, Aware.getSetting(context, Aware_Preferences.DEVICE_ID));
+                rowData.put(Bluetooth_Data.TIMESTAMP, System.currentTimeMillis());
+                rowData.put(Bluetooth_Data.BT_ADDRESS, Encrypter.hashMac(context, btDevice.getAddress()));
+                rowData.put(Bluetooth_Data.BT_NAME, Encrypter.hashSsid(context, btDevice.getName()));
+                rowData.put(Bluetooth_Data.BT_STATUS, 1); // 1 = CONNECTED
+                rowData.put(Bluetooth_Data.BT_LABEL, "connected");
+
+                try {
+                    context.getContentResolver().insert(Bluetooth_Data.CONTENT_URI, rowData);
+                } catch (SQLiteException e) {
+                    if (Aware.DEBUG) Log.d(TAG, e.getMessage());
+                } catch (SQLException e) {
+                    if (Aware.DEBUG) Log.d(TAG, e.getMessage());
+                }
+
+                if (Aware.DEBUG)
+                    Log.d(Aware.TAG, "Bluetooth device connected: " + rowData.toString());
+            }
+
+            if (intent.getAction().equals(BluetoothDevice.ACTION_ACL_DISCONNECTED)) {
+                BluetoothDevice btDevice = intent.getParcelableExtra(BluetoothDevice.EXTRA_DEVICE);
+                if (btDevice == null) return;
+
+                ContentValues rowData = new ContentValues();
+                rowData.put(Bluetooth_Data.DEVICE_ID, Aware.getSetting(context, Aware_Preferences.DEVICE_ID));
+                rowData.put(Bluetooth_Data.TIMESTAMP, System.currentTimeMillis());
+                rowData.put(Bluetooth_Data.BT_ADDRESS, Encrypter.hashMac(context, btDevice.getAddress()));
+                rowData.put(Bluetooth_Data.BT_NAME, Encrypter.hashSsid(context, btDevice.getName()));
+                rowData.put(Bluetooth_Data.BT_STATUS, 2); // 2 = DISCONNECTED
+                rowData.put(Bluetooth_Data.BT_LABEL, "disconnected");
+
+                try {
+                    context.getContentResolver().insert(Bluetooth_Data.CONTENT_URI, rowData);
+                } catch (SQLiteException e) {
+                    if (Aware.DEBUG) Log.d(TAG, e.getMessage());
+                } catch (SQLException e) {
+                    if (Aware.DEBUG) Log.d(TAG, e.getMessage());
+                }
+
+                if (Aware.DEBUG)
+                    Log.d(Aware.TAG, "Bluetooth device disconnected: " + rowData.toString());
             }
         }
     }
