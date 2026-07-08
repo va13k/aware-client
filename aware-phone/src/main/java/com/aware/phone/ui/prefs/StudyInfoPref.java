@@ -11,7 +11,6 @@ import android.view.ViewGroup;
 import android.widget.TextView;
 
 import com.aware.Aware;
-import com.aware.Aware_Preferences;
 import com.aware.phone.R;
 import com.aware.providers.Aware_Provider;
 
@@ -44,8 +43,9 @@ public class StudyInfoPref extends Preference {
         TextView tvStudyDesc = view.findViewById(R.id.study_description);
         TextView tvStudyContact = view.findViewById(R.id.study_contact);
 
-        Cursor study = Aware.getStudy(getContext(),
-                Aware.getSetting(getContext(), Aware_Preferences.WEBSERVICE_SERVER));
+        // Use the currently-enrolled study, independent of the WEBSERVICE_SERVER setting
+        // (which can drift from the study URL after a reset). See Aware.getActiveStudy().
+        Cursor study = Aware.getActiveStudy(getContext());
         if (study != null && study.moveToFirst()) {
             tvStudyName.setText(study.getString(
                     study.getColumnIndex(Aware_Provider.Aware_Studies.STUDY_TITLE)));
@@ -54,6 +54,7 @@ public class StudyInfoPref extends Preference {
             tvStudyContact.setText(study.getString(study.getColumnIndex(
                     Aware_Provider.Aware_Studies.STUDY_PI)));
         }
+        if (study != null && !study.isClosed()) study.close();
 
         return view;
     }

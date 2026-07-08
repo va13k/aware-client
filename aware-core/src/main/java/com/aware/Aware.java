@@ -681,6 +681,38 @@ public class Aware extends Service {
     }
 
     /**
+     * Returns the list of studies the device has successfully joined at any point, most recent
+     * first, collapsed to one entry per distinct study. The aware_studies table keeps a row for
+     * every join and every compliance event, so this de-duplicates by study URL (falling back to
+     * study key) and keeps only the latest row per study. Intended for a "previously joined
+     * studies" history/management list.
+     *
+     * @param c
+     * @return one {@link ContentValues} per distinct joined study (all study columns), newest first
+     */
+    public static List<ContentValues> getJoinedStudies(Context c) {
+        List<ContentValues> studies = new ArrayList<>();
+        Set<String> seen = new HashSet<>();
+        Cursor cursor = c.getContentResolver().query(Aware_Provider.Aware_Studies.CONTENT_URI, null,
+                Aware_Provider.Aware_Studies.STUDY_JOINED + ">0", null,
+                Aware_Provider.Aware_Studies.STUDY_TIMESTAMP + " DESC");
+        if (cursor != null) {
+            while (cursor.moveToNext()) {
+                String url = cursor.getString(cursor.getColumnIndex(Aware_Provider.Aware_Studies.STUDY_URL));
+                String identity = (url != null && url.length() > 0)
+                        ? url
+                        : "key:" + cursor.getInt(cursor.getColumnIndex(Aware_Provider.Aware_Studies.STUDY_KEY));
+                if (!seen.add(identity)) continue; // already have the latest row for this study
+                ContentValues row = new ContentValues();
+                DatabaseUtils.cursorRowToContentValues(cursor, row);
+                studies.add(row);
+            }
+            cursor.close();
+        }
+        return studies;
+    }
+
+    /**
      * Gets the study config object for a given study URL
      *
      * @param c
