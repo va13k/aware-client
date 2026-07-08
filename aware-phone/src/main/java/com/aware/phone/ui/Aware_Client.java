@@ -3,10 +3,12 @@ package com.aware.phone.ui;
 import android.Manifest;
 import android.app.ActivityManager;
 import android.app.Dialog;
+import android.app.AlertDialog;
 import android.app.NotificationManager;
 import android.app.PendingIntent;
 import android.content.BroadcastReceiver;
 import android.content.Context;
+import android.content.ComponentName;
 import android.content.DialogInterface;
 import android.content.Intent;
 import android.content.IntentFilter;
@@ -495,13 +497,40 @@ public class Aware_Client extends Aware_Activity {
         }
     }
 
-    private void enableAccessibilityService() {
-        Intent intent = new Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS);
-        intent.setFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
-        startActivity(intent);
-        Toast.makeText(this, "Please enable the accessibility service.", Toast.LENGTH_LONG).show();
-    }
+private void enableAccessibilityService() {
+    final ComponentName service = new ComponentName(this, Applications.class);
 
+    new AlertDialog.Builder(this)
+        .setTitle("Enable AWARE accessibility")
+        .setMessage("AWARE needs the Accessibility service to record app usage and screen content. On the next screen, find \"AWARE\", open it, and turn the switch ON.")
+        .setPositiveButton("Open settings", new DialogInterface.OnClickListener() {
+            @Override
+            public void onClick(DialogInterface dialog, int which) {
+                if (Build.VERSION.SDK_INT >= 30) {
+                    try {
+                        Intent details = new Intent("android.settings.ACCESSIBILITY_DETAILS_SETTINGS");
+                        details.putExtra("android.intent.extra.COMPONENT_NAME", service.flattenToString());
+                        details.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
+                        startActivity(details);
+                        return;
+                    } catch (Exception e) {
+                        Log.w(TAG, "Accessibility detail settings unavailable, falling back to list", e);
+                    }
+                }
+                try {
+                    startActivity(new Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS)
+                            .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK));
+                } catch (Exception e) {
+                    Toast.makeText(Aware_Client.this,
+                            "Please open Settings > Accessibility and enable AWARE.",
+                            Toast.LENGTH_LONG).show();
+                }
+            }
+        })
+        .setNegativeButton("Not now", null)
+        .setCancelable(false)
+        .show();
+    }
 
     private boolean isScreenshotServiceRunning() {
         ActivityManager manager = (ActivityManager) getSystemService(Context.ACTIVITY_SERVICE);
@@ -705,27 +734,20 @@ public class Aware_Client extends Aware_Activity {
     }
 
     private boolean isAccessibilityServiceEnabled(Context context, Class<?> accessibilityServiceClass) {
-        int accessibilityEnabled = 0;
-        final String service = context.getPackageName() + "/" + accessibilityServiceClass.getCanonicalName();
-        try {
-            accessibilityEnabled = Settings.Secure.getInt(context.getApplicationContext().getContentResolver(), Settings.Secure.ACCESSIBILITY_ENABLED);
-        } catch (Settings.SettingNotFoundException e) {
-            Log.e(TAG, "Error finding setting, default accessibility to not found: " + e.getMessage());
+        final ComponentName expected = new ComponentName(context, accessibilityServiceClass);
+        final String settingValue = Settings.Secure.getString(
+                context.getApplicationContext().getContentResolver(),
+                Settings.Secure.ENABLED_ACCESSIBILITY_SERVICES);
+        if (settingValue == null) {
+            return false;
         }
 
         TextUtils.SimpleStringSplitter colonSplitter = new TextUtils.SimpleStringSplitter(':');
-
-        if (accessibilityEnabled == 1) {
-            String settingValue = Settings.Secure.getString(context.getApplicationContext().getContentResolver(), Settings.Secure.ENABLED_ACCESSIBILITY_SERVICES);
-            if (settingValue != null) {
-                colonSplitter.setString(settingValue);
-                while (colonSplitter.hasNext()) {
-                    String componentName = colonSplitter.next();
-
-                    if (componentName.equalsIgnoreCase(service)) {
-                        return true;
-                    }
-                }
+        colonSplitter.setString(settingValue);
+        while (colonSplitter.hasNext()) {
+            ComponentName enabled = ComponentName.unflattenFromString(colonSplitter.next());
+            if (expected.equals(enabled)) {
+                return true;
             }
         }
 
