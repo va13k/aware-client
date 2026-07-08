@@ -43,7 +43,7 @@ public class QuitStudyDialog extends DialogFragment {
                 .setPositiveButton("Yes", new DialogInterface.OnClickListener() {
                     @Override
                     public void onClick(DialogInterface dialogInterface, int i) {
-                        Cursor dbStudy = Aware.getStudy(mActivity, Aware.getSetting(mActivity, Aware_Preferences.WEBSERVICE_SERVER));
+                        Cursor dbStudy = Aware.getActiveStudy(mActivity);
                         if (dbStudy != null && dbStudy.moveToFirst()) {
                             ContentValues complianceEntry = new ContentValues();
                             complianceEntry.put(Aware_Provider.Aware_Studies.STUDY_TIMESTAMP, System.currentTimeMillis());
@@ -71,7 +71,7 @@ public class QuitStudyDialog extends DialogFragment {
                 .setNegativeButton("No", new DialogInterface.OnClickListener() {
                     @Override
                     public void onClick(DialogInterface dialogInterface, int i) {
-                        Cursor dbStudy = Aware.getStudy(mActivity, Aware.getSetting(mActivity, Aware_Preferences.WEBSERVICE_SERVER));
+                        Cursor dbStudy = Aware.getActiveStudy(mActivity);
                         if (dbStudy != null && dbStudy.moveToFirst()) {
                             ContentValues complianceEntry = new ContentValues();
                             complianceEntry.put(Aware_Provider.Aware_Studies.STUDY_TIMESTAMP, System.currentTimeMillis());
@@ -110,10 +110,9 @@ public class QuitStudyDialog extends DialogFragment {
      * Store information on attempt to quit study and then show the dialog to confirm the quit.
      */
     public void showDialog() {
-        String study_url = Aware.getSetting(mActivity, Aware_Preferences.WEBSERVICE_SERVER);
-        Log.i(TAG, "Quitting from study with URL: " + study_url);
+        Log.i(TAG, "Quitting from active study");
 
-        Cursor dbStudy = Aware.getStudy(mActivity, study_url);
+        Cursor dbStudy = Aware.getActiveStudy(mActivity);
         if (dbStudy != null && dbStudy.moveToFirst()) {
             ContentValues complianceEntry = new ContentValues();
             complianceEntry.put(Aware_Provider.Aware_Studies.STUDY_TIMESTAMP, System.currentTimeMillis());

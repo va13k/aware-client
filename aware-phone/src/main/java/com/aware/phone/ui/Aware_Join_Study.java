@@ -181,7 +181,7 @@ public class Aware_Join_Study extends Aware_Activity {
             @Override
             public void onClick(View view) {
 
-                Cursor dbStudy = Aware.getStudy(getApplicationContext(), study_url);
+                Cursor dbStudy = Aware.getActiveStudy(getApplicationContext());
                 if (dbStudy != null && dbStudy.moveToFirst()) {
                     ContentValues complianceEntry = new ContentValues();
                     complianceEntry.put(Aware_Provider.Aware_Studies.STUDY_TIMESTAMP, System.currentTimeMillis());
@@ -212,7 +212,7 @@ public class Aware_Join_Study extends Aware_Activity {
                                 btnAction.setEnabled(false);
                                 btnAction.setAlpha(1f);
 
-                                Cursor dbStudy = Aware.getStudy(getApplicationContext(), Aware.getSetting(getApplicationContext(), Aware_Preferences.WEBSERVICE_SERVER));
+                                Cursor dbStudy = Aware.getActiveStudy(getApplicationContext());
                                 if (dbStudy != null && dbStudy.moveToFirst()) {
                                     ContentValues complianceEntry = new ContentValues();
                                     complianceEntry.put(Aware_Provider.Aware_Studies.STUDY_TIMESTAMP, System.currentTimeMillis());
@@ -240,7 +240,7 @@ public class Aware_Join_Study extends Aware_Activity {
                         .setNegativeButton("No", new DialogInterface.OnClickListener() {
                             @Override
                             public void onClick(DialogInterface dialogInterface, int i) {
-                                Cursor dbStudy = Aware.getStudy(getApplicationContext(), Aware.getSetting(getApplicationContext(), Aware_Preferences.WEBSERVICE_SERVER));
+                                Cursor dbStudy = Aware.getActiveStudy(getApplicationContext());
                                 if (dbStudy != null && dbStudy.moveToFirst()) {
                                     ContentValues complianceEntry = new ContentValues();
                                     complianceEntry.put(Aware_Provider.Aware_Studies.STUDY_TIMESTAMP, System.currentTimeMillis());

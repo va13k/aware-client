@@ -665,6 +665,22 @@ public class Aware extends Service {
     }
 
     /**
+     * Fetch the cursor for the study the device is currently enrolled in, independent of
+     * any URL. Mirrors {@link #isStudy(Context)}: the most recent study row that has been
+     * joined and not yet exited. Use this (instead of {@link #getStudy(Context, String)})
+     * for quitting a study, so it still works when the WEBSERVICE_SERVER setting has drifted
+     * from the study URL (e.g. after a partial reset). Caller must close the returned Cursor.
+     *
+     * @param c
+     * @return cursor positioned at the active study row, or null/empty if not enrolled
+     */
+    public static Cursor getActiveStudy(Context c) {
+        return c.getContentResolver().query(Aware_Provider.Aware_Studies.CONTENT_URI, null,
+                Aware_Provider.Aware_Studies.STUDY_EXIT + "=0 AND " + Aware_Provider.Aware_Studies.STUDY_JOINED + ">0",
+                null, Aware_Provider.Aware_Studies.STUDY_TIMESTAMP + " DESC LIMIT 1");
+    }
+
+    /**
      * Gets the study config object for a given study URL
      *
      * @param c
@@ -685,6 +701,20 @@ public class Aware extends Service {
         }
 
         return studyConfig;
+    }
+
+    /**
+     * Read a numeric setting, tolerating empty/missing/invalid values. Some settings
+     * (e.g. FREQUENCY_SYNC_CONFIG) are only populated by a study config, so after
+     * {@link #reset(Context)} on study exit they can be empty; parsing them directly
+     * would throw NumberFormatException and crash the service on start.
+     */
+    private static long getSettingAsLong(Context context, String key, long defaultValue) {
+        try {
+            return Long.parseLong(Aware.getSetting(context, key));
+        } catch (NumberFormatException e) {
+            return defaultValue;
+        }
     }
 
     @Override
@@ -811,7 +841,7 @@ public class Aware extends Service {
             if (Aware.isStudy(this)) {
                 ContentResolver.setIsSyncable(Aware.getAWAREAccount(this), Aware_Provider.getAuthority(this), 1);
                 ContentResolver.setSyncAutomatically(Aware.getAWAREAccount(this), Aware_Provider.getAuthority(this), true);
-                long frequency = Long.parseLong(Aware.getSetting(this, Aware_Preferences.FREQUENCY_WEBSERVICE)) * 60;
+                long frequency = getSettingAsLong(this, Aware_Preferences.FREQUENCY_WEBSERVICE, 30) * 60;
                 SyncRequest request = new SyncRequest.Builder()
                         .syncPeriodic(frequency, frequency/3)
                         .setSyncAdapter(Aware.getAWAREAccount(this), Aware_Provider.getAuthority(this))
@@ -821,7 +851,7 @@ public class Aware extends Service {
                 // Set scheduler for syncing config data
                 try {
                     Scheduler.Schedule syncConfig = Scheduler.getSchedule(this, Aware.SCHEDULE_SYNC_CONFIG);
-                    frequency = Long.parseLong(getSetting(this, Aware_Preferences.FREQUENCY_SYNC_CONFIG));
+                    frequency = getSettingAsLong(this, Aware_Preferences.FREQUENCY_SYNC_CONFIG, 30);
 
                     if (syncConfig != null && syncConfig.getInterval() != frequency) {
                         syncConfig.setInterval(frequency);
