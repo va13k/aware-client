@@ -164,12 +164,37 @@ public class Aware_Join_Study extends Aware_Activity {
                 btnAction.setEnabled(false);
                 btnAction.setAlpha(0.5f);
 
+                // getStudy() returns the latest still-enrolled (exit=0) row for this URL — present
+                // both on a fresh join (PopulateStudy just inserted it) and on a re-join (old join
+                // rows still have exit=0). We branch on isStudy(), which checks whether the single
+                // most-recent row (by timestamp) is active:
                 Cursor study = Aware.getStudy(getApplicationContext(), study_url);
                 if (study != null && study.moveToFirst()) {
-                    ContentValues studyData = new ContentValues();
-                    studyData.put(Aware_Provider.Aware_Studies.STUDY_JOINED, System.currentTimeMillis());
-                    studyData.put(Aware_Provider.Aware_Studies.STUDY_EXIT, 0);
-                    getContentResolver().update(Aware_Provider.Aware_Studies.CONTENT_URI, studyData, Aware_Provider.Aware_Studies.STUDY_URL + " LIKE '" + study_url + "'", null);
+                    if (Aware.isStudy(getApplicationContext())) {
+                        // Fresh join: refresh ONLY this session's enrollment row (scoped by _id).
+                        // Never a blanket update — that used to flatten join times and erase prior
+                        // quits' exit timestamps across the whole history.
+                        long activeId = study.getLong(
+                                study.getColumnIndex(Aware_Provider.Aware_Studies.STUDY_ID));
+                        ContentValues studyData = new ContentValues();
+                        studyData.put(Aware_Provider.Aware_Studies.STUDY_JOINED, System.currentTimeMillis());
+                        studyData.put(Aware_Provider.Aware_Studies.STUDY_EXIT, 0);
+                        getContentResolver().update(Aware_Provider.Aware_Studies.CONTENT_URI, studyData,
+                                Aware_Provider.Aware_Studies.STUDY_ID + "=" + activeId, null);
+                    } else {
+                        // Re-join after a previous exit: the latest row is a past "quit study", so
+                        // isStudy() is false. Append a NEW enrollment row (copy of the study
+                        // metadata) so it becomes the latest row with exit=0 → isStudy() true again.
+                        // Prior join/quit rows are preserved (append-only).
+                        ContentValues studyData = new ContentValues();
+                        DatabaseUtils.cursorRowToContentValues(study, studyData);
+                        studyData.remove(Aware_Provider.Aware_Studies.STUDY_ID);
+                        studyData.put(Aware_Provider.Aware_Studies.STUDY_TIMESTAMP, System.currentTimeMillis());
+                        studyData.put(Aware_Provider.Aware_Studies.STUDY_JOINED, System.currentTimeMillis());
+                        studyData.put(Aware_Provider.Aware_Studies.STUDY_EXIT, 0);
+                        studyData.put(Aware_Provider.Aware_Studies.STUDY_COMPLIANCE, "");
+                        getContentResolver().insert(Aware_Provider.Aware_Studies.CONTENT_URI, studyData);
+                    }
                 }
                 if (study != null && !study.isClosed()) study.close();
 
