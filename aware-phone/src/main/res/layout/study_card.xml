@@ -54,6 +54,31 @@
             android:textColor="?android:attr/textColorPrimary" />
     </LinearLayout>
 
+    <!-- Email (tap to copy) -->
+    <LinearLayout
+        android:id="@+id/row_email"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:orientation="horizontal"
+        android:layout_marginTop="6dp">
+
+        <TextView
+            android:layout_width="88dp"
+            android:layout_height="wrap_content"
+            android:text="Email"
+            android:textSize="13sp"
+            android:textStyle="bold"
+            android:textColor="?android:attr/textColorSecondary" />
+
+        <TextView
+            android:id="@+id/study_email"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:textSize="13sp"
+            android:autoLink="none"
+            android:textColor="?android:attr/textColorLink" />
+    </LinearLayout>
+
     <!-- Study link / URL -->
     <LinearLayout
         android:id="@+id/row_link"
