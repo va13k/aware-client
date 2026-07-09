@@ -9,11 +9,13 @@ import android.app.PendingIntent;
 import android.content.BroadcastReceiver;
 import android.content.Context;
 import android.content.ComponentName;
+import android.content.ContentValues;
 import android.content.DialogInterface;
 import android.content.Intent;
 import android.content.IntentFilter;
 import android.content.SharedPreferences;
 import android.content.pm.PackageInfo;
+import android.database.Cursor;
 import android.content.pm.PackageManager;
 import android.graphics.PorterDuff;
 import android.graphics.PorterDuffColorFilter;
@@ -38,6 +40,7 @@ import android.preference.PreferenceScreen;
 import android.provider.Settings;
 import android.text.TextUtils;
 import android.util.Log;
+import android.view.View;
 import android.view.ViewGroup;
 import android.widget.ListAdapter;
 import android.widget.Toast;
@@ -47,7 +50,11 @@ import com.aware.Aware;
 import com.aware.Aware_Preferences;
 import com.aware.Notes;
 import com.aware.phone.R;
+import com.aware.phone.ui.dialogs.JoinStudyDialog;
+import com.aware.phone.ui.prefs.StudyCard;
 import com.aware.phone.ui.prefs.TakeNotesPref;
+import com.aware.phone.utils.AwareUtil;
+import com.aware.providers.Aware_Provider;
 import com.aware.ui.PermissionsHandler;
 import com.aware.ScreenShot;
 
@@ -56,7 +63,9 @@ import org.json.JSONException;
 import org.json.JSONObject;
 
 import java.lang.reflect.Field;
+import java.text.DateFormat;
 import java.util.ArrayList;
+import java.util.Date;
 import java.util.Hashtable;
 import java.util.List;
 import java.util.Map;
@@ -96,6 +105,8 @@ public class Aware_Client extends Aware_Activity {
     private static final Hashtable<String, Integer> optionalSensors = new Hashtable<>();
     private final Aware.AndroidPackageMonitor packageMonitor = new Aware.AndroidPackageMonitor();
     private TakeNotesPref originalTakeNotesPref = null;
+    // Generated "previously joined studies" rows (device mode); tracked so we can refresh them.
+    private final ArrayList<Preference> studyHistoryPrefs = new ArrayList<>();
 
     private BroadcastReceiver screenshotServiceStoppedReceiver = new BroadcastReceiver() {
         @Override
@@ -135,6 +146,9 @@ public class Aware_Client extends Aware_Activity {
         } else {
             setContentView(R.layout.activity_aware);
             addPreferencesFromResource(R.xml.pref_aware_device);
+
+            // Device mode: list previously joined studies below "Join a study".
+            populateStudyHistory();
         }
 //        hideUnusedPreferences();
 
@@ -530,6 +544,119 @@ private void enableAccessibilityService() {
         .setNegativeButton("Not now", null)
         .setCancelable(false)
         .show();
+    }
+
+    /**
+     * Device mode only: lists previously joined studies in the "study_actions" category, below
+     * the Join button. Each row opens a details dialog with re-join / copy link / delete actions.
+     * Safe to call again to refresh (e.g. after a delete).
+     */
+    private void populateStudyHistory() {
+        PreferenceCategory studyActions = (PreferenceCategory) findPreference("study_actions");
+        if (studyActions == null) return;
+
+        for (Preference p : studyHistoryPrefs) studyActions.removePreference(p);
+        studyHistoryPrefs.clear();
+
+        List<ContentValues> studies = Aware.getJoinedStudies(getApplicationContext());
+        for (final ContentValues study : studies) {
+            Preference row = new Preference(this);
+            String title = study.getAsString(Aware_Provider.Aware_Studies.STUDY_TITLE);
+            row.setTitle((title == null || title.trim().length() == 0) ? "(untitled study)" : title);
+            row.setSummary(studyHistorySummary(study));
+            row.setOnPreferenceClickListener(new Preference.OnPreferenceClickListener() {
+                @Override
+                public boolean onPreferenceClick(Preference preference) {
+                    showStudyHistoryDialog(study);
+                    return true;
+                }
+            });
+            studyActions.addPreference(row);
+            studyHistoryPrefs.add(row);
+        }
+    }
+
+    private String studyHistorySummary(ContentValues study) {
+        Double joined = study.getAsDouble(Aware_Provider.Aware_Studies.STUDY_JOINED);
+        Double exit = study.getAsDouble(Aware_Provider.Aware_Studies.STUDY_EXIT);
+        String status = (exit == null || exit == 0) ? "Enrolled" : "Left";
+        if (joined != null && joined > 0)
+            return "Joined " + DateFormat.getDateInstance().format(new Date(joined.longValue())) + " · " + status;
+        return status;
+    }
+
+    /** Details + management dialog for a past study: view (the card), re-join, copy link, delete. */
+    private void showStudyHistoryDialog(final ContentValues study) {
+        View card = getLayoutInflater().inflate(R.layout.study_card, null);
+        StudyCard.bind(this, card, study);
+        final String url = study.getAsString(Aware_Provider.Aware_Studies.STUDY_URL);
+
+        new AlertDialog.Builder(this)
+                .setView(card)
+                .setPositiveButton("Re-join", new DialogInterface.OnClickListener() {
+                    @Override
+                    public void onClick(DialogInterface dialog, int which) {
+                        rejoinStudy(url);
+                    }
+                })
+                .setNeutralButton("Copy link", new DialogInterface.OnClickListener() {
+                    @Override
+                    public void onClick(DialogInterface dialog, int which) {
+                        AwareUtil.copyToClipboard(Aware_Client.this, "AWARE study link", url);
+                    }
+                })
+                .setNegativeButton("Delete", new DialogInterface.OnClickListener() {
+                    @Override
+                    public void onClick(DialogInterface dialog, int which) {
+                        confirmDeleteStudy(study);
+                    }
+                })
+                .show();
+    }
+
+    private void rejoinStudy(String url) {
+        if (url == null || url.length() == 0) return;
+        // Reuse the standard join dialog (properly shown/attached) with the URL pre-filled,
+        // rather than the direct Aware_Join_Study URL path, which crashes (unattached fragment).
+        new JoinStudyDialog(this).setStudyUrl(url).showDialog();
+    }
+
+    private void confirmDeleteStudy(final ContentValues study) {
+        final String url = study.getAsString(Aware_Provider.Aware_Studies.STUDY_URL);
+
+        // Guard: never delete the study we're currently enrolled in.
+        if (url != null && Aware.isStudy(getApplicationContext())) {
+            Cursor active = Aware.getActiveStudy(getApplicationContext());
+            boolean isActive = false;
+            if (active != null) {
+                if (active.moveToFirst()) {
+                    isActive = url.equals(active.getString(
+                            active.getColumnIndex(Aware_Provider.Aware_Studies.STUDY_URL)));
+                }
+                active.close();
+            }
+            if (isActive) {
+                Toast.makeText(this, "You can't delete the study you're currently in.",
+                        Toast.LENGTH_LONG).show();
+                return;
+            }
+        }
+
+        new AlertDialog.Builder(this)
+                .setTitle("Delete from history")
+                .setMessage("Remove this study from your history? This does not affect any data already uploaded to the server.")
+                .setPositiveButton("Delete", new DialogInterface.OnClickListener() {
+                    @Override
+                    public void onClick(DialogInterface dialog, int which) {
+                        if (url != null && url.length() > 0) {
+                            getContentResolver().delete(Aware_Provider.Aware_Studies.CONTENT_URI,
+                                    Aware_Provider.Aware_Studies.STUDY_URL + "=?", new String[]{url});
+                        }
+                        populateStudyHistory();
+                    }
+                })
+                .setNegativeButton("Cancel", null)
+                .show();
     }
 
     private boolean isScreenshotServiceRunning() {
