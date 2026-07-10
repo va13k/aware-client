@@ -11,10 +11,12 @@ import android.content.ComponentName;
 import android.content.ContentValues;
 import android.content.Context;
 import android.content.Intent;
+import android.content.SharedPreferences;
 import android.content.pm.PackageInfo;
 import android.content.pm.PackageManager;
 import android.database.Cursor;
 import android.database.DatabaseUtils;
+import android.preference.PreferenceManager;
 import android.net.Uri;
 import android.os.Handler;
 import android.os.Looper;
@@ -38,6 +40,8 @@ import java.io.FileNotFoundException;
 import java.io.IOException;
 import java.util.ArrayList;
 import java.util.HashMap;
+import java.util.HashSet;
+import java.util.Set;
 import java.util.Hashtable;
 import java.util.List;
 import java.util.Map;
@@ -477,6 +481,14 @@ public class StudyUtils extends IntentService {
         // Track all settings to verify they're applied correctly
         HashMap<String, String> appliedSettings = new HashMap<>();
 
+        // Mirror each setting into the UI SharedPreferences too. AWARE keeps sensor state in two
+        // stores: the aware_settings provider (read by startAWARE to actually run sensors) and the
+        // preference-screen SharedPreferences (what the checkboxes show and persist). Writing only
+        // the provider left the checkboxes OFF and let onSharedPreferenceChanged overwrite the
+        // provider back to the (false) UI default — so config-enabled sensors never activated until
+        // the participant tapped them. Keeping the two stores in sync fixes that.
+        SharedPreferences.Editor uiPrefs = PreferenceManager.getDefaultSharedPreferences(context).edit();
+
         for (int i = 0; i < sensors.length(); i++) {
             try {
                 JSONObject sensor_config = sensors.getJSONObject(i);
@@ -506,6 +518,14 @@ public class StudyUtils extends IntentService {
                             // For any other type, convert to string
                             Aware.setSetting(context, setting, value.toString());
                         }
+                        // Mirror to the UI store with the type the preference persists as:
+                        // CheckBoxPreference persists a Boolean; EditText/List persist a String.
+                        if (value instanceof Boolean) {
+                            uiPrefs.putBoolean(setting, (Boolean) value);
+                        } else {
+                            uiPrefs.putString(setting, String.valueOf(value));
+                        }
+
                         appliedSettings.put(setting, value.toString());
                         Log.d(Aware.TAG, "processSensorSettings: Successfully applied setting: " + setting);
                     } catch (Exception e) {
@@ -519,6 +539,9 @@ public class StudyUtils extends IntentService {
                 Log.e(Aware.TAG, "processSensorSettings: JSONException: " + e.getMessage());
             }
         }
+
+        // Commit the mirrored UI settings so the preference screen reflects the study config.
+        uiPrefs.apply();
 
         // Verify all settings were successfully applied
         Log.d(Aware.TAG, "processSensorSettings: Verifying " + appliedSettings.size() + " applied settings");
@@ -907,6 +930,17 @@ public class StudyUtils extends IntentService {
                 }
                 applySettings(context, studyUrl, new JSONArray().put(newConfig), true, Aware.getSetting(context, Aware_Preferences.DB_PASSWORD));
                 if (Aware.DEBUG) Aware.debug(context, "Updated study config: " + newConfig);
+
+                // Tell any open UI to rebuild (e.g. show newly enabled sensors) without a re-join,
+                // and report which sensors were added / removed so it can notify the participant.
+                ArrayList<String> added = new ArrayList<>();
+                ArrayList<String> removed = new ArrayList<>();
+                diffActiveSensors(localConfig, newConfig, added, removed);
+
+                Intent configUpdated = new Intent(Aware.ACTION_AWARE_STUDY_CONFIG_UPDATED);
+                configUpdated.putStringArrayListExtra(Aware.EXTRA_SENSORS_ADDED, added);
+                configUpdated.putStringArrayListExtra(Aware.EXTRA_SENSORS_REMOVED, removed);
+                context.sendBroadcast(configUpdated);
                 if (toast) {
                     new Handler(Looper.getMainLooper()).post(new Runnable() {
                         @Override
@@ -1029,5 +1063,33 @@ public class StudyUtils extends IntentService {
         } catch (JSONException | AssertionError e) {
             return false;
         }
+    }
+
+    /**
+     * Computes which sensors became active/inactive between two study configs, as human-readable
+     * names, into {@code added} and {@code removed}.
+     */
+    private static void diffActiveSensors(JSONObject oldConfig, JSONObject newConfig,
+                                          List<String> added, List<String> removed) {
+        Set<String> before = activeSensorNames(oldConfig);
+        Set<String> after = activeSensorNames(newConfig);
+        for (String s : after) if (!before.contains(s)) added.add(s);
+        for (String s : before) if (!after.contains(s)) removed.add(s);
+    }
+
+    /** Human-readable names of sensors whose status_* setting is enabled (true) in a config. */
+    private static Set<String> activeSensorNames(JSONObject config) {
+        Set<String> active = new HashSet<>();
+        JSONArray sensors = config.optJSONArray("sensors");
+        if (sensors == null) return active;
+        for (int i = 0; i < sensors.length(); i++) {
+            JSONObject sensor = sensors.optJSONObject(i);
+            if (sensor == null) continue;
+            String setting = sensor.optString("setting", "");
+            if (setting.startsWith("status_") && sensor.optBoolean("value", false)) {
+                active.add(setting.substring("status_".length()).replace('_', ' '));
+            }
+        }
+        return active;
     }
 }
