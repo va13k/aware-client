@@ -155,6 +155,14 @@ public class Aware extends Service {
      */
     public static final String ACTION_AWARE_SYNC_CONFIG = "ACTION_AWARE_SYNC_CONFIG";
     public static final String SYNC_CONFIG_EXTRA_TOAST = "SYNC_CONFIG_EXTRA_TOAST";
+    /**
+     * Broadcast after a study config update has been applied, so an open UI can refresh
+     * (e.g. rebuild the sensor list to reflect newly enabled/disabled sensors).
+     */
+    public static final String ACTION_AWARE_STUDY_CONFIG_UPDATED = "ACTION_AWARE_STUDY_CONFIG_UPDATED";
+    /** String ArrayList extras on {@link #ACTION_AWARE_STUDY_CONFIG_UPDATED}: sensors newly enabled / disabled. */
+    public static final String EXTRA_SENSORS_ADDED = "sensors_added";
+    public static final String EXTRA_SENSORS_REMOVED = "sensors_removed";
 
     /**
      * Notification ID for AWARE service as foreground (to handle Doze, Android O battery optimizations)
@@ -725,15 +733,47 @@ public class Aware extends Service {
         JSONObject studyConfig = new JSONObject();
 
         if (study != null && study.moveToFirst()) {
-            try {
-                studyConfig = new JSONObject(study.getString(
-                        study.getColumnIndex(Aware_Provider.Aware_Studies.STUDY_CONFIG)));
-            } catch (JSONException e) {
-                e.printStackTrace();
-            }
+            studyConfig = parseStudyConfig(study.getString(
+                    study.getColumnIndex(Aware_Provider.Aware_Studies.STUDY_CONFIG)));
         }
 
+        if (study != null && !study.isClosed()) study.close();
         return studyConfig;
+    }
+
+    /**
+     * Gets the config object for the currently joined study, independent of WEBSERVICE_SERVER.
+     *
+     * @param c
+     * @return JSONObject representing the active study config
+     */
+    public static JSONObject getActiveStudyConfig(Context c) {
+        Cursor study = getActiveStudy(c);
+        JSONObject studyConfig = new JSONObject();
+
+        if (study != null && study.moveToFirst()) {
+            studyConfig = parseStudyConfig(study.getString(
+                    study.getColumnIndex(Aware_Provider.Aware_Studies.STUDY_CONFIG)));
+        }
+
+        if (study != null && !study.isClosed()) study.close();
+        return studyConfig;
+    }
+
+    private static JSONObject parseStudyConfig(String config) {
+        if (config == null || config.trim().length() == 0) return new JSONObject();
+
+        try {
+            String trimmed = config.trim();
+            if (trimmed.startsWith("[")) {
+                JSONArray configs = new JSONArray(trimmed);
+                return configs.length() > 0 ? configs.getJSONObject(0) : new JSONObject();
+            }
+            return new JSONObject(trimmed);
+        } catch (JSONException e) {
+            e.printStackTrace();
+            return new JSONObject();
+        }
     }
 
     /**

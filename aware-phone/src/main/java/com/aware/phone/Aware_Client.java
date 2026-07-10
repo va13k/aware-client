@@ -103,7 +103,7 @@ public class Aware_Client extends Aware_Activity implements SharedPreferences.On
         boolean PERMISSIONS_OK = true;
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
             for (String p : REQUIRED_PERMISSIONS) {
-                if (PermissionChecker.checkSelfPermission(this, p) != PermissionChecker.PERMISSION_GRANTED) {
+                if (PermissionChecker.checkSelfPermission(this, p) != PackageManager.PERMISSION_GRANTED) {
                     PERMISSIONS_OK = false;
                     break;
                 }
@@ -294,7 +294,7 @@ public class Aware_Client extends Aware_Activity implements SharedPreferences.On
         permissions_ok = true;
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
             for (String p : REQUIRED_PERMISSIONS) {
-                if (PermissionChecker.checkSelfPermission(this, p) != PermissionChecker.PERMISSION_GRANTED) {
+                if (PermissionChecker.checkSelfPermission(this, p) != PackageManager.PERMISSION_GRANTED) {
                     permissions_ok = false;
                     break;
                 }
