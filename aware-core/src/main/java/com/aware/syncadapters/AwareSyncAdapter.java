@@ -89,19 +89,20 @@ public class AwareSyncAdapter extends AbstractThreadedSyncAdapter {
      * @param syncResult
      */
     @Override
-    public void onPerformSync(Account account, Bundle extras, String authority, ContentProviderClient provider, SyncResult syncResult) {
+    public void onPerformSync(
+        Account account,
+        Bundle extras,
+        String authority,
+        ContentProviderClient provider,
+        SyncResult syncResult
+    ) {
         Log.i(Aware.TAG, "Performing sync for " + Arrays.toString(DATABASE_TABLES));
         
         if (!Aware.getSetting(mContext, Aware_Preferences.WEBSERVICE_SILENT).equals("true"))
             notManager = (NotificationManager) mContext.getSystemService(Context.NOTIFICATION_SERVICE);
 
-
-
         if (DATABASE_TABLES != null && TABLES_FIELDS != null && CONTEXT_URIS != null) {
             for (int i = 0; i < DATABASE_TABLES.length; i++) {
-
-
-
                 offloadData(mContext, DATABASE_TABLES[i], Aware.getSetting(getContext(), Aware_Preferences.WEBSERVICE_SERVER), TABLES_FIELDS[i], CONTEXT_URIS[i]);
             }
         }
@@ -212,17 +213,13 @@ public class AwareSyncAdapter extends AbstractThreadedSyncAdapter {
         String device_id = Aware.getSetting(context, Aware_Preferences.DEVICE_ID);
         boolean DEBUG = Aware.getSetting(context, Aware_Preferences.DEBUG_FLAG).equals("true");
 
-        // TODO RIO: Remove this
-//        String response = createRemoteTable(device_id, table_fields, web_service_simple, protocol, context, web_server, database_table);
         try {
             String[] columnsStr = getTableColumnsNames(CONTENT_URI, context);
 
             /**
              * We used to check the latest timestamp from the server side. We now keep track of it locally on the phone for scalability and performance hit on MySQL per sync event.
              */
-            String latest;
-            //latest = getLatestRecordFromServer(device_id, web_service_simple, web_service_remove_data, database_table, protocol, context, web_server);
-            latest = getLatestRecordSynched(database_table, columnsStr);
+            String latest = getLatestRecordSynched(database_table, columnsStr);
 
             String study_condition = getStudySyncCondition(context, database_table);
             int total_records = getNumberOfRecordsToSync(CONTENT_URI, columnsStr, latest, study_condition, context);
