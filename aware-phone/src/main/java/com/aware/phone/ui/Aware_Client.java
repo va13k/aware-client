@@ -150,15 +150,65 @@ public class Aware_Client extends Aware_Activity {
     };
 
     /**
-     * Tells the participant the study changed and which sensors were added/removed, then rebuilds
-     * the screen so the new sensor list is shown. If nothing sensor-related changed, just rebuilds.
+     * If a study config update was applied while no UI was around to receive the live broadcast
+     * (the sync runs on its own schedule regardless of whether the app is open), show it now.
      */
-    private void notifyStudyConfigUpdated(ArrayList<String> added, ArrayList<String> removed) {
-        boolean hasChanges = (added != null && !added.isEmpty()) || (removed != null && !removed.isEmpty());
-        if (!hasChanges) {
-            recreate();
+    private void showPendingStudyUpdateNoticeIfAny() {
+        String pending = Aware.getSetting(getApplicationContext(), Aware_Preferences.PENDING_STUDY_UPDATE_NOTICE);
+        if (pending == null || pending.trim().length() == 0) return;
+
+        try {
+            JSONObject notice = new JSONObject(pending);
+            ArrayList<String> added = new ArrayList<>();
+            JSONArray addedJson = notice.optJSONArray("added");
+            if (addedJson != null) {
+                for (int i = 0; i < addedJson.length(); i++) added.add(addedJson.getString(i));
+            }
+            ArrayList<String> removed = new ArrayList<>();
+            JSONArray removedJson = notice.optJSONArray("removed");
+            if (removedJson != null) {
+                for (int i = 0; i < removedJson.length(); i++) removed.add(removedJson.getString(i));
+            }
+            Boolean configUpdateAllowedNewValue = notice.optBoolean("cfgChanged", false)
+                    ? notice.optBoolean("cfgNewValue", false) : null;
+            notifyStudyConfigUpdated(added, removed, configUpdateAllowedNewValue);
+        } catch (JSONException e) {
+            e.printStackTrace();
+            Aware.setSetting(getApplicationContext(), Aware_Preferences.PENDING_STUDY_UPDATE_NOTICE, "");
+        }
+    }
+
+    /**
+     * Tracks the currently-open nested PreferenceScreen dialog (e.g. "AWARE Study"), set in
+     * onPreferenceTreeClick. recreate() destroys this Activity's window; if a dialog anchored to
+     * it is still showing at that point, Android throws a fatal WindowLeaked crash — which is
+     * exactly what "the app closes" turned out to be, since the sync-now button that triggers a
+     * config update notification lives inside one of these nested screens. Dismiss it first.
+     */
+    private Dialog openSubPrefDialog = null;
+
+    private void dismissOpenSubPrefDialogIfAny() {
+        if (openSubPrefDialog != null && openSubPrefDialog.isShowing()) {
+            openSubPrefDialog.dismiss();
+        }
+        openSubPrefDialog = null;
+    }
+
+    /**
+     * Tells the participant the study changed — sensors added/removed, and/or whether they can now
+     * edit their own settings — then rebuilds the screen so the new state is shown. If nothing
+     * curated changed (e.g. a threshold/frequency tweak the participant doesn't need to know about),
+     * there's nothing to show and nothing worth rebuilding the screen for.
+     */
+    private void notifyStudyConfigUpdated(ArrayList<String> added, ArrayList<String> removed,
+                                          Boolean configUpdateAllowedNewValue) {
+        boolean hasChanges = (added != null && !added.isEmpty()) || (removed != null && !removed.isEmpty())
+                || configUpdateAllowedNewValue != null;
+        if (!hasChanges || isFinishing()) {
             return;
         }
+
+        dismissOpenSubPrefDialogIfAny();
 
         StringBuilder msg = new StringBuilder("The study was updated by the researcher.\n");
         if (added != null && !added.isEmpty()) {
@@ -180,7 +230,12 @@ public class Aware_Client extends Aware_Activity {
                 .setOnDismissListener(new DialogInterface.OnDismissListener() {
                     @Override
                     public void onDismiss(DialogInterface dialog) {
-                        recreate(); // rebuild the sensor list after the participant has seen the changes
+                        // Only clear here — once the participant has actually seen and dismissed a
+                        // visible dialog — not eagerly when merely attempting to show one (see the
+                        // comment on studyConfigUpdatedReceiver for why that was unsafe).
+                        Aware.setSetting(getApplicationContext(), Aware_Preferences.PENDING_STUDY_UPDATE_NOTICE, "");
+                        // rebuild the sensor list after the participant has seen the changes
+                        if (!isFinishing()) recreate();
                     }
                 })
                 .show();
@@ -1075,6 +1130,16 @@ private void enableAccessibilityService() {
     }
 
 
+
+    // Debounces the onResume() sync trigger below: rapid app-switching or a rotation-triggered
+    // recreate() (this Activity calls its own recreate() after showing a study-update dialog) can
+    // fire onResume() several times in quick succession. Each one spawns its own background thread
+    // in Aware's receiver (syncStudyConfig -> a network fetch + a DB-credential check that can
+    // block), so without this, those can stack up concurrently for no benefit — the config can't
+    // meaningfully have changed again within a few seconds of the last check. static + elapsedRealtime
+    // so it survives this Activity being recreated and isn't affected by wall-clock changes.
+    private static volatile long lastSyncConfigBroadcastAtMs = 0;
+    private static final long SYNC_CONFIG_DEBOUNCE_MS = 10_000;
 
     @Override
     protected void onResume() {
