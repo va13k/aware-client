@@ -381,9 +381,11 @@ public class Aware_Client extends Aware_Activity {
             toolbar.setTitle(preference.getTitle());
             root.addView(toolbar, 0); //add to the top
 
+            openSubPrefDialog = subpref;
             subpref.setOnDismissListener(new DialogInterface.OnDismissListener() {
                 @Override
                 public void onDismiss(DialogInterface dialog) {
+                    if (openSubPrefDialog == dialog) openSubPrefDialog = null;
                     new SettingsSync().execute(preference);
                 }
             });
@@ -748,6 +750,46 @@ private void enableAccessibilityService() {
         .setNegativeButton("Not now", null)
         .setCancelable(false)
         .show();
+    }
+
+    private AlertDialog locationServicesDialog;
+
+    /**
+     * WiFi scanning requires the OS-level Location toggle on system-wide (Android blocks
+     * WifiManager.startScan() with a SecurityException otherwise, regardless of granted
+     * permissions) — prompt the participant to enable it, mirroring enableAccessibilityService().
+     */
+    private void enableLocationServices() {
+        if (locationServicesDialog != null && locationServicesDialog.isShowing()) {
+            return; // already prompting; don't stack dialogs on repeated onResume
+        }
+        locationServicesDialog = new AlertDialog.Builder(this)
+            .setTitle("Enable Location services")
+            .setMessage("This study collects WiFi data, which requires Location services to be turned on for the whole phone (Android requires this even though AWARE doesn't use your location for WiFi scanning). On the next screen, turn Location ON.")
+            .setPositiveButton("Open settings", new DialogInterface.OnClickListener() {
+                @Override
+                public void onClick(DialogInterface dialog, int which) {
+                    try {
+                        startActivity(new Intent(Settings.ACTION_LOCATION_SOURCE_SETTINGS)
+                                .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK));
+                    } catch (Exception e) {
+                        Toast.makeText(Aware_Client.this,
+                                "Please open Settings > Location and turn it on.",
+                                Toast.LENGTH_LONG).show();
+                    }
+                }
+            })
+            .setNegativeButton("Not now", null)
+            .setCancelable(false)
+            .show();
+    }
+
+    /**
+     * True if the joined study currently has WiFi scanning enabled, i.e. Location services are
+     * actually needed right now. Used to avoid prompting participants in studies that don't use it.
+     */
+    private boolean studyNeedsWifi() {
+        return "true".equalsIgnoreCase(Aware.getSetting(getApplicationContext(), Aware_Preferences.STATUS_WIFI));
     }
 
     /**
@@ -1189,6 +1231,12 @@ private void enableAccessibilityService() {
 
             Map<String, ?> defaults = prefs.getAll();
             for (Map.Entry<String, ?> entry : defaults.entrySet()) {
+                // Skip webservice_server: see the matching comment in Aware.onStartCommand()'s copy
+                // of this loop — the cached "com.aware.phone" SharedPreferences default is a stale
+                // placeholder URL, and copying it in here whenever the real setting is momentarily
+                // empty is the same landmine as the fallback removed below, just reached via the
+                // defaults cache instead of a literal.
+                if (entry.getKey().equals(Aware_Preferences.WEBSERVICE_SERVER)) continue;
                 if (Aware.getSetting(getApplicationContext(), entry.getKey(), "com.aware.phone").length() == 0) {
                     Aware.setSetting(getApplicationContext(), entry.getKey(), entry.getValue(), "com.aware.phone"); //default AWARE settings
                 }
@@ -1199,9 +1247,11 @@ private void enableAccessibilityService() {
                 Aware.setSetting(getApplicationContext(), Aware_Preferences.DEVICE_ID, uuid.toString(), "com.aware.phone");
             }
 
-            if (Aware.getSetting(getApplicationContext(), Aware_Preferences.WEBSERVICE_SERVER).length() == 0) {
-                Aware.setSetting(getApplicationContext(), Aware_Preferences.WEBSERVICE_SERVER, "http://api.awareframework.com/index.php");
-            }
+            // Deliberately no "if empty, default to the public AWARE demo server" fallback here
+            // anymore — see the matching comment in Aware.onStartCommand(). This ran on every
+            // onResume(), unsynchronized, and permanently overwrote a legitimate join URL with this
+            // placeholder the instant it observed the setting momentarily empty (e.g. mid-reset()),
+            // breaking study lookup with no way to self-correct afterward.
 
             Set<String> keys = optionalSensors.keySet();
             for (String optionalSensor : keys) {
@@ -1226,6 +1276,14 @@ private void enableAccessibilityService() {
                     && studyNeedsAccessibility()
                     && !isAccessibilityServiceEnabled(this, Applications.class)) {
                 enableAccessibilityService();
+            }
+
+            // Same contextual prompt pattern, for WiFi's OS-level Location-toggle requirement.
+            if (!Aware.is_watch(this)
+                    && Aware.isStudy(this)
+                    && studyNeedsWifi()
+                    && !SensorCollection.isLocationServicesEnabled(this)) {
+                enableLocationServices();
             }
 
             //Check if AWARE is allowed to run on Doze
