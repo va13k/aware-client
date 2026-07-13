@@ -109,6 +109,12 @@
             android:label="Take Note"
             android:exported="false">
         </activity>
+        <activity
+            android:name=".ui.SensorConsentActivity"
+            android:label="Study permissions"
+            android:theme="@style/Theme.Aware"
+            android:exported="false">
+        </activity>
         <receiver
             android:name="com.aware.Aware$AndroidPackageMonitor"
             android:exported="true">
