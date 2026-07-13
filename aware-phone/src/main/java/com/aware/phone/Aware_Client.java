@@ -321,6 +321,10 @@ public class Aware_Client extends Aware_Activity implements SharedPreferences.On
 
             Map<String, ?> defaults = prefs.getAll();
             for (Map.Entry<String, ?> entry : defaults.entrySet()) {
+                // Skip webservice_server: see Aware.onStartCommand()'s copy of this loop for why —
+                // the cached "com.aware.phone" SharedPreferences default is a stale placeholder URL,
+                // not a real study join URL.
+                if (entry.getKey().equals(Aware_Preferences.WEBSERVICE_SERVER)) continue;
                 if (Aware.getSetting(getApplicationContext(), entry.getKey(), "com.aware.phone").length() == 0) {
                     Aware.setSetting(getApplicationContext(), entry.getKey(), entry.getValue(), "com.aware.phone"); //default AWARE settings
                 }
@@ -331,9 +335,11 @@ public class Aware_Client extends Aware_Activity implements SharedPreferences.On
                 Aware.setSetting(getApplicationContext(), Aware_Preferences.DEVICE_ID, uuid.toString(), "com.aware.phone");
             }
 
-            if (Aware.getSetting(getApplicationContext(), Aware_Preferences.WEBSERVICE_SERVER).length() == 0) {
-                Aware.setSetting(getApplicationContext(), Aware_Preferences.WEBSERVICE_SERVER, "https://api.awareframework.com/index.php");
-            }
+            // Deliberately no "if empty, default to the public AWARE demo server" fallback here
+            // anymore — see Aware.onStartCommand() for why. This legacy Activity (com.aware.phone.
+            // Aware_Client, distinct from com.aware.phone.ui.Aware_Client) is still reachable via the
+            // android.support.PARENT_ACTIVITY meta-data on Aware_QRCode/Plugins_Manager/Aware_Join_Study
+            // in AndroidManifest.xml, so it still runs and can still poison this setting.
 
             Set<String> keys = optionalSensors.keySet();
             for (String optionalSensor : keys) {
