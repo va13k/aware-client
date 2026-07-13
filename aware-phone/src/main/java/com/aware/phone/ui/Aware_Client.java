@@ -29,6 +29,7 @@ import android.os.Build;
 import android.os.Bundle;
 import android.os.Handler;
 import android.os.PowerManager;
+import android.os.SystemClock;
 import android.preference.CheckBoxPreference;
 import android.preference.EditTextPreference;
 import android.preference.ListPreference;
@@ -136,7 +137,14 @@ public class Aware_Client extends Aware_Activity {
             if (Aware.ACTION_AWARE_STUDY_CONFIG_UPDATED.equals(intent.getAction())) {
                 ArrayList<String> added = intent.getStringArrayListExtra(Aware.EXTRA_SENSORS_ADDED);
                 ArrayList<String> removed = intent.getStringArrayListExtra(Aware.EXTRA_SENSORS_REMOVED);
-                notifyStudyConfigUpdated(added, removed);
+                Boolean configUpdateAllowedNewValue = intent.getBooleanExtra(Aware.EXTRA_CONFIG_UPDATE_ALLOWED_CHANGED, false)
+                        ? intent.getBooleanExtra(Aware.EXTRA_CONFIG_UPDATE_ALLOWED_NEW_VALUE, false) : null;
+                // Don't clear the pending notice here: this receiver stays registered (and keeps
+                // receiving broadcasts) even while the Activity is merely stopped/backgrounded, not
+                // just while visible — so a dialog "shown" here may never actually be seen. Only
+                // notifyStudyConfigUpdated()'s own dismiss handler, which only fires once the
+                // participant has actually interacted with a visible dialog, clears it.
+                notifyStudyConfigUpdated(added, removed, configUpdateAllowedNewValue);
             }
         }
     };
@@ -158,6 +166,11 @@ public class Aware_Client extends Aware_Activity {
         }
         if (removed != null && !removed.isEmpty()) {
             msg.append("\n\nNo longer collecting:\n• ").append(TextUtils.join("\n• ", removed));
+        }
+        if (configUpdateAllowedNewValue != null) {
+            msg.append("\n\n").append(configUpdateAllowedNewValue
+                    ? "You can now change your own settings for this study."
+                    : "Your settings are locked to the researcher's configuration again.");
         }
 
         new AlertDialog.Builder(this)
@@ -296,8 +309,9 @@ public class Aware_Client extends Aware_Activity {
 
     @Override
     public boolean onPreferenceTreeClick(PreferenceScreen preferenceScreen, final Preference preference) {
-        // In a study, tapping a sensor shows its data-collection status instead of the locked settings.
-        if (Aware.isStudy(getApplicationContext())
+        // In a study, tapping a sensor shows its data-collection status instead of the locked settings
+        // — unless the researcher opted in to participant edits via enable_config_update.
+        if (isStudySettingsLocked()
                 && preference instanceof PreferenceScreen
                 && SensorCollection.isSensor(preference.getKey())) {
             showSensorCollectionDialog((PreferenceScreen) preference);
@@ -349,8 +363,44 @@ public class Aware_Client extends Aware_Activity {
                 .show();
     }
 
+    // Guards the revert below from re-triggering itself: reverting a preference re-persists it,
+    // which fires this listener again for the same key.
+    private boolean revertingStudyPreference = false;
+
+    /**
+     * Settings stay researcher-controlled while enrolled in a study, unless the researcher opted
+     * in to participant edits via the study config's enable_config_update setting.
+     */
+    private boolean isStudySettingsLocked() {
+        boolean inStudy = Aware.isStudy(getApplicationContext());
+        boolean editsAllowed = Boolean.valueOf(Aware.getSetting(getApplicationContext(), Aware_Preferences.ENABLE_CONFIG_UPDATE));
+        return inStudy && !editsAllowed;
+    }
+
     @Override
     public void onSharedPreferenceChanged(SharedPreferences sharedPreferences, String key) {
+        // onPreferenceTreeClick only stops navigating INTO a sensor's screen — it doesn't stop a
+        // change from taking effect once a checkbox is visible and tapped. Enforce it here too, at
+        // the point the value actually gets written, so a participant can never actually flip a
+        // researcher-controlled setting while in a study (unless enable_config_update allows it).
+        if (!revertingStudyPreference && isStudySettingsLocked()) {
+            revertingStudyPreference = true;
+            try {
+                String currentValue = Aware.getSetting(getApplicationContext(), key);
+                Preference pref = findPreference(key);
+                if (CheckBoxPreference.class.isInstance(pref)) {
+                    ((CheckBoxPreference) pref).setChecked(currentValue.equals("true"));
+                } else if (EditTextPreference.class.isInstance(pref)) {
+                    ((EditTextPreference) pref).setText(currentValue);
+                } else if (ListPreference.class.isInstance(pref)) {
+                    ((ListPreference) pref).setValue(currentValue);
+                }
+            } finally {
+                revertingStudyPreference = false;
+            }
+            return;
+        }
+
         String value = "";
         Map<String, ?> keys = sharedPreferences.getAll();
         if (keys.containsKey(key)) {
@@ -1029,6 +1079,20 @@ private void enableAccessibilityService() {
     @Override
     protected void onResume() {
         super.onResume();
+
+        // Reconcile to the current study config every time the app is opened, so researcher changes
+        // show up without waiting for the periodic sync or requiring a rejoin.
+        if (Aware.isStudy(getApplicationContext())) {
+            long now = SystemClock.elapsedRealtime();
+            if (now - lastSyncConfigBroadcastAtMs >= SYNC_CONFIG_DEBOUNCE_MS) {
+                lastSyncConfigBroadcastAtMs = now;
+                sendBroadcast(new Intent(Aware.ACTION_AWARE_SYNC_CONFIG));
+            }
+        }
+
+        // Catch up on any study update that was applied while this Activity wasn't alive to
+        // receive the live broadcast (the sync runs on its own schedule regardless of the app).
+        showPendingStudyUpdateNoticeIfAny();
 
         permissions_ok = true;
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
