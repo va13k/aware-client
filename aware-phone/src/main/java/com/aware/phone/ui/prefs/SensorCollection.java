@@ -6,11 +6,18 @@ import android.database.Cursor;
 import android.hardware.Sensor;
 import android.hardware.SensorManager;
 import android.content.pm.PackageManager;
+import android.location.LocationManager;
 import android.net.Uri;
+import android.os.Build;
 
 import androidx.core.content.ContextCompat;
 
+import com.aware.Aware;
+import com.aware.Aware_Preferences;
+
+import java.util.ArrayList;
 import java.util.HashMap;
+import java.util.List;
 import java.util.Map;
 
 /**
@@ -51,13 +58,19 @@ public final class SensorCollection {
         final int hardwareType;       // Sensor.TYPE_* for physical sensors, or -1
         final String[] permissions;   // required runtime permissions (may be empty)
         final boolean needsAccessibility;
+        final boolean needsLocationServices; // the OS-level Location toggle, not a permission
 
         Def(String authoritySuffix, String table, int hardwareType, String[] permissions, boolean needsAccessibility) {
+            this(authoritySuffix, table, hardwareType, permissions, needsAccessibility, false);
+        }
+
+        Def(String authoritySuffix, String table, int hardwareType, String[] permissions, boolean needsAccessibility, boolean needsLocationServices) {
             this.authoritySuffix = authoritySuffix;
             this.table = table;
             this.hardwareType = hardwareType;
             this.permissions = permissions;
             this.needsAccessibility = needsAccessibility;
+            this.needsLocationServices = needsLocationServices;
         }
     }
 
@@ -85,7 +98,10 @@ public final class SensorCollection {
         REGISTRY.put("esm", new Def(".provider.esm", "esms", -1, NONE, false));
 
         REGISTRY.put("locations", new Def(".provider.locations", "locations", -1, new String[]{Manifest.permission.ACCESS_FINE_LOCATION}, false));
-        REGISTRY.put("wifi", new Def(".provider.wifi", "wifi", -1, new String[]{Manifest.permission.ACCESS_FINE_LOCATION}, false));
+        // WiFi scanning requires the OS-level Location toggle on system-wide, in addition to the
+        // ACCESS_FINE_LOCATION permission below — Android blocks WifiManager.startScan() with a
+        // SecurityException when Location services are off, regardless of granted permissions.
+        REGISTRY.put("wifi", new Def(".provider.wifi", "wifi", -1, new String[]{Manifest.permission.ACCESS_FINE_LOCATION}, false, true));
         REGISTRY.put("bluetooth", new Def(".provider.bluetooth", "sensor_bluetooth", -1, new String[]{Manifest.permission.ACCESS_FINE_LOCATION}, false));
         REGISTRY.put("communication", new Def(".provider.communication", "calls", -1, new String[]{Manifest.permission.READ_CALL_LOG}, false));
         REGISTRY.put("telephony", new Def(".provider.telephony", "telephony", -1, new String[]{Manifest.permission.READ_PHONE_STATE}, false));
@@ -125,6 +141,10 @@ public final class SensorCollection {
             return new Status(false, lastData, "Accessibility service is off",
                     "Enable AWARE under Settings › Accessibility");
         }
+        if (def.needsLocationServices && !isLocationServicesEnabled(context)) {
+            return new Status(false, lastData, "Location services are off",
+                    "Enable Location under Settings › Location");
+        }
         String missing = firstMissingPermission(context, def.permissions);
         if (missing != null) {
             String p = shortPermission(missing);
@@ -159,6 +179,16 @@ public final class SensorCollection {
     private static boolean hasHardware(Context context, int sensorType) {
         SensorManager sm = (SensorManager) context.getSystemService(Context.SENSOR_SERVICE);
         return sm != null && sm.getDefaultSensor(sensorType) != null;
+    }
+
+    /** The OS-level Location toggle (Settings › Location) — distinct from the location permission. */
+    public static boolean isLocationServicesEnabled(Context context) {
+        LocationManager lm = (LocationManager) context.getSystemService(Context.LOCATION_SERVICE);
+        if (lm == null) return false;
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
+            return lm.isLocationEnabled();
+        }
+        return lm.isProviderEnabled(LocationManager.GPS_PROVIDER) || lm.isProviderEnabled(LocationManager.NETWORK_PROVIDER);
     }
 
     private static String firstMissingPermission(Context context, String[] permissions) {
