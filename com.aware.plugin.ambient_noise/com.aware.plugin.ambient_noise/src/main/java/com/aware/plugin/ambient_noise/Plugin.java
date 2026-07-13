@@ -3,6 +3,7 @@ package com.aware.plugin.ambient_noise;
 import android.Manifest;
 import android.accounts.Account;
 import android.content.ContentResolver;
+import android.content.Context;
 import android.content.ContentValues;
 import android.content.Intent;
 import android.content.SyncRequest;
@@ -67,7 +68,7 @@ public class Plugin extends Aware_Plugin {
 
             DEBUG = Aware.getSetting(this, Aware_Preferences.DEBUG_FLAG).equals("true");
 
-            initializeSettings();
+            initializeSettings(getApplicationContext());
 
             setupScheduler();
 
@@ -87,15 +88,21 @@ public class Plugin extends Aware_Plugin {
 
 
 
-    private void initializeSettings() {
-        if (Aware.getSetting(getApplicationContext(), Settings.FREQUENCY_PLUGIN_AMBIENT_NOISE).isEmpty()) {
-            Aware.setSetting(getApplicationContext(), Settings.FREQUENCY_PLUGIN_AMBIENT_NOISE, 5);
+    /**
+     * Ensures the plugin's own settings have a value, defaulting any that are empty. Shared with
+     * AudioAnalyser (a separate IntentService triggered directly by the Scheduler, not through this
+     * Service's onStartCommand()) so both read from the same single source of truth for defaults
+     * instead of duplicating the literals.
+     */
+    static void initializeSettings(Context context) {
+        if (Aware.getSetting(context, Settings.FREQUENCY_PLUGIN_AMBIENT_NOISE).isEmpty()) {
+            Aware.setSetting(context, Settings.FREQUENCY_PLUGIN_AMBIENT_NOISE, 5);
         }
-        if (Aware.getSetting(getApplicationContext(), Settings.PLUGIN_AMBIENT_NOISE_SAMPLE_SIZE).isEmpty()) {
-            Aware.setSetting(getApplicationContext(), Settings.PLUGIN_AMBIENT_NOISE_SAMPLE_SIZE, 30);
+        if (Aware.getSetting(context, Settings.PLUGIN_AMBIENT_NOISE_SAMPLE_SIZE).isEmpty()) {
+            Aware.setSetting(context, Settings.PLUGIN_AMBIENT_NOISE_SAMPLE_SIZE, 30);
         }
-        if (Aware.getSetting(getApplicationContext(), Settings.PLUGIN_AMBIENT_NOISE_SILENCE_THRESHOLD).isEmpty()) {
-            Aware.setSetting(getApplicationContext(), Settings.PLUGIN_AMBIENT_NOISE_SILENCE_THRESHOLD, 50);
+        if (Aware.getSetting(context, Settings.PLUGIN_AMBIENT_NOISE_SILENCE_THRESHOLD).isEmpty()) {
+            Aware.setSetting(context, Settings.PLUGIN_AMBIENT_NOISE_SILENCE_THRESHOLD, 50);
         }
     }
 

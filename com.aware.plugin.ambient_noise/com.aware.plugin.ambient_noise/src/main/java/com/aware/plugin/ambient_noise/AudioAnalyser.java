@@ -33,6 +33,14 @@ public class AudioAnalyser extends IntentService {
     @Override
     protected void onHandleIntent(Intent intent) {
 
+        // This IntentService is triggered directly by the Scheduler, not through Plugin's own
+        // onStartCommand() (which normally ensures these via initializeSettings()) — so a config
+        // sync that wipes settings (Aware.reset(), called on every applySettings()) can leave them
+        // empty here even while the plugin keeps running, crashing the parseInt/parseDouble calls
+        // below. Delegate to Plugin's own shared method rather than duplicating its defaults, so the
+        // two can never drift out of sync.
+        Plugin.initializeSettings(getApplicationContext());
+
         //Check if microphone is available right now
         if(!isMicrophoneAvailable(getApplicationContext())) return;
 

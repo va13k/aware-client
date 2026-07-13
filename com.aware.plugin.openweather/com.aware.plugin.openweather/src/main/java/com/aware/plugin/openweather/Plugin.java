@@ -312,6 +312,15 @@ public class Plugin extends Aware_Plugin implements GoogleApiClient.ConnectionCa
         if (DEBUG)
             Log.i(TAG, "Connected to Google Fused Location API");
 
+        // This is an async Google Play Services callback, not routed through onStartCommand()'s own
+        // defaults-ensuring checks above — it can fire whenever Play Services decides to connect,
+        // including right after a concurrent config sync's Aware.reset() has wiped this setting and
+        // before it's been re-applied. Guard here too (same default as onStartCommand()'s check),
+        // matching the fix applied to the ambient_noise plugin's AudioAnalyser for the same race.
+        if (Aware.getSetting(getApplicationContext(), Settings.PLUGIN_OPENWEATHER_FREQUENCY).length() == 0) {
+            Aware.setSetting(getApplicationContext(), Settings.PLUGIN_OPENWEATHER_FREQUENCY, 60);
+        }
+
         locationRequest.setInterval(Long.parseLong(Aware.getSetting(this, Settings.PLUGIN_OPENWEATHER_FREQUENCY)) * 60 * 1000);
         locationRequest.setFastestInterval(Long.parseLong(Aware.getSetting(this, Settings.PLUGIN_OPENWEATHER_FREQUENCY)) * 60 * 1000);
         locationRequest.setPriority(LocationRequest.PRIORITY_LOW_POWER);
