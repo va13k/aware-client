@@ -50,6 +50,20 @@ public class Settings extends AppCompatPreferenceActivity implements OnSharedPre
     private static EditTextPreference frequency, openweather_api_key;
     private static final String TAG = "openweather";
 
+    /**
+     * Preference summaries are visible on the settings screen without tapping into the field, so
+     * the raw key must never be passed to setSummary() — only whether one is set, plus a few
+     * trailing characters as a "is this the key I think it is" hint.
+     */
+    private static String maskApiKey(String key) {
+        if (key == null || key.length() == 0) return "Not set";
+        if (key.length() <= 4) return "••••";
+        StringBuilder masked = new StringBuilder();
+        for (int i = 0; i < key.length() - 4; i++) masked.append('•');
+        masked.append(key.substring(key.length() - 4));
+        return masked.toString();
+    }
+
     @Override
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
@@ -125,7 +139,7 @@ public class Settings extends AppCompatPreferenceActivity implements OnSharedPre
                 .putString(OPENWEATHER_API_KEY, apiKeyValue)
                 .apply();
         openweather_api_key.setText(apiKeyValue);
-        openweather_api_key.setSummary(apiKeyValue);
+        openweather_api_key.setSummary(maskApiKey(apiKeyValue));
 
         // Update preferences state based on enable_config_update
         updatePreferencesState();
@@ -165,7 +179,7 @@ public class Settings extends AppCompatPreferenceActivity implements OnSharedPre
         else if (preference.getKey().equals(OPENWEATHER_API_KEY)) {
             String value = sharedPreferences.getString(key, "");
             Aware.setSetting(getApplicationContext(), key, value);
-            preference.setSummary(value);
+            preference.setSummary(maskApiKey(value));
         }
     }
 }

@@ -116,8 +116,6 @@ public class Plugin extends Aware_Plugin implements GoogleApiClient.ConnectionCa
             if (Aware.getSetting(getApplicationContext(), Settings.PLUGIN_OPENWEATHER_FREQUENCY).length() == 0)
                 Aware.setSetting(getApplicationContext(), Settings.PLUGIN_OPENWEATHER_FREQUENCY, 60);
 
-            if (Aware.getSetting(getApplicationContext(), Settings.OPENWEATHER_API_KEY).length() == 0)
-                Aware.setSetting(getApplicationContext(), Settings.OPENWEATHER_API_KEY, "ada11fb870974565377df238f3046aa9");
 
             if (mGoogleApiClient != null && !mGoogleApiClient.isConnected())
                 mGoogleApiClient.connect();

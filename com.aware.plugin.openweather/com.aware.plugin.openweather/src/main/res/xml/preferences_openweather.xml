@@ -34,7 +34,7 @@
     <EditTextPreference
         android:layout_width="wrap_content"
         android:layout_height="wrap_content"
-        android:defaultValue="ada11fb870974565377df238f3046aa9"
+        android:defaultValue=""
         android:key="plugin_openweather_api_key"
         android:persistent="true"
         android:summary="Get your free API key from openweathermap.org"
