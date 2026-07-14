@@ -33,6 +33,14 @@ public class AudioAnalyser extends IntentService {
     @Override
     protected void onHandleIntent(Intent intent) {
 
+        // This IntentService is triggered directly by the Scheduler, not through Plugin's own
+        // onStartCommand() (which normally ensures these via initializeSettings()) — so a config
+        // sync that wipes settings (Aware.reset(), called on every applySettings()) can leave them
+        // empty here even while the plugin keeps running, crashing the parseInt/parseDouble calls
+        // below. Delegate to Plugin's own shared method rather than duplicating its defaults, so the
+        // two can never drift out of sync.
+        Plugin.initializeSettings(getApplicationContext());
+
         //Check if microphone is available right now
         if(!isMicrophoneAvailable(getApplicationContext())) return;
 
@@ -57,9 +65,16 @@ public class AudioAnalyser extends IntentService {
 
         Log.d("AWARE::Ambient Noise", "Collecting audio sample...");
 
+        int sampleSizeSeconds;
+        try {
+            sampleSizeSeconds = Integer.parseInt(Aware.getSetting(getApplicationContext(), Settings.PLUGIN_AMBIENT_NOISE_SAMPLE_SIZE));
+        } catch (NumberFormatException e) {
+            sampleSizeSeconds = 30;
+        }
+
         double now = System.currentTimeMillis();
         double elapsed = 0;
-        while (elapsed < Integer.parseInt(Aware.getSetting(getApplicationContext(), Settings.PLUGIN_AMBIENT_NOISE_SAMPLE_SIZE)) * 1000) {
+        while (elapsed < sampleSizeSeconds * 1000) {
             elapsed = System.currentTimeMillis() - now;
 
             int realtime_buffer = AudioRecord.getMinBufferSize(AudioTrack.getNativeOutputSampleRate(AudioManager.STREAM_SYSTEM), AudioFormat.CHANNEL_IN_MONO, AudioFormat.ENCODING_PCM_16BIT) * 10;
