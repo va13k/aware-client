@@ -208,4 +208,97 @@ public final class SensorCollection {
     private static String prettyName(String categoryKey) {
         return categoryKey.replace('_', ' ');
     }
+
+    // ---------------------------------------------------------------------------------------------
+    // Per-sensor runtime-permission consent (used by the post-join consent screen).
+    //
+    // Only sensors that require a *runtime* permission dialog appear here. On this app (target SDK
+    // 28) that means location, call log, contacts, phone state and SMS; bluetooth/wifi/network
+    // *state* permissions are install-time and never prompt. Each item lists the study settings that
+    // enable the sensor and the full set of runtime permissions that sensor needs to actually work.
+    // ---------------------------------------------------------------------------------------------
+
+    /** One promptable sensor: what enables it, why we ask, and the permissions to request. */
+    public static final class ConsentItem {
+        public final String key;             // stable id, e.g. "locations"
+        public final String label;           // participant-facing name, e.g. "Location"
+        public final String reason;          // one-line plain-language reason
+        public final String[] statusSettings; // any of these == "true" means the study enabled it
+        public final String[] permissions;   // runtime permissions to request for this sensor
+
+        ConsentItem(String key, String label, String reason, String[] statusSettings, String[] permissions) {
+            this.key = key;
+            this.label = label;
+            this.reason = reason;
+            this.statusSettings = statusSettings;
+            this.permissions = permissions;
+        }
+    }
+
+    private static final ConsentItem[] CONSENTS = new ConsentItem[]{
+            new ConsentItem("locations", "Location",
+                    "Record the places you visit.",
+                    new String[]{Aware_Preferences.STATUS_LOCATION_GPS, Aware_Preferences.STATUS_LOCATION_NETWORK},
+                    new String[]{Manifest.permission.ACCESS_FINE_LOCATION, Manifest.permission.ACCESS_COARSE_LOCATION}),
+            new ConsentItem("wifi", "Wi‑Fi",
+                    "Detect nearby Wi‑Fi networks.",
+                    new String[]{Aware_Preferences.STATUS_WIFI},
+                    new String[]{Manifest.permission.ACCESS_COARSE_LOCATION}),
+            new ConsentItem("bluetooth", "Bluetooth",
+                    "Detect nearby Bluetooth devices.",
+                    new String[]{Aware_Preferences.STATUS_BLUETOOTH},
+                    new String[]{Manifest.permission.ACCESS_COARSE_LOCATION}),
+            new ConsentItem("telephony", "Telephony",
+                    "Cell tower / network information.",
+                    new String[]{Aware_Preferences.STATUS_TELEPHONY},
+                    new String[]{Manifest.permission.READ_PHONE_STATE, Manifest.permission.ACCESS_COARSE_LOCATION}),
+            new ConsentItem("communication", "Calls & messages",
+                    "Call and message patterns (content is never read).",
+                    new String[]{Aware_Preferences.STATUS_COMMUNICATION_EVENTS, Aware_Preferences.STATUS_CALLS, Aware_Preferences.STATUS_MESSAGES},
+                    new String[]{Manifest.permission.READ_CALL_LOG, Manifest.permission.READ_CONTACTS, Manifest.permission.READ_PHONE_STATE, Manifest.permission.READ_SMS}),
+    };
+
+    /**
+     * The consent items the current study still needs the participant to grant: the sensor is enabled
+     * by the study AND at least one of its runtime permissions is not yet granted. Sensors with no
+     * runtime permissions, disabled sensors, and fully-granted sensors are omitted.
+     */
+    public static List<ConsentItem> neededConsents(Context context) {
+        List<ConsentItem> needed = new ArrayList<>();
+        for (ConsentItem item : CONSENTS) {
+            if (item.permissions.length == 0) continue;
+            if (!isSensorEnabled(context, item.statusSettings)) continue;
+            if (firstMissingPermission(context, item.permissions) == null) continue; // all granted
+            needed.add(item);
+        }
+        return needed;
+    }
+
+    /**
+     * All promptable sensors the study has enabled, regardless of whether their permissions are
+     * granted yet. Used by the consent screen to show every relevant sensor (granted ones as ✓).
+     */
+    public static List<ConsentItem> enabledConsents(Context context) {
+        List<ConsentItem> enabled = new ArrayList<>();
+        for (ConsentItem item : CONSENTS) {
+            if (item.permissions.length == 0) continue;
+            if (isSensorEnabled(context, item.statusSettings)) enabled.add(item);
+        }
+        return enabled;
+    }
+
+    /** True if all of a consent item's runtime permissions are currently granted. */
+    public static boolean isGranted(Context context, ConsentItem item) {
+        return firstMissingPermission(context, item.permissions) == null;
+    }
+
+    /** True if any of the given status settings is currently "true". */
+    private static boolean isSensorEnabled(Context context, String[] statusSettings) {
+        for (String setting : statusSettings) {
+            if ("true".equalsIgnoreCase(Aware.getSetting(context, setting))) {
+                return true;
+            }
+        }
+        return false;
+    }
 }

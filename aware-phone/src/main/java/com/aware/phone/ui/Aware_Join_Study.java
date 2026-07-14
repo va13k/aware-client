@@ -23,6 +23,7 @@ import com.aware.Aware;
 import com.aware.Aware_Preferences;
 import com.aware.phone.R;
 import com.aware.phone.ui.dialogs.JoinStudyDialog;
+import com.aware.phone.ui.prefs.SensorCollection;
 import com.aware.phone.utils.AwareUtil;
 import com.aware.providers.Aware_Provider;
 import com.aware.utils.*;
@@ -486,10 +487,14 @@ public class Aware_Join_Study extends Aware_Activity {
                 @Override
                 public void onDismiss(DialogInterface dialogInterface) {
                     finish();
-                    //Redirect the user to the main UI
-                    Intent mainUI = new Intent(getApplicationContext(), Aware_Client.class);
-                    mainUI.setFlags(Intent.FLAG_ACTIVITY_NEW_TASK | Intent.FLAG_ACTIVITY_CLEAR_TASK);
-                    startActivity(mainUI);
+                    // If the joined study needs runtime permissions, go through the consent screen
+                    // first (it asks one sensor at a time, then opens Aware_Client). Otherwise go
+                    // straight to the main UI.
+                    Intent next = SensorCollection.neededConsents(getApplicationContext()).isEmpty()
+                            ? new Intent(getApplicationContext(), Aware_Client.class)
+                            : new Intent(getApplicationContext(), SensorConsentActivity.class);
+                    next.setFlags(Intent.FLAG_ACTIVITY_NEW_TASK | Intent.FLAG_ACTIVITY_CLEAR_TASK);
+                    startActivity(next);
                 }
             });
         }
