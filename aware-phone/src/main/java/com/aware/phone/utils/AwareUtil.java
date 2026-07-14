@@ -1,5 +1,7 @@
 package com.aware.phone.utils;
 
+import android.content.ClipData;
+import android.content.ClipboardManager;
 import android.content.Context;
 import android.database.Cursor;
 import android.util.Log;
@@ -91,6 +93,21 @@ public class AwareUtil {
     public static String getSensorType(String setting) {
         // TODO: Get a proper mapping
         return setting.replace("status_", "");
+    }
+
+    /**
+     * Copies text to the system clipboard and shows a short confirmation toast.
+     *
+     * @param context
+     * @param label   clipboard label (not user-visible on most launchers)
+     * @param text    the text to copy; no-op if null/empty
+     */
+    public static void copyToClipboard(Context context, String label, String text) {
+        if (text == null || text.length() == 0) return;
+        ClipboardManager clipboard = (ClipboardManager) context.getSystemService(Context.CLIPBOARD_SERVICE);
+        if (clipboard == null) return;
+        clipboard.setPrimaryClip(ClipData.newPlainText(label, text));
+        Toast.makeText(context, "Copied to clipboard", Toast.LENGTH_SHORT).show();
     }
 
 //    public static void syncStudyConfig(Context context) {

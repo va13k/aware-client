@@ -328,9 +328,13 @@ public class WiFi extends Aware_Sensor {
 
                             if (awareSensor != null) awareSensor.onWiFiDisabled();
                         }
-                    } catch (NullPointerException e) {
+                    } catch (NullPointerException | SecurityException e) {
+                        // SecurityException: wifiManager.startScan() throws this when the phone's
+                        // OS-level Location service is off — required system-wide for WiFi scan
+                        // results regardless of any app permission. Previously uncaught here, this
+                        // crashed the service every time Location was disabled.
                         if (Aware.DEBUG) {
-                            Log.d(WiFi.TAG, "WiFi is off");
+                            Log.d(WiFi.TAG, "WiFi scan failed: " + e.getMessage());
                         }
 
                         ContentValues rowData = new ContentValues();

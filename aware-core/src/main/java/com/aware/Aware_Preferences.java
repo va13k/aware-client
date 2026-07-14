@@ -633,6 +633,14 @@ public class Aware_Preferences {
     public static final String ENABLE_CONFIG_UPDATE = "enable_config_update";
 
     /**
+     * Serialized JSON payload describing the last study config update the participant hasn't
+     * seen yet (sensors added/removed, enable_config_update change). Written by
+     * StudyUtils.syncStudyConfig() so the notice survives even if no UI was open to receive the
+     * live ACTION_AWARE_STUDY_CONFIG_UPDATED broadcast; cleared once shown.
+     */
+    public static final String PENDING_STUDY_UPDATE_NOTICE = "pending_study_update_notice";
+
+    /**
      * Key management strategy.
      * - "once" = keys are not updated once downloaded.
      * - "" = keys are updated as often as needed.

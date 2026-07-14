@@ -36,6 +36,7 @@ import android.widget.LinearLayout;
 import android.widget.TextView;
 import android.widget.Toast;
 import androidx.core.app.NotificationCompat;
+import androidx.core.content.ContextCompat;
 import androidx.core.content.PermissionChecker;
 import com.aware.providers.Aware_Provider;
 import com.aware.providers.Aware_Provider.Aware_Device;
@@ -154,6 +155,21 @@ public class Aware extends Service {
      */
     public static final String ACTION_AWARE_SYNC_CONFIG = "ACTION_AWARE_SYNC_CONFIG";
     public static final String SYNC_CONFIG_EXTRA_TOAST = "SYNC_CONFIG_EXTRA_TOAST";
+    /**
+     * Broadcast after a study config update has been applied, so an open UI can refresh
+     * (e.g. rebuild the sensor list to reflect newly enabled/disabled sensors).
+     */
+    public static final String ACTION_AWARE_STUDY_CONFIG_UPDATED = "ACTION_AWARE_STUDY_CONFIG_UPDATED";
+    /** String ArrayList extras on {@link #ACTION_AWARE_STUDY_CONFIG_UPDATED}: sensors newly enabled / disabled. */
+    public static final String EXTRA_SENSORS_ADDED = "sensors_added";
+    public static final String EXTRA_SENSORS_REMOVED = "sensors_removed";
+    /**
+     * Boolean extras on {@link #ACTION_AWARE_STUDY_CONFIG_UPDATED}: whether enable_config_update
+     * changed, and if so, its new value. EXTRA_CONFIG_UPDATE_ALLOWED_NEW_VALUE is only meaningful
+     * when EXTRA_CONFIG_UPDATE_ALLOWED_CHANGED is true.
+     */
+    public static final String EXTRA_CONFIG_UPDATE_ALLOWED_CHANGED = "config_update_allowed_changed";
+    public static final String EXTRA_CONFIG_UPDATE_ALLOWED_NEW_VALUE = "config_update_allowed_new_value";
 
     /**
      * Notification ID for AWARE service as foreground (to handle Doze, Android O battery optimizations)
@@ -665,6 +681,58 @@ public class Aware extends Service {
     }
 
     /**
+     * Fetch the cursor for the study the device is currently enrolled in, independent of
+     * any URL. Mirrors {@link #isStudy(Context)}: the most recent study row that has been
+     * joined and not yet exited. Use this (instead of {@link #getStudy(Context, String)})
+     * for quitting a study, so it still works when the WEBSERVICE_SERVER setting has drifted
+     * from the study URL (e.g. after a partial reset). Caller must close the returned Cursor.
+     *
+     * @param c
+     * @return cursor positioned at the active study row, or null/empty if not enrolled
+     */
+    public static Cursor getActiveStudy(Context c) {
+        return c.getContentResolver().query(
+            Aware_Provider.Aware_Studies.CONTENT_URI,
+            null,
+            Aware_Provider.Aware_Studies.STUDY_EXIT + "=0 AND " + Aware_Provider.Aware_Studies.STUDY_JOINED + ">0",
+            null,
+            Aware_Provider.Aware_Studies.STUDY_TIMESTAMP + " DESC LIMIT 1"
+        );
+    }
+
+    /**
+     * Returns the list of studies the device has successfully joined at any point, most recent
+     * first, collapsed to one entry per distinct study. The aware_studies table keeps a row for
+     * every join and every compliance event, so this de-duplicates by study URL (falling back to
+     * study key) and keeps only the latest row per study. Intended for a "previously joined
+     * studies" history/management list.
+     *
+     * @param c
+     * @return one {@link ContentValues} per distinct joined study (all study columns), newest first
+     */
+    public static List<ContentValues> getJoinedStudies(Context c) {
+        List<ContentValues> studies = new ArrayList<>();
+        Set<String> seen = new HashSet<>();
+        Cursor cursor = c.getContentResolver().query(Aware_Provider.Aware_Studies.CONTENT_URI, null,
+                Aware_Provider.Aware_Studies.STUDY_JOINED + ">0", null,
+                Aware_Provider.Aware_Studies.STUDY_TIMESTAMP + " DESC");
+        if (cursor != null) {
+            while (cursor.moveToNext()) {
+                String url = cursor.getString(cursor.getColumnIndex(Aware_Provider.Aware_Studies.STUDY_URL));
+                String identity = (url != null && url.length() > 0)
+                        ? url
+                        : "key:" + cursor.getInt(cursor.getColumnIndex(Aware_Provider.Aware_Studies.STUDY_KEY));
+                if (!seen.add(identity)) continue; // already have the latest row for this study
+                ContentValues row = new ContentValues();
+                DatabaseUtils.cursorRowToContentValues(cursor, row);
+                studies.add(row);
+            }
+            cursor.close();
+        }
+        return studies;
+    }
+
+    /**
      * Gets the study config object for a given study URL
      *
      * @param c
@@ -676,15 +744,61 @@ public class Aware extends Service {
         JSONObject studyConfig = new JSONObject();
 
         if (study != null && study.moveToFirst()) {
-            try {
-                studyConfig = new JSONObject(study.getString(
-                        study.getColumnIndex(Aware_Provider.Aware_Studies.STUDY_CONFIG)));
-            } catch (JSONException e) {
-                e.printStackTrace();
-            }
+            studyConfig = parseStudyConfig(study.getString(
+                    study.getColumnIndex(Aware_Provider.Aware_Studies.STUDY_CONFIG)));
         }
 
+        if (study != null && !study.isClosed()) study.close();
         return studyConfig;
+    }
+
+    /**
+     * Gets the config object for the currently joined study, independent of WEBSERVICE_SERVER.
+     *
+     * @param c
+     * @return JSONObject representing the active study config
+     */
+    public static JSONObject getActiveStudyConfig(Context c) {
+        Cursor study = getActiveStudy(c);
+        JSONObject studyConfig = new JSONObject();
+
+        if (study != null && study.moveToFirst()) {
+            studyConfig = parseStudyConfig(study.getString(
+                    study.getColumnIndex(Aware_Provider.Aware_Studies.STUDY_CONFIG)));
+        }
+
+        if (study != null && !study.isClosed()) study.close();
+        return studyConfig;
+    }
+
+    private static JSONObject parseStudyConfig(String config) {
+        if (config == null || config.trim().length() == 0) return new JSONObject();
+
+        try {
+            String trimmed = config.trim();
+            if (trimmed.startsWith("[")) {
+                JSONArray configs = new JSONArray(trimmed);
+                return configs.length() > 0 ? configs.getJSONObject(0) : new JSONObject();
+            }
+            return new JSONObject(trimmed);
+        } catch (JSONException e) {
+            e.printStackTrace();
+            return new JSONObject();
+        }
+    }
+
+    /**
+     * Read a numeric setting, tolerating empty/missing/invalid values. Some settings
+     * (e.g. FREQUENCY_SYNC_CONFIG) are only populated by a study config, so after
+     * {@link #reset(Context)} on study exit they can be empty; parsing them directly
+     * would throw NumberFormatException and crash the service on start.
+     */
+    private static long getSettingAsLong(Context context, String key, long defaultValue) {
+        try {
+            return Long.parseLong(Aware.getSetting(context, key));
+        } catch (NumberFormatException e) {
+            return defaultValue;
+        }
     }
 
     @Override
@@ -694,7 +808,7 @@ public class Aware extends Service {
         // To track the application starting info
         Aware.debug(getApplicationContext(),"Aware-starting");
 
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M && PermissionChecker.checkSelfPermission(getApplicationContext(), Manifest.permission.WRITE_EXTERNAL_STORAGE) != PermissionChecker.PERMISSION_GRANTED) {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M && ContextCompat.checkSelfPermission(getApplicationContext(), Manifest.permission.WRITE_EXTERNAL_STORAGE) != PackageManager.PERMISSION_GRANTED) {
             return START_STICKY;
         }
 
@@ -714,6 +828,16 @@ public class Aware extends Service {
             //this sets the default settings to all plugins too
             Map<String, ?> defaults = prefs.getAll();
             for (Map.Entry<String, ?> entry : defaults.entrySet()) {
+                // Skip webservice_server: the "com.aware.phone" SharedPreferences file baked in the
+                // XML placeholder ("http://api.awareframework.com/index.php") the first time
+                // setDefaultValues() ever ran on this device, and nothing ever updates that cached
+                // copy when a participant later joins a real study (Aware_Join_Study writes straight
+                // to the ContentProvider settings table, not to this SharedPreferences file). So this
+                // loop was silently refilling a real join URL with that stale placeholder every time
+                // it happened to observe the ContentProvider's copy empty — the same landmine as the
+                // explicit fallback removed below, just reached through the cached-defaults path
+                // instead. See Aware_Join_Study for how webservice_server is actually meant to be set.
+                if (entry.getKey().equals(Aware_Preferences.WEBSERVICE_SERVER)) continue;
                 if (Aware.getSetting(getApplicationContext(), entry.getKey(), "com.aware.phone").length() == 0) {
                     Aware.setSetting(getApplicationContext(), entry.getKey(), entry.getValue(), "com.aware.phone"); //default AWARE settings
                 }
@@ -724,10 +848,24 @@ public class Aware extends Service {
                 Aware.setSetting(getApplicationContext(), Aware_Preferences.DEVICE_ID, uuid.toString(), "com.aware.phone");
             }
 
-            if (Aware.getSetting(getApplicationContext(), Aware_Preferences.WEBSERVICE_SERVER).length() == 0) {
-                Aware.setSetting(getApplicationContext(), Aware_Preferences.WEBSERVICE_SERVER, "https://api.awareframework.com/index.php");
+            // Self-heal webservice_server from aware_studies — the authoritative record of what was
+            // actually joined — instead of ever defaulting it to a placeholder. This setting doubles
+            // as the join URL Aware.getStudy()/isStudy() match against aware_studies.study_url, so
+            // it must never silently become a demo-server placeholder (that used to happen via a
+            // couple of "if empty, default to..." fallbacks, all removed) or sit corrupted from that
+            // historical bug waiting on a manual rejoin/DB fix. If it doesn't match the enrolled
+            // study's real URL, correct it here, every service start.
+            if (isStudy(getApplicationContext())) {
+                Cursor activeStudy = getActiveStudy(getApplicationContext());
+                if (activeStudy != null && activeStudy.moveToFirst()) {
+                    String realUrl = activeStudy.getString(activeStudy.getColumnIndex(Aware_Provider.Aware_Studies.STUDY_URL));
+                    String currentUrl = Aware.getSetting(getApplicationContext(), Aware_Preferences.WEBSERVICE_SERVER);
+                    if (realUrl != null && realUrl.length() > 0 && !realUrl.equals(currentUrl)) {
+                        Aware.setSetting(getApplicationContext(), Aware_Preferences.WEBSERVICE_SERVER, realUrl);
+                    }
+                }
+                if (activeStudy != null && !activeStudy.isClosed()) activeStudy.close();
             }
-
             DEBUG = Aware.getSetting(this, Aware_Preferences.DEBUG_FLAG).equals("true");
             TAG = Aware.getSetting(this, Aware_Preferences.DEBUG_TAG).length() > 0 ? Aware.getSetting(this, Aware_Preferences.DEBUG_TAG) : TAG;
 
@@ -811,7 +949,7 @@ public class Aware extends Service {
             if (Aware.isStudy(this)) {
                 ContentResolver.setIsSyncable(Aware.getAWAREAccount(this), Aware_Provider.getAuthority(this), 1);
                 ContentResolver.setSyncAutomatically(Aware.getAWAREAccount(this), Aware_Provider.getAuthority(this), true);
-                long frequency = Long.parseLong(Aware.getSetting(this, Aware_Preferences.FREQUENCY_WEBSERVICE)) * 60;
+                long frequency = getSettingAsLong(this, Aware_Preferences.FREQUENCY_WEBSERVICE, 30) * 60;
                 SyncRequest request = new SyncRequest.Builder()
                         .syncPeriodic(frequency, frequency/3)
                         .setSyncAdapter(Aware.getAWAREAccount(this), Aware_Provider.getAuthority(this))
@@ -821,10 +959,11 @@ public class Aware extends Service {
                 // Set scheduler for syncing config data
                 try {
                     Scheduler.Schedule syncConfig = Scheduler.getSchedule(this, Aware.SCHEDULE_SYNC_CONFIG);
-                    frequency = Long.parseLong(getSetting(this, Aware_Preferences.FREQUENCY_SYNC_CONFIG));
+                    frequency = getSettingAsLong(this, Aware_Preferences.FREQUENCY_SYNC_CONFIG, 30);
 
                     if (syncConfig != null && syncConfig.getInterval() != frequency) {
                         syncConfig.setInterval(frequency);
+                        Scheduler.saveSchedule(this, syncConfig);
                     }
                     if (syncConfig == null) {
                         syncConfig = new Scheduler.Schedule(Aware.SCHEDULE_SYNC_CONFIG);
@@ -1961,9 +2100,36 @@ public class Aware extends Service {
         }
     }
 
-    public static void reset(Context context) {
+    /**
+     * synchronized: reset() captures device_id/device_label/webservice_server, wipes all settings,
+     * then restores them. Every ACTION_AWARE_SYNC_CONFIG trigger (scheduled poll, manual button,
+     * onResume) spawns its own thread and can end up calling this concurrently (directly, or via
+     * applySettings()). Without serializing, one thread's capture step can read another thread's
+     * already-wiped-but-not-yet-restored (empty) value and persist that — which is exactly how
+     * webservice_server was intermittently coming back empty despite the fix below.
+     */
+    public static synchronized void reset(Context context) {
         String device_id = Aware.getSetting(context, Aware_Preferences.DEVICE_ID);
         String device_label = Aware.getSetting(context, Aware_Preferences.DEVICE_LABEL);
+        // Preserve across the wipe below, same as device_id/device_label: this is the join URL
+        // Aware.getStudy() matches against aware_studies.study_url. Without this, it comes back
+        // empty and the next service start refills it with a hardcoded placeholder, permanently
+        // breaking study lookup even though the aware_studies row is still healthy.
+        String webservice_server = Aware.getSetting(context, Aware_Preferences.WEBSERVICE_SERVER);
+        // Preserve across the wipe below: not part of aware_preferences.xml's defaults, so it would
+        // otherwise come back empty until the current sync's processSensorSettings() re-applies it a
+        // few lines later in applySettings(). This is the shared "how often to sync data" interval —
+        // nearly every sensor's onStartCommand() does Long.parseLong(getSetting(FREQUENCY_WEBSERVICE))
+        // with no validation to schedule its own periodic data sync (the real JDBC upload path, not
+        // just the legacy webservice one). If a sensor happens to (re)start on a different thread
+        // during that narrow window, it crashes on an empty string — observed for real in
+        // ESM.onStartCommand and the ambient_noise plugin's AudioAnalyser.
+        String frequency_webservice = Aware.getSetting(context, Aware_Preferences.FREQUENCY_WEBSERVICE);
+        // Preserve across the wipe below: a not-yet-shown "study updated" notice for the participant
+        // (StudyUtils.syncStudyConfig sets this, Aware_Client shows it and clears it once seen). Also
+        // not part of aware_preferences.xml's defaults, so without this it would be silently dropped
+        // if a reset() races a pending notice — the participant would simply never see that update.
+        String pending_study_update_notice = Aware.getSetting(context, Aware_Preferences.PENDING_STUDY_UPDATE_NOTICE);
 
         //Remove all settings
         context.getContentResolver().delete(Aware_Settings.CONTENT_URI, null, null);
@@ -1984,6 +2150,9 @@ public class Aware extends Service {
         //Keep previous AWARE Device ID and label
         Aware.setSetting(context, Aware_Preferences.DEVICE_ID, device_id, "com.aware.phone");
         Aware.setSetting(context, Aware_Preferences.DEVICE_LABEL, device_label, "com.aware.phone");
+        Aware.setSetting(context, Aware_Preferences.WEBSERVICE_SERVER, webservice_server, "com.aware.phone");
+        Aware.setSetting(context, Aware_Preferences.FREQUENCY_WEBSERVICE, frequency_webservice, "com.aware.phone");
+        Aware.setSetting(context, Aware_Preferences.PENDING_STUDY_UPDATE_NOTICE, pending_study_update_notice, "com.aware.phone");
 
         ContentValues update_label = new ContentValues();
         update_label.put(Aware_Device.LABEL, device_label);
@@ -2268,6 +2437,16 @@ public class Aware extends Service {
      * @author denzil
      */
     public static final Aware_Broadcaster aware_BR = new Aware_Broadcaster();
+    // Single-threaded: syncStudyConfig() -> applySettings() calls Aware.reset() (wipe all settings)
+    // and then writes the new config back non-atomically over several steps. Only reset() itself is
+    // synchronized, so two overlapping ACTION_AWARE_SYNC_CONFIG triggers (scheduled poll, onResume(),
+    // repeated manual button taps — none of which are mutually exclusive) used to each run on their
+    // own ad-hoc Thread, and a second thread's reset() could wipe settings a first thread had only
+    // partially finished re-applying, corrupting the result (observed for real: study config kept
+    // re-appearing as "updated" every sync, and device_id drifted to a freshly-minted UUID mid-sync).
+    // Routing every sync through one single-thread executor makes them run strictly one at a time.
+    private static final java.util.concurrent.ExecutorService syncConfigExecutor =
+            java.util.concurrent.Executors.newSingleThreadExecutor();
     public static class Aware_Broadcaster extends BroadcastReceiver {
         @Override
         public void onReceive(Context context, Intent intent) {
@@ -2291,13 +2470,13 @@ public class Aware extends Service {
                 ContentResolver.requestSync(Aware.getAWAREAccount(context), Aware_Provider.getAuthority(context), sync);
             }
             if (intent.getAction().equals(Aware.ACTION_AWARE_SYNC_CONFIG) && isStudy(context)) {
-                new Thread(new Runnable() {
+                final Boolean showToast = intent.getBooleanExtra(Aware.SYNC_CONFIG_EXTRA_TOAST, false);
+                syncConfigExecutor.execute(new Runnable() {
                     @Override
                     public void run() {
-                        Boolean showToast = intent.getBooleanExtra(Aware.SYNC_CONFIG_EXTRA_TOAST, false);
                         StudyUtils.syncStudyConfig(context, showToast);
                     }
-                }).start();
+                });
             }
         }
     }
