@@ -65,9 +65,16 @@ public class AudioAnalyser extends IntentService {
 
         Log.d("AWARE::Ambient Noise", "Collecting audio sample...");
 
+        int sampleSizeSeconds;
+        try {
+            sampleSizeSeconds = Integer.parseInt(Aware.getSetting(getApplicationContext(), Settings.PLUGIN_AMBIENT_NOISE_SAMPLE_SIZE));
+        } catch (NumberFormatException e) {
+            sampleSizeSeconds = 30;
+        }
+
         double now = System.currentTimeMillis();
         double elapsed = 0;
-        while (elapsed < Integer.parseInt(Aware.getSetting(getApplicationContext(), Settings.PLUGIN_AMBIENT_NOISE_SAMPLE_SIZE)) * 1000) {
+        while (elapsed < sampleSizeSeconds * 1000) {
             elapsed = System.currentTimeMillis() - now;
 
             int realtime_buffer = AudioRecord.getMinBufferSize(AudioTrack.getNativeOutputSampleRate(AudioManager.STREAM_SYSTEM), AudioFormat.CHANNEL_IN_MONO, AudioFormat.ENCODING_PCM_16BIT) * 10;
