@@ -108,57 +108,6 @@ public class AwareSyncAdapter extends AbstractThreadedSyncAdapter {
         }
     }
 
-    /**
-     * Offloads data stored in a content provider to a remote MySQL database.
-     *
-     * @param context application context
-     * @param database_table name of database table that contains the data to offload
-     * @param table_fields string representing the fields for database_table
-     * @param CONTENT_URI URI of the content provider
-     */
-    private void offloadData(Context context, String database_table, String table_fields, Uri CONTENT_URI) {
-
-        // Check if charging is required for offloading data
-        if (Aware.getSetting(context, Aware_Preferences.WEBSERVICE_CHARGING).equals("true")) {
-            Intent batt = context.registerReceiver(null, new IntentFilter(Intent.ACTION_BATTERY_CHANGED));
-            int plugged = batt.getIntExtra(BatteryManager.EXTRA_PLUGGED, -1);
-            boolean isCharging = (plugged == BatteryManager.BATTERY_PLUGGED_AC || plugged == BatteryManager.BATTERY_PLUGGED_USB);
-
-            if (!isCharging) {
-                if (Aware.DEBUG) Log.d(Aware.TAG, "Only sync data if charging...");
-                return;
-            }
-        }
-
-        // Check if WiFi is required for offloading data
-        if (!isWifiNeededAndConnected()) {
-            if (!isForce3G(database_table)) {
-                if (Aware.DEBUG)
-                    Log.d(Aware.TAG, "Sync data only over Wi-Fi. Will try again later...");
-                return;
-            }
-        }
-
-        Aware.debug(mContext, "STUDY-SYNC: " + database_table);
-
-        boolean web_service_remove_data = Aware.getSetting(context, Aware_Preferences.WEBSERVICE_REMOVE_DATA).equals("true");
-        int MAX_POST_SIZE = getBatchSize();
-
-        // Max number of rows to place on the HTTP(s) post
-        if (MAX_POST_SIZE == 0) {
-            Log.d(Aware.TAG, "Device without available memory left for sync.");
-            return;
-        }
-
-//        try {
-//            Jdbc.insertData(database_table, table_fields, data);
-//        } catch (SQLException e) {
-//            e.printStackTrace();
-//        }
-    }
-
-
-
 /// Send data to the database
     private void offloadData(Context context, String database_table, String web_server, String table_fields, Uri CONTENT_URI) {
 
@@ -190,7 +139,6 @@ public class AwareSyncAdapter extends AbstractThreadedSyncAdapter {
 
         Aware.debug(mContext, "STUDY-SYNC: " + database_table);
 
-        String protocol = web_server.substring(0, web_server.indexOf(":"));
         boolean web_service_simple = Aware.getSetting(context, Aware_Preferences.WEBSERVICE_SIMPLE).equals("true");
         boolean web_service_remove_data = Aware.getSetting(context, Aware_Preferences.WEBSERVICE_REMOVE_DATA).equals("true");
 
@@ -252,7 +200,7 @@ public class AwareSyncAdapter extends AbstractThreadedSyncAdapter {
                         notifyUser(context, "Table: " + database_table + " syncing batch " + (uploaded_records + MAX_POST_SIZE) / MAX_POST_SIZE + " of " + batches, false, true, notificationID);
 
                     Cursor sync_data = getSyncData(remoteLatestData, CONTENT_URI, study_condition, columnsStr, uploaded_records, context, MAX_POST_SIZE);
-                    lastSynced = syncBatch(sync_data, database_table, device_id, context, protocol, web_server, DEBUG);
+                    lastSynced = syncBatch(sync_data, database_table, device_id, context, DEBUG);
                     if (lastSynced == null) {
                         removeFrom = 0;
                         Log.d(Aware.TAG, "Connection to server interrupted. Will try again later.");
@@ -592,7 +540,7 @@ public class AwareSyncAdapter extends AbstractThreadedSyncAdapter {
         }
     }
 
-    private Long syncBatch(Cursor context_data, String DATABASE_TABLE, String DEVICE_ID, Context mContext, String protocol, String WEBSERVER, Boolean DEBUG) throws JSONException {
+    private Long syncBatch(Cursor context_data, String DATABASE_TABLE, String DEVICE_ID, Context mContext, Boolean DEBUG) throws JSONException {
         JSONArray rows = new JSONArray();
         long lastSynced = 0;
         if (context_data != null && context_data.moveToFirst()) {
