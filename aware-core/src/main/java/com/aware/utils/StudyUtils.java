@@ -905,12 +905,17 @@ public class StudyUtils extends IntentService {
     public static void syncStudyConfig(Context context, Boolean toast) {
         if (!Aware.isStudy(context)) return;
 
-        String studyUrl = Aware.getSetting(context, Aware_Preferences.WEBSERVICE_SERVER);
-        Cursor study = Aware.getStudy(context,
-                Aware.getSetting(context, Aware_Preferences.WEBSERVICE_SERVER));
+        // Aware.getActiveStudy() instead of Aware.getStudy(context, webservice_server): the latter
+        // does "WHERE study_url LIKE '<webservice_server>%'", which silently finds nothing (and
+        // makes this whole method a no-op) the moment webservice_server and the row's own
+        // study_url text ever diverge — e.g. joining via a short link that differs from the
+        // resolved config URL the row actually stored. getActiveStudy() matches on "currently
+        // joined, not exited" instead, with no URL comparison at all.
+        Cursor study = Aware.getActiveStudy(context);
 
         if (study != null && study.moveToFirst()) {
             try {
+                String studyUrl = study.getString(study.getColumnIndex(Aware_Provider.Aware_Studies.STUDY_URL));
                 JSONObject localConfig = new JSONObject(study.getString(
                         study.getColumnIndex(Aware_Provider.Aware_Studies.STUDY_CONFIG)));
                 JSONObject newConfig = getStudyConfig(studyUrl);
