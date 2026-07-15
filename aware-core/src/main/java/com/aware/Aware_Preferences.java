@@ -641,6 +641,21 @@ public class Aware_Preferences {
     public static final String PENDING_STUDY_UPDATE_NOTICE = "pending_study_update_notice";
 
     /**
+     * Signature of the last detected mismatch between live sensor settings and the study config
+     * that StudyUtils.syncStudyConfig() attempted to self-heal (empty string = none). Used to avoid
+     * re-applying settings on every sync poll when the drift can't actually be fixed (e.g. a sensor
+     * whose hardware is missing) — see LAST_DRIFT_RECONCILE_TS.
+     */
+    public static final String LAST_DRIFT_SIGNATURE = "last_drift_signature";
+
+    /**
+     * Timestamp (ms) of the last time syncStudyConfig() attempted to self-heal a live-settings
+     * drift matching LAST_DRIFT_SIGNATURE. Paired with a backoff window so an unfixable drift
+     * doesn't restart every sensor service on every ~1 minute sync poll forever.
+     */
+    public static final String LAST_DRIFT_RECONCILE_TS = "last_drift_reconcile_ts";
+
+    /**
      * Key management strategy.
      * - "once" = keys are not updated once downloaded.
      * - "" = keys are updated as often as needed.
