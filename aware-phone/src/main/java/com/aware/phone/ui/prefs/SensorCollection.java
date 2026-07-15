@@ -1,6 +1,7 @@
 package com.aware.phone.ui.prefs;
 
 import android.Manifest;
+import android.content.ComponentName;
 import android.content.Context;
 import android.database.Cursor;
 import android.hardware.Sensor;
@@ -9,9 +10,12 @@ import android.content.pm.PackageManager;
 import android.location.LocationManager;
 import android.net.Uri;
 import android.os.Build;
+import android.provider.Settings;
+import android.text.TextUtils;
 
 import androidx.core.content.ContextCompat;
 
+import com.aware.Applications;
 import com.aware.Aware;
 import com.aware.Aware_Preferences;
 
@@ -125,37 +129,74 @@ public final class SensorCollection {
      */
     public static Status getStatus(Context context, String categoryKey, boolean accessibilityEnabled) {
         Def def = REGISTRY.get(categoryKey);
-        if (def == null) return new Status(false, 0, "Unknown sensor", null);
+        if (def == null) {
+            return new Status(
+                false,
+                0,
+                "Unknown sensor",
+                null
+            );
+        }
 
         long lastData = latestTimestamp(context, def);
         boolean recent = lastData > 0 && (System.currentTimeMillis() - lastData) <= RECENT_WINDOW_MS;
         if (recent) {
-            return new Status(true, lastData, "Collecting data", null);
+            return new Status(
+                true,
+                lastData,
+                "Collecting data",
+                null
+            );
         }
 
         // Not collecting — find the most likely reason.
         if (def.hardwareType != -1 && !hasHardware(context, def.hardwareType)) {
-            return new Status(false, lastData, "This device has no " + prettyName(categoryKey) + " sensor", null);
+            return new Status(
+                false,
+                lastData,
+                "This device has no " + prettyName(categoryKey) + " sensor",
+                null);
         }
         if (def.needsAccessibility && !accessibilityEnabled) {
-            return new Status(false, lastData, "Accessibility service is off",
-                    "Enable AWARE under Settings › Accessibility");
+            return new Status(
+                false,
+                lastData,
+                "Accessibility service is off",
+                "Enable AWARE under Settings > Accessibility"
+            );
         }
         if (def.needsLocationServices && !isLocationServicesEnabled(context)) {
-            return new Status(false, lastData, "Location services are off",
-                    "Enable Location under Settings › Location");
+            return new Status(
+                false,
+                lastData,
+                "Location services are off",
+                "Enable Location under Settings > Location"
+            );
         }
         String missing = firstMissingPermission(context, def.permissions);
         if (missing != null) {
             String p = shortPermission(missing);
-            return new Status(false, lastData, "Missing permission: " + p,
-                    "Grant the " + p + " permission in app settings");
+            return new Status(
+                false,
+                lastData,
+                "Missing permission: " + p,
+                "Grant the " + p + " permission in app settings"
+            );
         }
         if (lastData == 0) {
-            return new Status(false, 0, "No data collected yet",
-                    "Data may take a moment to appear after joining");
+            return new Status(
+                false,
+                0,
+                "No data collected yet",
+                "Data may take a moment to appear after joining"
+            );
         }
-        return new Status(false, lastData, "No recent data", null);
+        return new Status(
+            false,
+            lastData,
+            "No recent data",
+            null
+        );
     }
 
     private static long latestTimestamp(Context context, Def def) {
@@ -210,52 +251,125 @@ public final class SensorCollection {
     }
 
     // ---------------------------------------------------------------------------------------------
-    // Per-sensor runtime-permission consent (used by the post-join consent screen).
+    // Per-sensor consent (used by the post-join consent screen).
     //
-    // Only sensors that require a *runtime* permission dialog appear here. On this app (target SDK
-    // 28) that means location, call log, contacts, phone state and SMS; bluetooth/wifi/network
-    // *state* permissions are install-time and never prompt. Each item lists the study settings that
-    // enable the sensor and the full set of runtime permissions that sensor needs to actually work.
+    // Only sensors that need an explicit participant grant appear here — either a runtime permission
+    // dialog (location, call log, contacts, phone state, SMS) or the Accessibility Service toggle
+    // (applications, keyboard), which is granted via a Settings screen instead of a dialog. Install-time
+    // permissions (e.g. bluetooth/wifi/network *state*) never prompt and aren't listed. Each item lists
+    // the study settings that enable the sensor and either the runtime permissions to request or
+    // needsAccessibility=true.
     // ---------------------------------------------------------------------------------------------
 
-    /** One promptable sensor: what enables it, why we ask, and the permissions to request. */
+    /** One promptable sensor: what enables it, why we ask, and how the participant grants it. */
     public static final class ConsentItem {
         public final String key;             // stable id, e.g. "locations"
         public final String label;           // participant-facing name, e.g. "Location"
         public final String reason;          // one-line plain-language reason
         public final String[] statusSettings; // any of these == "true" means the study enabled it
         public final String[] permissions;   // runtime permissions to request for this sensor
+        public final boolean needsAccessibility; // true if granted via Settings > Accessibility instead
 
         ConsentItem(String key, String label, String reason, String[] statusSettings, String[] permissions) {
+            this(key, label, reason, statusSettings, permissions, false);
+        }
+
+        ConsentItem(String key, String label, String reason, String[] statusSettings, String[] permissions, boolean needsAccessibility) {
             this.key = key;
             this.label = label;
             this.reason = reason;
             this.statusSettings = statusSettings;
             this.permissions = permissions;
+            this.needsAccessibility = needsAccessibility;
         }
     }
 
     private static final ConsentItem[] CONSENTS = new ConsentItem[]{
-            new ConsentItem("locations", "Location",
-                    "Record the places you visit.",
-                    new String[]{Aware_Preferences.STATUS_LOCATION_GPS, Aware_Preferences.STATUS_LOCATION_NETWORK},
-                    new String[]{Manifest.permission.ACCESS_FINE_LOCATION, Manifest.permission.ACCESS_COARSE_LOCATION}),
-            new ConsentItem("wifi", "Wi‑Fi",
-                    "Detect nearby Wi‑Fi networks.",
-                    new String[]{Aware_Preferences.STATUS_WIFI},
-                    new String[]{Manifest.permission.ACCESS_COARSE_LOCATION}),
-            new ConsentItem("bluetooth", "Bluetooth",
-                    "Detect nearby Bluetooth devices.",
-                    new String[]{Aware_Preferences.STATUS_BLUETOOTH},
-                    new String[]{Manifest.permission.ACCESS_COARSE_LOCATION}),
-            new ConsentItem("telephony", "Telephony",
-                    "Cell tower / network information.",
-                    new String[]{Aware_Preferences.STATUS_TELEPHONY},
-                    new String[]{Manifest.permission.READ_PHONE_STATE, Manifest.permission.ACCESS_COARSE_LOCATION}),
-            new ConsentItem("communication", "Calls & messages",
-                    "Call and message patterns (content is never read).",
-                    new String[]{Aware_Preferences.STATUS_COMMUNICATION_EVENTS, Aware_Preferences.STATUS_CALLS, Aware_Preferences.STATUS_MESSAGES},
-                    new String[]{Manifest.permission.READ_CALL_LOG, Manifest.permission.READ_CONTACTS, Manifest.permission.READ_PHONE_STATE, Manifest.permission.READ_SMS}),
+            new ConsentItem(
+                "locations",
+                "Location",
+                "Record the places you visit.",
+                new String[]{
+                    Aware_Preferences.STATUS_LOCATION_GPS,
+                    Aware_Preferences.STATUS_LOCATION_NETWORK
+                },
+                new String[]{
+                    Manifest.permission.ACCESS_FINE_LOCATION,
+                    Manifest.permission.ACCESS_COARSE_LOCATION
+                }
+            ),
+            new ConsentItem(
+                "wifi",
+                "Wi-Fi",
+                "Detect nearby Wi-Fi networks.",
+                new String[]{
+                    Aware_Preferences.STATUS_WIFI
+                },
+                new String[]{
+                    Manifest.permission.ACCESS_COARSE_LOCATION
+                }
+            ),
+            new ConsentItem(
+                "bluetooth",
+                "Bluetooth",
+                "Detect nearby Bluetooth devices.",
+                new String[]{
+                    Aware_Preferences.STATUS_BLUETOOTH
+                },
+                new String[]{
+                    Manifest.permission.ACCESS_COARSE_LOCATION
+                }
+            ),
+            new ConsentItem(
+                "telephony",
+                "Telephony",
+                "Cell tower / network information.",
+                new String[]{
+                    Aware_Preferences.STATUS_TELEPHONY
+                },
+                new String[]{
+                    Manifest.permission.READ_PHONE_STATE,
+                    Manifest.permission.ACCESS_COARSE_LOCATION
+                }
+            ),
+            new ConsentItem(
+                "communication",
+                "Calls & messages",
+                "Call and message patterns (content is never read).",
+                new String[]{
+                    Aware_Preferences.STATUS_COMMUNICATION_EVENTS,
+                    Aware_Preferences.STATUS_CALLS,
+                    Aware_Preferences.STATUS_MESSAGES
+                },
+                new String[]{
+                    Manifest.permission.READ_CALL_LOG,
+                    Manifest.permission.READ_CONTACTS,
+                    Manifest.permission.READ_PHONE_STATE,
+                    Manifest.permission.READ_SMS
+                }
+            ),
+            new ConsentItem(
+                "application",
+                "Applications usage",
+                "Application screen time & foreground activity, notifications, crashes and installations",
+                new String[]{
+                    Aware_Preferences.STATUS_APPLICATIONS,
+                    Aware_Preferences.STATUS_NOTIFICATIONS,
+                    Aware_Preferences.STATUS_CRASHES
+                },
+                NONE,
+                true
+            ),
+            new ConsentItem(
+                "keyboard",
+                "Keyboard masked text",
+                "Keyboard usage patterns, the content is masked, no passwords and text exposed",
+                new String[]{
+                    Aware_Preferences.STATUS_KEYBOARD
+                },
+                NONE,
+                true
+            )
     };
 
     /**
@@ -266,9 +380,9 @@ public final class SensorCollection {
     public static List<ConsentItem> neededConsents(Context context) {
         List<ConsentItem> needed = new ArrayList<>();
         for (ConsentItem item : CONSENTS) {
-            if (item.permissions.length == 0) continue;
+            if (item.permissions.length == 0 && !item.needsAccessibility) continue;
             if (!isSensorEnabled(context, item.statusSettings)) continue;
-            if (firstMissingPermission(context, item.permissions) == null) continue; // all granted
+            if (isGranted(context, item)) continue;
             needed.add(item);
         }
         return needed;
@@ -281,15 +395,42 @@ public final class SensorCollection {
     public static List<ConsentItem> enabledConsents(Context context) {
         List<ConsentItem> enabled = new ArrayList<>();
         for (ConsentItem item : CONSENTS) {
-            if (item.permissions.length == 0) continue;
+            if (item.permissions.length == 0 && !item.needsAccessibility) continue;
             if (isSensorEnabled(context, item.statusSettings)) enabled.add(item);
         }
         return enabled;
     }
 
-    /** True if all of a consent item's runtime permissions are currently granted. */
+    /**
+     * True if a consent item is already granted: for accessibility-backed sensors that means the
+     * Accessibility Service is on; for everything else, that all its runtime permissions are granted.
+     */
     public static boolean isGranted(Context context, ConsentItem item) {
+        if (item.needsAccessibility) {
+            return isAccessibilityServiceEnabled(context);
+        }
         return firstMissingPermission(context, item.permissions) == null;
+    }
+
+    /**
+     * True if AWARE's Accessibility Service (backs Applications, Keyboard and Screenshot capture) is
+     * currently enabled. Reads the OS setting directly rather than {@link Applications#isAccessibilityServiceActive}
+     * so checking status here has no side effects (that method posts a notification when disabled).
+     */
+    public static boolean isAccessibilityServiceEnabled(Context context) {
+        ComponentName expected = new ComponentName(context, Applications.class);
+        String enabledServices = Settings.Secure.getString(
+                context.getContentResolver(), Settings.Secure.ENABLED_ACCESSIBILITY_SERVICES);
+        if (enabledServices == null) return false;
+
+        TextUtils.SimpleStringSplitter splitter = new TextUtils.SimpleStringSplitter(':');
+        splitter.setString(enabledServices);
+        while (splitter.hasNext()) {
+            if (expected.equals(ComponentName.unflattenFromString(splitter.next()))) {
+                return true;
+            }
+        }
+        return false;
     }
 
     /** True if any of the given status settings is currently "true". */

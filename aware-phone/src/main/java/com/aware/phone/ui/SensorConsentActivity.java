@@ -2,6 +2,7 @@ package com.aware.phone.ui;
 
 import android.content.Intent;
 import android.os.Bundle;
+import android.provider.Settings;
 import android.view.LayoutInflater;
 import android.view.View;
 import android.view.ViewGroup;
@@ -75,7 +76,11 @@ public class SensorConsentActivity extends AppCompatActivity {
                 enable.setOnClickListener(new View.OnClickListener() {
                     @Override
                     public void onClick(View v) {
-                        ActivityCompat.requestPermissions(SensorConsentActivity.this, item.permissions, requestCode);
+                        if (item.needsAccessibility) {
+                            startActivity(new Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS));
+                        } else {
+                            ActivityCompat.requestPermissions(SensorConsentActivity.this, item.permissions, requestCode);
+                        }
                     }
                 });
             }
@@ -88,6 +93,14 @@ public class SensorConsentActivity extends AppCompatActivity {
         super.onRequestPermissionsResult(requestCode, permissions, grantResults);
         // Refresh every row so newly granted sensors flip to "Granted ✓".
         buildRows();
+    }
+
+    @Override
+    protected void onResume() {
+        super.onResume();
+        // Accessibility grants happen in the Settings app, not this Activity, so there's no
+        // onRequestPermissionsResult callback for them — re-check on every return to this screen.
+        if (items != null) buildRows();
     }
 
     private void onContinue() {
