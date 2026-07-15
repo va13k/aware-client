@@ -1181,32 +1181,43 @@ public class StudyUtils extends IntentService {
      * mismatch there isn't the "participant thinks they're compliant but a sensor is off" failure
      * mode this exists to catch — and checking them would make the signature (and the reapply
      * cadence below) noisier without covering a materially worse bug.
+     *
+     * Settings whose sensor hardware this device doesn't have (per SensorAvailability) are excluded
+     * entirely rather than left for the 1-hour reconcile backoff to suppress: a missing sensor is a
+     * permanent, known fact about the device, not a transient failure that might self-heal, so it
+     * shouldn't ever count as "drift" or occupy a slot in the backoff-tracked signature at all.
      */
     private static String liveDriftSignature(Context context, JSONObject config) {
         JSONArray sensors = config.optJSONArray("sensors");
         if (sensors == null) return "";
 
-        // Read every candidate setting's live value up front so the comparison itself (below) is a
-        // pure function of data, not of Context/ContentResolver — makes it directly unit-testable
-        // without Robolectric, same reasoning as Aware.parseLongOrDefault being split out from
-        // Aware.getSettingAsLong().
+        // Read every candidate setting's live value (and hardware availability) up front so the
+        // comparison itself (below) is a pure function of data, not of Context/ContentResolver —
+        // makes it directly unit-testable without Robolectric, same reasoning as
+        // Aware.parseLongOrDefault being split out from Aware.getSettingAsLong().
         Map<String, String> liveValues = new HashMap<>();
+        Set<String> hardwareUnavailable = new HashSet<>();
         for (int i = 0; i < sensors.length(); i++) {
             JSONObject sensor = sensors.optJSONObject(i);
             if (sensor == null) continue;
             String setting = sensor.optString("setting", "");
             if (!setting.startsWith("status_") || !sensor.has("value")) continue;
             liveValues.put(setting, Aware.getSetting(context, setting));
+            if (!SensorAvailability.isHardwareAvailable(context, setting)) {
+                hardwareUnavailable.add(setting);
+            }
         }
-        return driftSignature(config, liveValues);
+        return driftSignature(config, liveValues, hardwareUnavailable);
     }
 
     /**
      * Context-free core of {@link #liveDriftSignature(Context, JSONObject)}: compares each
      * status_* sensor setting in {@code config} against its value in {@code liveValues} (missing
      * from the map is treated the same as an empty/unset live setting) and returns a stable, sorted
-     * signature of any mismatches — empty string if everything matches. Split out so it's
-     * unit-testable without a Context.
+     * signature of any mismatches — empty string if everything matches. Settings named in
+     * {@code hardwareUnavailable} are skipped regardless of their live value: the device can never
+     * satisfy them, so they're not "drift" in the sense this method exists to catch. Split out so
+     * it's unit-testable without a Context.
      *
      * Only status_* (on/off) settings are checked, not every setting (frequency/threshold etc.):
      * those don't affect whether data collection is happening at all, just its granularity, so a
@@ -1214,7 +1225,7 @@ public class StudyUtils extends IntentService {
      * mode this exists to catch — and checking them would make the signature (and the reapply
      * cadence below) noisier without covering a materially worse bug.
      */
-    static String driftSignature(JSONObject config, Map<String, String> liveValues) {
+    static String driftSignature(JSONObject config, Map<String, String> liveValues, Set<String> hardwareUnavailable) {
         JSONArray sensors = config.optJSONArray("sensors");
         if (sensors == null) return "";
 
@@ -1225,6 +1236,7 @@ public class StudyUtils extends IntentService {
 
             String setting = sensor.optString("setting", "");
             if (!setting.startsWith("status_") || !sensor.has("value")) continue;
+            if (hardwareUnavailable.contains(setting)) continue;
 
             String expected = String.valueOf(sensor.opt("value"));
             String live = liveValues.containsKey(setting) ? liveValues.get(setting) : "";
