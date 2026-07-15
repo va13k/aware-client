@@ -793,10 +793,45 @@ public class Aware extends Service {
      * {@link #reset(Context)} on study exit they can be empty; parsing them directly
      * would throw NumberFormatException and crash the service on start.
      */
-    private static long getSettingAsLong(Context context, String key, long defaultValue) {
+    public static long getSettingAsLong(Context context, String key, long defaultValue) {
+        return parseLongOrDefault(Aware.getSetting(context, key), defaultValue);
+    }
+
+    /** @see #getSettingAsLong(Context, String, long) */
+    public static int getSettingAsInt(Context context, String key, int defaultValue) {
+        return parseIntOrDefault(Aware.getSetting(context, key), defaultValue);
+    }
+
+    /** @see #getSettingAsLong(Context, String, long) */
+    public static double getSettingAsDouble(Context context, String key, double defaultValue) {
+        return parseDoubleOrDefault(Aware.getSetting(context, key), defaultValue);
+    }
+
+    /** Context-free parse core of {@link #getSettingAsLong}, split out so it's unit-testable without a Context. */
+    static long parseLongOrDefault(String raw, long defaultValue) {
         try {
-            return Long.parseLong(Aware.getSetting(context, key));
+            return Long.parseLong(raw);
         } catch (NumberFormatException e) {
+            return defaultValue;
+        }
+    }
+
+    /** Context-free parse core of {@link #getSettingAsInt}, split out so it's unit-testable without a Context. */
+    static int parseIntOrDefault(String raw, int defaultValue) {
+        try {
+            return Integer.parseInt(raw);
+        } catch (NumberFormatException e) {
+            return defaultValue;
+        }
+    }
+
+    /** Context-free parse core of {@link #getSettingAsDouble}, split out so it's unit-testable without a Context. */
+    static double parseDoubleOrDefault(String raw, double defaultValue) {
+        try {
+            // Unlike Integer.parseInt/Long.parseLong, Double.parseDouble(null) throws
+            // NullPointerException rather than NumberFormatException — catch both.
+            return Double.parseDouble(raw);
+        } catch (NumberFormatException | NullPointerException e) {
             return defaultValue;
         }
     }
