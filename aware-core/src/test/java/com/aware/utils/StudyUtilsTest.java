@@ -1,5 +1,6 @@
 package com.aware.utils;
 
+import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertFalse;
 import static org.junit.Assert.assertTrue;
 
@@ -7,6 +8,9 @@ import org.json.JSONArray;
 import org.json.JSONException;
 import org.json.JSONObject;
 import org.junit.Test;
+
+import java.util.HashMap;
+import java.util.Map;
 
 /**
  * Regression test for StudyUtils.jsonEquals(). Locks in the fix that switched the comparison from
@@ -56,5 +60,71 @@ public class StudyUtilsTest {
         JSONObject after = configWithSensors(sensor("status_location_gps", true), sensor("status_wifi", false));
 
         assertTrue(StudyUtils.jsonEquals(before, after));
+    }
+
+    /**
+     * Regression test for the config-sync gate bug: syncStudyConfig() used to compare only the
+     * stored config blob against the freshly-fetched server config (jsonEquals) and return early
+     * the moment those matched — never checking whether the device's *live* aware_settings still
+     * agreed. A drift (e.g. from Aware.reset() or an interrupted apply, config text unchanged)
+     * therefore went undetected forever. driftSignature() is the fix's pure comparison core: given
+     * a config and a map of what's actually live, it reports every status_* mismatch.
+     */
+    @Test
+    public void driftSignature_matchingLiveSettings_isEmpty() throws JSONException {
+        JSONObject config = configWithSensors(sensor("status_location_gps", true), sensor("status_wifi", false));
+        Map<String, String> live = new HashMap<>();
+        live.put("status_location_gps", "true");
+        live.put("status_wifi", "false");
+
+        assertEquals("", StudyUtils.driftSignature(config, live));
+    }
+
+    @Test
+    public void driftSignature_liveSettingOff_configSaysOn_isDetected() throws JSONException {
+        // The exact failure mode this exists to catch: config still says the sensor should be on,
+        // but the live setting somehow reads off (e.g. Aware.reset() ran without a full re-apply).
+        JSONObject config = configWithSensors(sensor("status_location_gps", true));
+        Map<String, String> live = new HashMap<>();
+        live.put("status_location_gps", "false");
+
+        String signature = StudyUtils.driftSignature(config, live);
+        assertFalse(signature.isEmpty());
+        assertTrue(signature.contains("status_location_gps"));
+    }
+
+    @Test
+    public void driftSignature_missingLiveValue_treatedAsMismatch() throws JSONException {
+        // A setting the config expects "true" for but that was never applied at all (not present
+        // in the live map) must count as drift too, not be silently skipped.
+        JSONObject config = configWithSensors(sensor("status_wifi", true));
+        Map<String, String> live = new HashMap<>();
+
+        assertFalse(StudyUtils.driftSignature(config, live).isEmpty());
+    }
+
+    @Test
+    public void driftSignature_nonStatusSettingMismatch_isIgnored() throws JSONException {
+        // Only status_* (on/off) settings are in scope — a frequency/threshold mismatch doesn't
+        // mean a sensor is silently not collecting, just that its granularity differs, so it
+        // shouldn't trigger the self-heal reapply path.
+        JSONObject config = configWithSensors(sensor("frequency_light", true));
+        Map<String, String> live = new HashMap<>();
+        live.put("frequency_light", "false");
+
+        assertEquals("", StudyUtils.driftSignature(config, live));
+    }
+
+    @Test
+    public void driftSignature_isStableRegardlessOfSensorOrder() throws JSONException {
+        // The signature is compared across polls (and persisted) to decide whether a drift is
+        // "the same one we already tried to fix" — if two configs describing the same drift in a
+        // different sensor order produced different signatures, the backoff guard would never
+        // recognize a repeat and would reapply on every single poll.
+        JSONObject configA = configWithSensors(sensor("status_location_gps", true), sensor("status_wifi", true));
+        JSONObject configB = configWithSensors(sensor("status_wifi", true), sensor("status_location_gps", true));
+        Map<String, String> live = new HashMap<>(); // both off live, both configs say on
+
+        assertEquals(StudyUtils.driftSignature(configA, live), StudyUtils.driftSignature(configB, live));
     }
 }
