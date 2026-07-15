@@ -46,6 +46,7 @@ import java.util.Set;
 import java.util.Hashtable;
 import java.util.List;
 import java.util.Map;
+import java.util.TreeMap;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
@@ -934,18 +935,56 @@ public class StudyUtils extends IntentService {
                     return;
                 }
                 if (jsonEquals(localConfig, newConfig)) {
-                    String msg = "There are no study updates.";
-                    if (Aware.DEBUG) Aware.debug(context, msg);
-                    if (toast) {
-                        new Handler(Looper.getMainLooper()).post(new Runnable() {
-                            @Override
-                            public void run() {
-                                Toast.makeText(context, msg, Toast.LENGTH_SHORT).show();
-                            }
-                        });
+                    // The server config hasn't changed, but that alone doesn't guarantee the
+                    // device's live settings still match it — Aware.reset() and an interrupted
+                    // apply can both leave aware_settings drifted while the stored config blob
+                    // still reads the same as the server. Comparing blobs alone let that drift go
+                    // undetected forever: the participant would look "configured" while a sensor
+                    // was silently off. Check live settings too and self-heal if they've drifted.
+                    String drift = liveDriftSignature(context, newConfig);
+                    if (drift.isEmpty()) {
+                        String msg = "There are no study updates.";
+                        if (Aware.DEBUG) Aware.debug(context, msg);
+                        if (toast) {
+                            new Handler(Looper.getMainLooper()).post(new Runnable() {
+                                @Override
+                                public void run() {
+                                    Toast.makeText(context, msg, Toast.LENGTH_SHORT).show();
+                                }
+                            });
+                        }
+                        Aware.setSetting(context, Aware_Preferences.LAST_DRIFT_SIGNATURE, "");
+                        return;
                     }
+
+                    String lastDrift = Aware.getSetting(context, Aware_Preferences.LAST_DRIFT_SIGNATURE);
+                    long lastReconcileTs = Aware.getSettingAsLong(context, Aware_Preferences.LAST_DRIFT_RECONCILE_TS, 0);
+                    boolean sameDriftTriedRecently = drift.equals(lastDrift)
+                            && (System.currentTimeMillis() - lastReconcileTs) < DRIFT_RECONCILE_BACKOFF_MS;
+                    if (sameDriftTriedRecently) {
+                        // Same mismatch we already tried to fix recently — most likely a sensor
+                        // the device can't actually satisfy (e.g. no hardware), where re-applying
+                        // would restart every sensor service again on every ~1 min sync poll for
+                        // no benefit. Back off and retry later in case the cause was transient.
+                        if (Aware.DEBUG)
+                            Aware.debug(context, "Live settings drifted from study config but a fix was already attempted recently, skipping: " + drift);
+                        return;
+                    }
+
+                    if (Aware.DEBUG)
+                        Aware.debug(context, "Live settings drifted from study config, self-healing: " + drift);
+                    Aware.setSetting(context, Aware_Preferences.LAST_DRIFT_SIGNATURE, drift);
+                    Aware.setSetting(context, Aware_Preferences.LAST_DRIFT_RECONCILE_TS, System.currentTimeMillis());
+                    // insertCompliance=false: this is a silent local self-heal, not a real config
+                    // change, so it shouldn't log an "updated study" compliance row or notify the
+                    // participant the way an actual server-side edit does below.
+                    applySettings(context, studyUrl, new JSONArray().put(newConfig), false, Aware.getSetting(context, Aware_Preferences.DB_PASSWORD));
                     return;
                 }
+
+                // Real config change from the server — clear any stale drift bookkeeping, since
+                // the full re-apply below re-syncs every setting from scratch anyway.
+                Aware.setSetting(context, Aware_Preferences.LAST_DRIFT_SIGNATURE, "");
                 applySettings(context, studyUrl, new JSONArray().put(newConfig), true, Aware.getSetting(context, Aware_Preferences.DB_PASSWORD));
                 if (Aware.DEBUG) Aware.debug(context, "Updated study config: " + newConfig);
 
@@ -1121,6 +1160,85 @@ public class StudyUtils extends IntentService {
         } catch (JSONException | AssertionError e) {
             return false;
         }
+    }
+
+    /**
+     * How long to wait before retrying a self-heal for the same detected live-settings drift.
+     * Prevents an unfixable drift (e.g. a sensor whose hardware is missing, so it can never
+     * actually match the config) from re-triggering applySettings() — and restarting every sensor
+     * service — on every ~1 minute sync poll. Long enough to stop the hot loop, short enough that
+     * a transient cause (e.g. a permission the participant grants later) still self-heals same-day.
+     */
+    private static final long DRIFT_RECONCILE_BACKOFF_MS = 60 * 60 * 1000; // 1 hour
+
+    /**
+     * Compares every status_* sensor setting in {@code config} against its live value in the
+     * aware_settings provider (what actually controls whether a sensor service runs) and returns a
+     * stable, sorted signature of any mismatches — empty string if live settings already match.
+     *
+     * Only status_* (on/off) settings are checked, not every setting (frequency/threshold etc.):
+     * those don't affect whether data collection is happening at all, just its granularity, so a
+     * mismatch there isn't the "participant thinks they're compliant but a sensor is off" failure
+     * mode this exists to catch — and checking them would make the signature (and the reapply
+     * cadence below) noisier without covering a materially worse bug.
+     */
+    private static String liveDriftSignature(Context context, JSONObject config) {
+        JSONArray sensors = config.optJSONArray("sensors");
+        if (sensors == null) return "";
+
+        // Read every candidate setting's live value up front so the comparison itself (below) is a
+        // pure function of data, not of Context/ContentResolver — makes it directly unit-testable
+        // without Robolectric, same reasoning as Aware.parseLongOrDefault being split out from
+        // Aware.getSettingAsLong().
+        Map<String, String> liveValues = new HashMap<>();
+        for (int i = 0; i < sensors.length(); i++) {
+            JSONObject sensor = sensors.optJSONObject(i);
+            if (sensor == null) continue;
+            String setting = sensor.optString("setting", "");
+            if (!setting.startsWith("status_") || !sensor.has("value")) continue;
+            liveValues.put(setting, Aware.getSetting(context, setting));
+        }
+        return driftSignature(config, liveValues);
+    }
+
+    /**
+     * Context-free core of {@link #liveDriftSignature(Context, JSONObject)}: compares each
+     * status_* sensor setting in {@code config} against its value in {@code liveValues} (missing
+     * from the map is treated the same as an empty/unset live setting) and returns a stable, sorted
+     * signature of any mismatches — empty string if everything matches. Split out so it's
+     * unit-testable without a Context.
+     *
+     * Only status_* (on/off) settings are checked, not every setting (frequency/threshold etc.):
+     * those don't affect whether data collection is happening at all, just its granularity, so a
+     * mismatch there isn't the "participant thinks they're compliant but a sensor is off" failure
+     * mode this exists to catch — and checking them would make the signature (and the reapply
+     * cadence below) noisier without covering a materially worse bug.
+     */
+    static String driftSignature(JSONObject config, Map<String, String> liveValues) {
+        JSONArray sensors = config.optJSONArray("sensors");
+        if (sensors == null) return "";
+
+        TreeMap<String, String> mismatches = new TreeMap<>();
+        for (int i = 0; i < sensors.length(); i++) {
+            JSONObject sensor = sensors.optJSONObject(i);
+            if (sensor == null) continue;
+
+            String setting = sensor.optString("setting", "");
+            if (!setting.startsWith("status_") || !sensor.has("value")) continue;
+
+            String expected = String.valueOf(sensor.opt("value"));
+            String live = liveValues.containsKey(setting) ? liveValues.get(setting) : "";
+            if (!expected.equalsIgnoreCase(live)) {
+                mismatches.put(setting, expected + "!=" + live);
+            }
+        }
+
+        if (mismatches.isEmpty()) return "";
+        StringBuilder signature = new StringBuilder();
+        for (Map.Entry<String, String> mismatch : mismatches.entrySet()) {
+            signature.append(mismatch.getKey()).append('=').append(mismatch.getValue()).append(';');
+        }
+        return signature.toString();
     }
 
     /**
