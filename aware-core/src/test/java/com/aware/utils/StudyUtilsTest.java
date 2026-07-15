@@ -9,8 +9,11 @@ import org.json.JSONException;
 import org.json.JSONObject;
 import org.junit.Test;
 
+import java.util.Collections;
 import java.util.HashMap;
+import java.util.HashSet;
 import java.util.Map;
+import java.util.Set;
 
 /**
  * Regression test for StudyUtils.jsonEquals(). Locks in the fix that switched the comparison from
@@ -70,6 +73,8 @@ public class StudyUtilsTest {
      * therefore went undetected forever. driftSignature() is the fix's pure comparison core: given
      * a config and a map of what's actually live, it reports every status_* mismatch.
      */
+    private static final Set<String> NO_HARDWARE_EXCLUSIONS = Collections.emptySet();
+
     @Test
     public void driftSignature_matchingLiveSettings_isEmpty() throws JSONException {
         JSONObject config = configWithSensors(sensor("status_location_gps", true), sensor("status_wifi", false));
@@ -77,7 +82,7 @@ public class StudyUtilsTest {
         live.put("status_location_gps", "true");
         live.put("status_wifi", "false");
 
-        assertEquals("", StudyUtils.driftSignature(config, live));
+        assertEquals("", StudyUtils.driftSignature(config, live, NO_HARDWARE_EXCLUSIONS));
     }
 
     @Test
@@ -88,7 +93,7 @@ public class StudyUtilsTest {
         Map<String, String> live = new HashMap<>();
         live.put("status_location_gps", "false");
 
-        String signature = StudyUtils.driftSignature(config, live);
+        String signature = StudyUtils.driftSignature(config, live, NO_HARDWARE_EXCLUSIONS);
         assertFalse(signature.isEmpty());
         assertTrue(signature.contains("status_location_gps"));
     }
@@ -100,7 +105,7 @@ public class StudyUtilsTest {
         JSONObject config = configWithSensors(sensor("status_wifi", true));
         Map<String, String> live = new HashMap<>();
 
-        assertFalse(StudyUtils.driftSignature(config, live).isEmpty());
+        assertFalse(StudyUtils.driftSignature(config, live, NO_HARDWARE_EXCLUSIONS).isEmpty());
     }
 
     @Test
@@ -112,7 +117,7 @@ public class StudyUtilsTest {
         Map<String, String> live = new HashMap<>();
         live.put("frequency_light", "false");
 
-        assertEquals("", StudyUtils.driftSignature(config, live));
+        assertEquals("", StudyUtils.driftSignature(config, live, NO_HARDWARE_EXCLUSIONS));
     }
 
     @Test
@@ -125,6 +130,43 @@ public class StudyUtilsTest {
         JSONObject configB = configWithSensors(sensor("status_wifi", true), sensor("status_location_gps", true));
         Map<String, String> live = new HashMap<>(); // both off live, both configs say on
 
-        assertEquals(StudyUtils.driftSignature(configA, live), StudyUtils.driftSignature(configB, live));
+        assertEquals(
+                StudyUtils.driftSignature(configA, live, NO_HARDWARE_EXCLUSIONS),
+                StudyUtils.driftSignature(configB, live, NO_HARDWARE_EXCLUSIONS));
+    }
+
+    /**
+     * Regression test for the hardware-exclusion refinement: a status_* setting for hardware this
+     * device doesn't have (e.g. status_temperature with no ambient temperature sensor) must never
+     * be reported as drift, no matter what its live value is — it's a permanent, known fact about
+     * the device, not something the 1-hour reconcile backoff should have to keep suppressing.
+     */
+    @Test
+    public void driftSignature_hardwareUnavailableSetting_neverReportedAsDrift() throws JSONException {
+        JSONObject config = configWithSensors(sensor("status_temperature", true));
+        Map<String, String> live = new HashMap<>();
+        live.put("status_temperature", "false"); // would otherwise be a clear mismatch
+
+        Set<String> hardwareUnavailable = new HashSet<>();
+        hardwareUnavailable.add("status_temperature");
+
+        assertEquals("", StudyUtils.driftSignature(config, live, hardwareUnavailable));
+    }
+
+    @Test
+    public void driftSignature_hardwareExclusion_onlyAppliesToNamedSetting() throws JSONException {
+        // A hardware exclusion for one sensor shouldn't hide drift in an unrelated sensor.
+        JSONObject config = configWithSensors(sensor("status_temperature", true), sensor("status_wifi", true));
+        Map<String, String> live = new HashMap<>();
+        live.put("status_temperature", "false");
+        live.put("status_wifi", "false");
+
+        Set<String> hardwareUnavailable = new HashSet<>();
+        hardwareUnavailable.add("status_temperature");
+
+        String signature = StudyUtils.driftSignature(config, live, hardwareUnavailable);
+        assertFalse(signature.isEmpty());
+        assertTrue(signature.contains("status_wifi"));
+        assertFalse(signature.contains("status_temperature"));
     }
 }
