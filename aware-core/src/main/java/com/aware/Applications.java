@@ -620,20 +620,21 @@ public class Applications extends AccessibilityService {
             Aware.setSetting(getApplicationContext(), Aware_Preferences.FREQUENCY_APPLICATIONS, 0);
         }
 
-        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.LOLLIPOP && Aware.getSetting(getApplicationContext(), Aware_Preferences.STATUS_APPLICATIONS).equals("true") && Integer.parseInt(Aware.getSetting(getApplicationContext(), Aware_Preferences.FREQUENCY_APPLICATIONS)) > 0) {
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.LOLLIPOP && Aware.getSetting(getApplicationContext(), Aware_Preferences.STATUS_APPLICATIONS).equals("true") && Aware.getSettingAsInt(getApplicationContext(), Aware_Preferences.FREQUENCY_APPLICATIONS, 0) > 0) {
             try {
                 Scheduler.Schedule backgroundApps = Scheduler.getSchedule(getApplicationContext(), SCHEDULER_APPLICATIONS_BACKGROUND);
                 if (backgroundApps == null) {
                     backgroundApps = new Scheduler.Schedule(SCHEDULER_APPLICATIONS_BACKGROUND)
-                            .setInterval(Long.parseLong(Aware.getSetting(getApplicationContext(), Aware_Preferences.FREQUENCY_APPLICATIONS)))
+                            .setInterval(Aware.getSettingAsLong(getApplicationContext(), Aware_Preferences.FREQUENCY_APPLICATIONS, 0))
                             .setActionIntentAction(ACTION_AWARE_APPLICATIONS_HISTORY)
                             .setActionType(Scheduler.ACTION_TYPE_SERVICE)
                             .setActionClass(getPackageName() + "/" + BackgroundService.class.getName());
 
                     Scheduler.saveSchedule(this, backgroundApps);
                 } else {
-                    if (backgroundApps.getInterval() != Long.parseLong(Aware.getSetting(this, Aware_Preferences.FREQUENCY_APPLICATIONS))) {
-                        backgroundApps.setInterval(Long.parseLong(Aware.getSetting(this, Aware_Preferences.FREQUENCY_APPLICATIONS)));
+                    long frequencyApplications = Aware.getSettingAsLong(this, Aware_Preferences.FREQUENCY_APPLICATIONS, 0);
+                    if (backgroundApps.getInterval() != frequencyApplications) {
+                        backgroundApps.setInterval(frequencyApplications);
                         Scheduler.saveSchedule(this, backgroundApps);
                     }
                 }
@@ -657,7 +658,7 @@ public class Applications extends AccessibilityService {
             ContentResolver.setIsSyncable(Aware.getAWAREAccount(this), Applications_Provider.getAuthority(this), 1);
             ContentResolver.setSyncAutomatically(Aware.getAWAREAccount(this), Applications_Provider.getAuthority(this), true);
 
-            long frequency = Long.parseLong(Aware.getSetting(this, Aware_Preferences.FREQUENCY_WEBSERVICE)) * 60;
+            long frequency = Aware.getSettingAsLong(this, Aware_Preferences.FREQUENCY_WEBSERVICE, 30) * 60;
             SyncRequest request = new SyncRequest.Builder()
                     .syncPeriodic(frequency, frequency / 3)
                     .setSyncAdapter(Aware.getAWAREAccount(this), Applications_Provider.getAuthority(this))
