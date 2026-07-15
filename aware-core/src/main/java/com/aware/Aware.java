@@ -2673,6 +2673,17 @@ public class Aware extends Service {
         } catch (JSONException e) {
             e.printStackTrace();
         }
+
+        // Log why any study-enabled sensor can't actually collect on this device — same aware_log
+        // sink as the compliance line just above, so it reaches the researcher on the existing
+        // ~SCHEDULE_STUDY_COMPLIANCE cadence without any new sync path or server-side schema.
+        if (isStudy(context)) {
+            try {
+                SensorDiagnostics.logActiveStudySensorStatus(context);
+            } catch (Exception e) {
+                Log.e(TAG, "Error logging sensor diagnostics: " + e.getMessage());
+            }
+        }
     }
 
     /**
