@@ -322,10 +322,10 @@ public class AwareSyncAdapter extends AbstractThreadedSyncAdapter {
                 long synched = lastSynched.getLong(lastSynched.getColumnIndex(Aware_Provider.Aware_Log.LOG_TIMESTAMP));
 
                 Log.d(Aware.TAG, "Checking forced sync over 3G...");
-                Log.d(Aware.TAG, "Last sync: " + synched + " elapsed: " + (System.currentTimeMillis() - synched) + " force: " + (System.currentTimeMillis() - synched >= Integer.parseInt(Aware.getSetting(mContext, Aware_Preferences.WEBSERVICE_FALLBACK_NETWORK)) * 60 * 60 * 1000));
+                Log.d(Aware.TAG, "Last sync: " + synched + " elapsed: " + (System.currentTimeMillis() - synched) + " force: " + (System.currentTimeMillis() - synched >= Aware.getSettingAsInt(mContext, Aware_Preferences.WEBSERVICE_FALLBACK_NETWORK, 0) * 60 * 60 * 1000));
 
                 lastSynched.close();
-                return (System.currentTimeMillis() - synched >= Integer.parseInt(Aware.getSetting(mContext, Aware_Preferences.WEBSERVICE_FALLBACK_NETWORK)) * 60 * 60 * 1000);
+                return (System.currentTimeMillis() - synched >= Aware.getSettingAsInt(mContext, Aware_Preferences.WEBSERVICE_FALLBACK_NETWORK, 0) * 60 * 60 * 1000);
             } else
                 return true; //first time synching.
         }
@@ -510,7 +510,7 @@ public class AwareSyncAdapter extends AbstractThreadedSyncAdapter {
             Calendar cal = Calendar.getInstance();
             cal.setTimeInMillis(last);
             int rowsDeleted = 0;
-            switch (Integer.parseInt(Aware.getSetting(mContext, Aware_Preferences.FREQUENCY_CLEAN_OLD_DATA))) {
+            switch (Aware.getSettingAsInt(mContext, Aware_Preferences.FREQUENCY_CLEAN_OLD_DATA, 0)) {
                 case 1: //Weekly
                     cal.add(Calendar.DAY_OF_YEAR, -7);
                     if (Aware.DEBUG)

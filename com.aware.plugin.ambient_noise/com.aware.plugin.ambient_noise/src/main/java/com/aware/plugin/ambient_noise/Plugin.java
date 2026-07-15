@@ -109,9 +109,9 @@ public class Plugin extends Aware_Plugin {
     private void setupScheduler() {
         try {
             Scheduler.Schedule audioSampler = Scheduler.getSchedule(this, SCHEDULER_PLUGIN_AMBIENT_NOISE);
-            if (audioSampler == null || audioSampler.getInterval() != Long.parseLong(Aware.getSetting(this, Settings.FREQUENCY_PLUGIN_AMBIENT_NOISE))) {
+            if (audioSampler == null || audioSampler.getInterval() != Aware.getSettingAsLong(this, Settings.FREQUENCY_PLUGIN_AMBIENT_NOISE, 30)) {
                 audioSampler = new Scheduler.Schedule(SCHEDULER_PLUGIN_AMBIENT_NOISE)
-                        .setInterval(Long.parseLong(Aware.getSetting(this, Settings.FREQUENCY_PLUGIN_AMBIENT_NOISE)))
+                        .setInterval(Aware.getSettingAsLong(this, Settings.FREQUENCY_PLUGIN_AMBIENT_NOISE, 30))
                         .setActionType(Scheduler.ACTION_TYPE_SERVICE)
                         .setActionClass(getPackageName() + "/" + AudioAnalyser.class.getName());
                 Scheduler.saveSchedule(this, audioSampler);
@@ -133,7 +133,7 @@ public class Plugin extends Aware_Plugin {
                 ContentResolver.setSyncAutomatically(aware_account, authority, true);
 
                 if (Aware.isStudy(this)) {
-                    long frequency = Long.parseLong(Aware.getSetting(this, Aware_Preferences.FREQUENCY_WEBSERVICE)) * 60;
+                    long frequency = Aware.getSettingAsLong(this, Aware_Preferences.FREQUENCY_WEBSERVICE, 30) * 60;
 
                     SyncRequest request = new SyncRequest.Builder()
                             .syncPeriodic(frequency, frequency / 3)
