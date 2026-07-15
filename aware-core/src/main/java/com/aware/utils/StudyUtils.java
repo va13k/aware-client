@@ -404,6 +404,16 @@ public class StudyUtils extends IntentService {
             }
         }
 
+        // Log why any study-enabled sensor can't actually collect on this device (no hardware,
+        // missing permission, accessibility/location services off) into aware_log, which already
+        // syncs to the researcher's database — covers both the join flow and every config update,
+        // since this is the one place both paths funnel through.
+        try {
+            SensorDiagnostics.logSensorStatus(context, sensors);
+        } catch (Exception e) {
+            Log.e(Aware.TAG, "Error logging sensor diagnostics: " + e.getMessage());
+        }
+
         // Start Aware service and sync data
         Intent aware = new Intent(context, Aware.class);
         context.startService(aware);
