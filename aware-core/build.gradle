@@ -91,5 +91,7 @@ dependencies {
     // Was vendored as libs/jsonassert-1.5.0.jar — identical version, now from Maven Central.
     // Group is org.skyscreamer there, not com.github.skyscreamer (that's a JitPack-style coordinate).
     implementation "org.skyscreamer:jsonassert:1.5.0"
+
+    testImplementation 'junit:junit:4.13.2'
 }
 

@@ -119,7 +119,7 @@ public class Processor extends Aware_Sensor {
                 if (awareSensor != null) awareSensor.onIdle();
             }
 
-            mHandler.postDelayed(mRunnable, Integer.parseInt(Aware.getSetting(getApplicationContext(), Aware_Preferences.FREQUENCY_PROCESSOR)) * 1000);
+            mHandler.postDelayed(mRunnable, Aware.getSettingAsInt(getApplicationContext(), Aware_Preferences.FREQUENCY_PROCESSOR, 10) * 1000);
         }
     };
 
@@ -185,21 +185,13 @@ public class Processor extends Aware_Sensor {
             }
 
             DEBUG = Aware.getSetting(this, Aware_Preferences.DEBUG_FLAG).equals("true");
-            if (Aware.getSetting(getApplicationContext(), Aware_Preferences.FREQUENCY_PROCESSOR).length() == 0) {
-                Aware.setSetting(getApplicationContext(), Aware_Preferences.FREQUENCY_PROCESSOR, 10);
-            }
-
-            try {
-                Integer.parseInt(Aware.getSetting(getApplicationContext(), Aware_Preferences.FREQUENCY_PROCESSOR));
-            } catch (NumberFormatException e) {
-                Aware.setSetting(getApplicationContext(), Aware_Preferences.FREQUENCY_PROCESSOR, 10);
-            }
 
             Aware.setSetting(this, Aware_Preferences.STATUS_PROCESSOR, true);
-            if (FREQUENCY != Integer.parseInt(Aware.getSetting(getApplicationContext(), Aware_Preferences.FREQUENCY_PROCESSOR))) {
+            int frequencyProcessor = Aware.getSettingAsInt(getApplicationContext(), Aware_Preferences.FREQUENCY_PROCESSOR, 10);
+            if (FREQUENCY != frequencyProcessor) {
                 mHandler.removeCallbacks(mRunnable);
                 mHandler.post(mRunnable);
-                FREQUENCY = Integer.parseInt(Aware.getSetting(getApplicationContext(), Aware_Preferences.FREQUENCY_PROCESSOR));
+                FREQUENCY = frequencyProcessor;
             }
 
             if (Aware.DEBUG) Log.d(TAG, "Processor service active: " + FREQUENCY + "s");
@@ -207,7 +199,7 @@ public class Processor extends Aware_Sensor {
             if (Aware.isStudy(this)) {
                 ContentResolver.setIsSyncable(Aware.getAWAREAccount(this), Processor_Provider.getAuthority(this), 1);
                 ContentResolver.setSyncAutomatically(Aware.getAWAREAccount(this), Processor_Provider.getAuthority(this), true);
-                long frequency = Long.parseLong(Aware.getSetting(this, Aware_Preferences.FREQUENCY_WEBSERVICE)) * 60;
+                long frequency = Aware.getSettingAsLong(this, Aware_Preferences.FREQUENCY_WEBSERVICE, 30) * 60;
                 SyncRequest request = new SyncRequest.Builder()
                         .syncPeriodic(frequency, frequency / 3)
                         .setSyncAdapter(Aware.getAWAREAccount(this), Processor_Provider.getAuthority(this))
