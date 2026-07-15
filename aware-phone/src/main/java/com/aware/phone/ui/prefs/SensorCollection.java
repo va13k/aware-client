@@ -5,7 +5,6 @@ import android.content.ComponentName;
 import android.content.Context;
 import android.database.Cursor;
 import android.hardware.Sensor;
-import android.hardware.SensorManager;
 import android.content.pm.PackageManager;
 import android.location.LocationManager;
 import android.net.Uri;
@@ -18,6 +17,7 @@ import androidx.core.content.ContextCompat;
 import com.aware.Applications;
 import com.aware.Aware;
 import com.aware.Aware_Preferences;
+import com.aware.utils.SensorAvailability;
 
 import java.util.ArrayList;
 import java.util.HashMap;
@@ -217,9 +217,12 @@ public final class SensorCollection {
         return 0;
     }
 
+    // Delegates to aware-core's SensorAvailability rather than calling SensorManager directly here
+    // too — that's now the single place in the codebase that talks to SensorManager for hardware
+    // presence, so the background config-sync drift check (StudyUtils, aware-core) and this UI
+    // status check can't drift apart on what "this device has no <sensor>" means.
     private static boolean hasHardware(Context context, int sensorType) {
-        SensorManager sm = (SensorManager) context.getSystemService(Context.SENSOR_SERVICE);
-        return sm != null && sm.getDefaultSensor(sensorType) != null;
+        return SensorAvailability.hasHardware(context, sensorType);
     }
 
     /** The OS-level Location toggle (Settings › Location) — distinct from the location permission. */
