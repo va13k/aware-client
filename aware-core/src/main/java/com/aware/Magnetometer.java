@@ -26,6 +26,7 @@ import com.aware.providers.Magnetometer_Provider;
 import com.aware.providers.Magnetometer_Provider.Magnetometer_Data;
 import com.aware.providers.Magnetometer_Provider.Magnetometer_Sensor;
 import com.aware.utils.Aware_Sensor;
+import com.aware.utils.SensorTimeUnits;
 
 import java.util.ArrayList;
 import java.util.List;
@@ -287,7 +288,7 @@ public class Magnetometer extends Aware_Sensor implements SensorEventListener {
                     ENFORCE_FREQUENCY = new_enforce_frequency;
                 }
 
-                mSensorManager.registerListener(this, mMagnetometer, Aware.getSettingAsInt(this, Aware_Preferences.FREQUENCY_MAGNETOMETER, 200000), sensorHandler);
+                mSensorManager.registerListener(this, mMagnetometer, SensorTimeUnits.samplingPeriodUs(new_frequency), sensorHandler);
                 LAST_SAVE = System.currentTimeMillis();
 
                 if (Aware.DEBUG) Log.d(TAG, "Magnetometer service active...");

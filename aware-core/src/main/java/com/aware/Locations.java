@@ -18,6 +18,7 @@ import android.util.Log;
 import com.aware.providers.Locations_Provider;
 import com.aware.providers.Locations_Provider.Locations_Data;
 import com.aware.utils.Aware_Sensor;
+import com.aware.utils.SensorTimeUnits;
 
 /**
  * Location service for Aware framework
@@ -332,7 +333,7 @@ public class Locations extends Aware_Sensor implements LocationListener {
                     if (FREQUENCY_GPS != frequencyLocationGps) {
                         locationManager.requestLocationUpdates(
                                 LocationManager.GPS_PROVIDER,
-                                frequencyLocationGps * 1000,
+                                SensorTimeUnits.secondsToMillis(frequencyLocationGps),
                                 Aware.getSettingAsInt(getApplicationContext(), Aware_Preferences.MIN_LOCATION_GPS_ACCURACY, 150), this);
                         locationManager.removeGpsStatusListener(gps_status_listener);
                         locationManager.addGpsStatusListener(gps_status_listener);
@@ -363,7 +364,7 @@ public class Locations extends Aware_Sensor implements LocationListener {
                     if (FREQUENCY_NETWORK != frequencyLocationNetwork) {
                         locationManager.requestLocationUpdates(
                                 LocationManager.NETWORK_PROVIDER,
-                                frequencyLocationNetwork * 1000,
+                                SensorTimeUnits.secondsToMillis(frequencyLocationNetwork),
                                 Aware.getSettingAsInt(getApplicationContext(), Aware_Preferences.MIN_LOCATION_NETWORK_ACCURACY, 1500), this);
 
                         FREQUENCY_NETWORK = frequencyLocationNetwork;

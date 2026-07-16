@@ -26,6 +26,7 @@ import com.aware.providers.Temperature_Provider;
 import com.aware.providers.Temperature_Provider.Temperature_Data;
 import com.aware.providers.Temperature_Provider.Temperature_Sensor;
 import com.aware.utils.Aware_Sensor;
+import com.aware.utils.SensorTimeUnits;
 
 import java.util.ArrayList;
 import java.util.List;
@@ -288,7 +289,7 @@ public class Temperature extends Aware_Sensor implements SensorEventListener {
                     ENFORCE_FREQUENCY = new_enforce_frequency;
                 }
 
-                mSensorManager.registerListener(this, mTemperature, Aware.getSettingAsInt(getApplicationContext(), Aware_Preferences.FREQUENCY_TEMPERATURE, 200000), sensorHandler);
+                mSensorManager.registerListener(this, mTemperature, SensorTimeUnits.samplingPeriodUs(new_frequency), sensorHandler);
                 LAST_SAVE = System.currentTimeMillis();
 
                 if (Aware.DEBUG) Log.d(TAG, "Temperature service active...");

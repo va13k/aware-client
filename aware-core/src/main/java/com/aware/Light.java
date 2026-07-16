@@ -26,6 +26,7 @@ import com.aware.providers.Light_Provider;
 import com.aware.providers.Light_Provider.Light_Data;
 import com.aware.providers.Light_Provider.Light_Sensor;
 import com.aware.utils.Aware_Sensor;
+import com.aware.utils.SensorTimeUnits;
 
 import java.util.ArrayList;
 import java.util.List;
@@ -285,7 +286,7 @@ public class Light extends Aware_Sensor implements SensorEventListener {
                     ENFORCE_FREQUENCY = new_enforce_frequency;
                 }
 
-                mSensorManager.registerListener(this, mLight, Aware.getSettingAsInt(getApplicationContext(), Aware_Preferences.FREQUENCY_LIGHT, 200000), sensorHandler);
+                mSensorManager.registerListener(this, mLight, SensorTimeUnits.samplingPeriodUs(new_frequency), sensorHandler);
 
                 if (Aware.isStudy(this)) {
                     ContentResolver.setIsSyncable(Aware.getAWAREAccount(this), Light_Provider.getAuthority(this), 1);

@@ -26,6 +26,7 @@ import com.aware.providers.Linear_Accelerometer_Provider;
 import com.aware.providers.Linear_Accelerometer_Provider.Linear_Accelerometer_Data;
 import com.aware.providers.Linear_Accelerometer_Provider.Linear_Accelerometer_Sensor;
 import com.aware.utils.Aware_Sensor;
+import com.aware.utils.SensorTimeUnits;
 
 import java.util.ArrayList;
 import java.util.List;
@@ -309,7 +310,7 @@ public class LinearAccelerometer extends Aware_Sensor implements SensorEventList
                     ENFORCE_FREQUENCY = new_enforce_frequency;
                 }
 
-                mSensorManager.registerListener(this, mLinearAccelerator, Aware.getSettingAsInt(getApplicationContext(), Aware_Preferences.FREQUENCY_LINEAR_ACCELEROMETER, 200000), sensorHandler);
+                mSensorManager.registerListener(this, mLinearAccelerator, SensorTimeUnits.samplingPeriodUs(new_frequency), sensorHandler);
                 LAST_SAVE = System.currentTimeMillis();
 
                 if (Aware.DEBUG)

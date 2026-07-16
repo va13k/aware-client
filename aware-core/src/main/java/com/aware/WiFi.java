@@ -26,6 +26,7 @@ import com.aware.providers.WiFi_Provider.WiFi_Data;
 import com.aware.providers.WiFi_Provider.WiFi_Sensor;
 import com.aware.utils.Aware_Sensor;
 import com.aware.utils.Encrypter;
+import com.aware.utils.SensorTimeUnits;
 
 import java.util.List;
 import java.util.concurrent.Callable;
@@ -133,7 +134,7 @@ public class WiFi extends Aware_Sensor {
                 }
 
                 alarmManager.cancel(wifiScan);
-                alarmManager.setRepeating(AlarmManager.RTC_WAKEUP, System.currentTimeMillis() + 1000, Aware.getSettingAsInt(getApplicationContext(), Aware_Preferences.FREQUENCY_WIFI, 60) * 1000, wifiScan);
+                alarmManager.setRepeating(AlarmManager.RTC_WAKEUP, System.currentTimeMillis() + 1000, SensorTimeUnits.secondsToMillis(Aware.getSettingAsInt(getApplicationContext(), Aware_Preferences.FREQUENCY_WIFI, 60)), wifiScan);
 
                 if (Aware.DEBUG) Log.d(TAG, "WiFi service active...");
             }

@@ -26,6 +26,7 @@ import com.aware.providers.Gyroscope_Provider;
 import com.aware.providers.Gyroscope_Provider.Gyroscope_Data;
 import com.aware.providers.Gyroscope_Provider.Gyroscope_Sensor;
 import com.aware.utils.Aware_Sensor;
+import com.aware.utils.SensorTimeUnits;
 
 import java.util.ArrayList;
 import java.util.List;
@@ -322,7 +323,7 @@ public class Gyroscope extends Aware_Sensor implements SensorEventListener {
                     ENFORCE_FREQUENCY = new_enforce_frequency;
                 }
 
-                mSensorManager.registerListener(this, mGyroscope, Aware.getSettingAsInt(getApplicationContext(), Aware_Preferences.FREQUENCY_GYROSCOPE, 200000), sensorHandler);
+                mSensorManager.registerListener(this, mGyroscope, SensorTimeUnits.samplingPeriodUs(new_frequency), sensorHandler);
                 LAST_SAVE = System.currentTimeMillis();
             }
 
