@@ -81,7 +81,9 @@ public class Aware_Preferences {
     public static final String STATUS_APPLICATIONS = "status_applications";
 
     /**
-     * Background applications update frequency (default = 30) seconds
+     * Background applications update frequency, in minutes. Default = 0 (disabled) -- the
+     * scheduled background scan only runs when this is set > 0. Fed directly into
+     * Scheduler.Schedule#setInterval(long), which takes minutes.
      */
     public static final String FREQUENCY_APPLICATIONS = "frequency_applications";
 
@@ -301,7 +303,9 @@ public class Aware_Preferences {
     public static final String STATUS_NETWORK_TRAFFIC = "status_network_traffic";
 
     /**
-     * Network traffic frequency (default = 60), in seconds
+     * Network traffic frequency (default = 60), in seconds.
+     * Currently unused: Traffic.java does not read this setting -- its sync cadence is
+     * driven by FREQUENCY_WEBSERVICE instead.
      */
     public static final String FREQUENCY_NETWORK_TRAFFIC = "frequency_network_traffic";
 
@@ -371,7 +375,9 @@ public class Aware_Preferences {
     public static final String STATUS_TIMEZONE = "status_timezone";
 
     /**
-     * Timezone frequency (default = 3600) in seconds
+     * Timezone frequency (default = 3600) in seconds.
+     * Currently unused: Timezone.java does not read this setting -- its sync cadence is
+     * driven by FREQUENCY_WEBSERVICE instead.
      */
     public static final String FREQUENCY_TIMEZONE = "frequency_timezone";
 
