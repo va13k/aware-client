@@ -26,6 +26,7 @@ import com.aware.providers.Barometer_Provider;
 import com.aware.providers.Barometer_Provider.Barometer_Data;
 import com.aware.providers.Barometer_Provider.Barometer_Sensor;
 import com.aware.utils.Aware_Sensor;
+import com.aware.utils.SensorTimeUnits;
 
 import java.util.ArrayList;
 import java.util.List;
@@ -274,7 +275,7 @@ public class Barometer extends Aware_Sensor implements SensorEventListener {
                     ENFORCE_FREQUENCY = new_enforce_frequency;
                 }
 
-                mSensorManager.registerListener(this, mPressure, Aware.getSettingAsInt(getApplicationContext(), Aware_Preferences.FREQUENCY_BAROMETER, 200000), sensorHandler);
+                mSensorManager.registerListener(this, mPressure, SensorTimeUnits.samplingPeriodUs(new_frequency), sensorHandler);
                 LAST_SAVE = System.currentTimeMillis();
 
                 if (Aware.DEBUG) Log.d(TAG, "Barometer service active: " + FREQUENCY + "ms");

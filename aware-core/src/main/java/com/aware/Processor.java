@@ -18,6 +18,7 @@ import android.widget.Toast;
 import com.aware.providers.Processor_Provider;
 import com.aware.providers.Processor_Provider.Processor_Data;
 import com.aware.utils.Aware_Sensor;
+import com.aware.utils.SensorTimeUnits;
 
 import java.io.BufferedReader;
 import java.io.FileInputStream;
@@ -119,7 +120,7 @@ public class Processor extends Aware_Sensor {
                 if (awareSensor != null) awareSensor.onIdle();
             }
 
-            mHandler.postDelayed(mRunnable, Aware.getSettingAsInt(getApplicationContext(), Aware_Preferences.FREQUENCY_PROCESSOR, 10) * 1000);
+            mHandler.postDelayed(mRunnable, SensorTimeUnits.secondsToMillis(Aware.getSettingAsInt(getApplicationContext(), Aware_Preferences.FREQUENCY_PROCESSOR, 10)));
         }
     };
 

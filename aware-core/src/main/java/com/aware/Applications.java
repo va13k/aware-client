@@ -38,6 +38,7 @@ import com.aware.providers.Screen_Provider;
 import com.aware.utils.Converters;
 import com.aware.utils.Encrypter;
 import com.aware.utils.Scheduler;
+import com.aware.utils.SensorTimeUnits;
 import org.json.JSONException;
 
 import java.util.ArrayList;
@@ -625,14 +626,14 @@ public class Applications extends AccessibilityService {
                 Scheduler.Schedule backgroundApps = Scheduler.getSchedule(getApplicationContext(), SCHEDULER_APPLICATIONS_BACKGROUND);
                 if (backgroundApps == null) {
                     backgroundApps = new Scheduler.Schedule(SCHEDULER_APPLICATIONS_BACKGROUND)
-                            .setInterval(Aware.getSettingAsLong(getApplicationContext(), Aware_Preferences.FREQUENCY_APPLICATIONS, 0))
+                            .setInterval(SensorTimeUnits.minutesAsIs(Aware.getSettingAsLong(getApplicationContext(), Aware_Preferences.FREQUENCY_APPLICATIONS, 0)))
                             .setActionIntentAction(ACTION_AWARE_APPLICATIONS_HISTORY)
                             .setActionType(Scheduler.ACTION_TYPE_SERVICE)
                             .setActionClass(getPackageName() + "/" + BackgroundService.class.getName());
 
                     Scheduler.saveSchedule(this, backgroundApps);
                 } else {
-                    long frequencyApplications = Aware.getSettingAsLong(this, Aware_Preferences.FREQUENCY_APPLICATIONS, 0);
+                    long frequencyApplications = SensorTimeUnits.minutesAsIs(Aware.getSettingAsLong(this, Aware_Preferences.FREQUENCY_APPLICATIONS, 0));
                     if (backgroundApps.getInterval() != frequencyApplications) {
                         backgroundApps.setInterval(frequencyApplications);
                         Scheduler.saveSchedule(this, backgroundApps);

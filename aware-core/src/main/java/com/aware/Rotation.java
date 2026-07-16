@@ -26,6 +26,7 @@ import com.aware.providers.Rotation_Provider;
 import com.aware.providers.Rotation_Provider.Rotation_Data;
 import com.aware.providers.Rotation_Provider.Rotation_Sensor;
 import com.aware.utils.Aware_Sensor;
+import com.aware.utils.SensorTimeUnits;
 
 import java.util.ArrayList;
 import java.util.List;
@@ -317,7 +318,7 @@ public class Rotation extends Aware_Sensor implements SensorEventListener {
                     ENFORCE_FREQUENCY = new_enforce_frequency;
                 }
 
-                mSensorManager.registerListener(this, mRotation, Aware.getSettingAsInt(getApplicationContext(), Aware_Preferences.FREQUENCY_ROTATION, 200000), sensorHandler);
+                mSensorManager.registerListener(this, mRotation, SensorTimeUnits.samplingPeriodUs(new_frequency), sensorHandler);
                 LAST_SAVE = System.currentTimeMillis();
 
                 if (Aware.DEBUG) Log.d(TAG, "Rotation service active...");

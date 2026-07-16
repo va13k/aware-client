@@ -29,6 +29,7 @@ import com.aware.providers.Bluetooth_Provider.Bluetooth_Data;
 import com.aware.providers.Bluetooth_Provider.Bluetooth_Sensor;
 import com.aware.utils.Aware_Sensor;
 import com.aware.utils.Encrypter;
+import com.aware.utils.SensorTimeUnits;
 
 import java.util.HashMap;
 
@@ -205,8 +206,8 @@ public class Bluetooth extends Aware_Sensor {
                 if (FREQUENCY != Aware.getSettingAsInt(getApplicationContext(), Aware_Preferences.FREQUENCY_BLUETOOTH, 60)) {
                     alarmManager.cancel(bluetoothScan);
                     alarmManager.setRepeating(AlarmManager.RTC_WAKEUP,
-                            System.currentTimeMillis() + Aware.getSettingAsInt(getApplicationContext(), Aware_Preferences.FREQUENCY_BLUETOOTH, 60) * 1000,
-                            Aware.getSettingAsInt(getApplicationContext(), Aware_Preferences.FREQUENCY_BLUETOOTH, 60) * 2 * 1000,
+                            System.currentTimeMillis() + SensorTimeUnits.secondsToMillis(Aware.getSettingAsInt(getApplicationContext(), Aware_Preferences.FREQUENCY_BLUETOOTH, 60)),
+                            SensorTimeUnits.doubleSecondsToMillis(Aware.getSettingAsInt(getApplicationContext(), Aware_Preferences.FREQUENCY_BLUETOOTH, 60)),
                             bluetoothScan);
 
                     FREQUENCY = Aware.getSettingAsInt(getApplicationContext(), Aware_Preferences.FREQUENCY_BLUETOOTH, 60);

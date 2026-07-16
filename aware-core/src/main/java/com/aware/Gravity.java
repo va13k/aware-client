@@ -26,6 +26,7 @@ import com.aware.providers.Gravity_Provider;
 import com.aware.providers.Gravity_Provider.Gravity_Data;
 import com.aware.providers.Gravity_Provider.Gravity_Sensor;
 import com.aware.utils.Aware_Sensor;
+import com.aware.utils.SensorTimeUnits;
 
 import java.util.ArrayList;
 import java.util.List;
@@ -311,7 +312,7 @@ public class Gravity extends Aware_Sensor implements SensorEventListener {
                     ENFORCE_FREQUENCY = new_enforce_frequency;
                 }
 
-                mSensorManager.registerListener(this, mGravity, Aware.getSettingAsInt(getApplicationContext(), Aware_Preferences.FREQUENCY_GRAVITY, 200000), sensorHandler);
+                mSensorManager.registerListener(this, mGravity, SensorTimeUnits.samplingPeriodUs(new_frequency), sensorHandler);
                 LAST_SAVE = System.currentTimeMillis();
 
                 if (Aware.DEBUG) Log.d(TAG, "Gravity service active: " + FREQUENCY + "ms");

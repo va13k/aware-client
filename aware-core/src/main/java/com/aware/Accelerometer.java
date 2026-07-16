@@ -26,6 +26,7 @@ import com.aware.providers.Accelerometer_Provider;
 import com.aware.providers.Accelerometer_Provider.Accelerometer_Data;
 import com.aware.providers.Accelerometer_Provider.Accelerometer_Sensor;
 import com.aware.utils.Aware_Sensor;
+import com.aware.utils.SensorTimeUnits;
 
 import java.util.ArrayList;
 import java.util.List;
@@ -297,7 +298,7 @@ public class Accelerometer extends Aware_Sensor implements SensorEventListener {
                     ENFORCE_FREQUENCY = new_enforce_frequency;
                 }
 
-                mSensorManager.registerListener(this, mAccelerometer, Aware.getSettingAsInt(getApplicationContext(), Aware_Preferences.FREQUENCY_ACCELEROMETER, 200000), sensorHandler);
+                mSensorManager.registerListener(this, mAccelerometer, SensorTimeUnits.samplingPeriodUs(new_frequency), sensorHandler);
                 LAST_SAVE = System.currentTimeMillis();
 
                 if (Aware.DEBUG) Log.d(TAG, "Accelerometer service active: " + FREQUENCY + " ms");
