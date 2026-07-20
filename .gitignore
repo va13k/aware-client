@@ -5,3 +5,5 @@ aware-phone/release/*
 .DS_Store
 .DS_Store?
 local.properties
+*.jks
+*.keystore
