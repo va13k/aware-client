@@ -109,9 +109,9 @@ public class Plugin extends Aware_Plugin {
     private void setupScheduler() {
         try {
             Scheduler.Schedule audioSampler = Scheduler.getSchedule(this, SCHEDULER_PLUGIN_AMBIENT_NOISE);
-            if (audioSampler == null || audioSampler.getInterval() != Aware.getSettingAsLong(this, Settings.FREQUENCY_PLUGIN_AMBIENT_NOISE, 30)) {
+            if (audioSampler == null || audioSampler.getInterval() != Aware.getSettingAsLong(this, Settings.FREQUENCY_PLUGIN_AMBIENT_NOISE, 5)) {
                 audioSampler = new Scheduler.Schedule(SCHEDULER_PLUGIN_AMBIENT_NOISE)
-                        .setInterval(Aware.getSettingAsLong(this, Settings.FREQUENCY_PLUGIN_AMBIENT_NOISE, 30))
+                        .setInterval(Aware.getSettingAsLong(this, Settings.FREQUENCY_PLUGIN_AMBIENT_NOISE, 5))
                         .setActionType(Scheduler.ACTION_TYPE_SERVICE)
                         .setActionClass(getPackageName() + "/" + AudioAnalyser.class.getName());
                 Scheduler.saveSchedule(this, audioSampler);

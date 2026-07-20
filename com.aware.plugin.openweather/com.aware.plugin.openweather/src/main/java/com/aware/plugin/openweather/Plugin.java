@@ -114,7 +114,7 @@ public class Plugin extends Aware_Plugin implements GoogleApiClient.ConnectionCa
                 Aware.setSetting(getApplicationContext(), Settings.UNITS_PLUGIN_OPENWEATHER, "metric");
 
             if (Aware.getSetting(getApplicationContext(), Settings.PLUGIN_OPENWEATHER_FREQUENCY).length() == 0)
-                Aware.setSetting(getApplicationContext(), Settings.PLUGIN_OPENWEATHER_FREQUENCY, 60);
+                Aware.setSetting(getApplicationContext(), Settings.PLUGIN_OPENWEATHER_FREQUENCY, 30);
 
 
             if (mGoogleApiClient != null && !mGoogleApiClient.isConnected())
@@ -122,7 +122,7 @@ public class Plugin extends Aware_Plugin implements GoogleApiClient.ConnectionCa
 
             try {
                 Scheduler.Schedule openweather = Scheduler.getSchedule(this, SCHEDULER_PLUGIN_OPENWEATHER);
-                long openweatherFrequency = Aware.getSettingAsLong(getApplicationContext(), Settings.PLUGIN_OPENWEATHER_FREQUENCY, 60);
+                long openweatherFrequency = Aware.getSettingAsLong(getApplicationContext(), Settings.PLUGIN_OPENWEATHER_FREQUENCY, 30);
                 if (openweather == null || openweather.getInterval() != openweatherFrequency) {
                     openweather = new Scheduler.Schedule(SCHEDULER_PLUGIN_OPENWEATHER);
                     openweather
@@ -317,7 +317,7 @@ public class Plugin extends Aware_Plugin implements GoogleApiClient.ConnectionCa
         // before it's been re-applied. getSettingAsLong() tolerates that (empty or malformed) and
         // falls back to the same default as onStartCommand()'s check, same fix as ambient_noise's
         // AudioAnalyser for the same race.
-        long openweatherFrequency = Aware.getSettingAsLong(getApplicationContext(), Settings.PLUGIN_OPENWEATHER_FREQUENCY, 60);
+        long openweatherFrequency = Aware.getSettingAsLong(getApplicationContext(), Settings.PLUGIN_OPENWEATHER_FREQUENCY, 30);
         locationRequest.setInterval(openweatherFrequency * 60 * 1000);
         locationRequest.setFastestInterval(openweatherFrequency * 60 * 1000);
         locationRequest.setPriority(LocationRequest.PRIORITY_LOW_POWER);

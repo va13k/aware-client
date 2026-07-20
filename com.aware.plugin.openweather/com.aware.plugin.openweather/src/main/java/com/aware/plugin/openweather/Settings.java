@@ -47,7 +47,8 @@ public class Settings extends AppCompatPreferenceActivity implements OnSharedPre
 
     private static CheckBoxPreference status;
     private static ListPreference units;
-    private static EditTextPreference frequency, openweather_api_key;
+    private static ListPreference frequency;
+    private static EditTextPreference openweather_api_key;
     private static final String TAG = "openweather";
 
     /**
@@ -85,7 +86,7 @@ public class Settings extends AppCompatPreferenceActivity implements OnSharedPre
         }
 
         if (Aware.getSetting(getApplicationContext(), PLUGIN_OPENWEATHER_FREQUENCY).length() == 0) {
-            Aware.setSetting(getApplicationContext(), PLUGIN_OPENWEATHER_FREQUENCY, 60);
+            Aware.setSetting(getApplicationContext(), PLUGIN_OPENWEATHER_FREQUENCY, 30);
         }
 
         Log.d(TAG, "Syncing API KEY setting");
@@ -125,12 +126,12 @@ public class Settings extends AppCompatPreferenceActivity implements OnSharedPre
         units.setSummary(unitsValue);
 
         // Frequency
-        frequency = (EditTextPreference) findPreference(PLUGIN_OPENWEATHER_FREQUENCY);
+        frequency = (ListPreference) findPreference(PLUGIN_OPENWEATHER_FREQUENCY);
         String freqValue = Aware.getSetting(getApplicationContext(), PLUGIN_OPENWEATHER_FREQUENCY);
         PreferenceManager.getDefaultSharedPreferences(this).edit()
                 .putString(PLUGIN_OPENWEATHER_FREQUENCY, freqValue)
                 .apply();
-        frequency.setText(freqValue);
+        frequency.setValue(freqValue);
         frequency.setSummary("Every " + freqValue + " minute(s)");
 
         openweather_api_key = (EditTextPreference) findPreference(OPENWEATHER_API_KEY);
@@ -172,7 +173,7 @@ public class Settings extends AppCompatPreferenceActivity implements OnSharedPre
             preference.setSummary(value);
         }
         else if (preference.getKey().equals(PLUGIN_OPENWEATHER_FREQUENCY)) {
-            String value = sharedPreferences.getString(key, "60");
+            String value = sharedPreferences.getString(key, "30");
             Aware.setSetting(getApplicationContext(), key, value);
             preference.setSummary("Every " + value + " minute(s)");
         }
