@@ -47,18 +47,30 @@ jobs:
           } >> "$GITHUB_OUTPUT"
           echo "Building $RAW_VERSION (versionCode=$VERSION_CODE, prerelease=$PRERELEASE)"
 
+      # sdkmanager (cmdline-tools >= 12) requires JDK 17 -> install it first, SDK setup only
       - uses: actions/setup-java@v4
         with:
           distribution: temurin
-          java-version: '11'   # Gradle 6.5 supports JDK 8-14; fall back to '8' if AGP 4.1.1 misbehaves
+          java-version: '17'
 
-      # SDK platforms/build-tools < 34 were removed from runner images in Jan 2026 -> install explicitly
-      - name: Install Android SDK 28 components
-        run: |
-          yes | sdkmanager --licenses > /dev/null || true
-          sdkmanager "platforms;android-28" "build-tools;28.0.3"
+      # Runner images dropped SDK < 34 and no longer expose sdkmanager on PATH
+      # -> this action installs cmdline-tools, accepts licenses, installs packages
+      - name: Setup Android SDK
+        uses: android-actions/setup-android@v3
+        with:
+          packages: 'platforms;android-28 build-tools;28.0.3'
+
+      # Gradle 6.5 only runs on JDK 8-14 -> switch JAVA_HOME to 11 for the build
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '11'
 
       - uses: gradle/actions/setup-gradle@v4
+        with:
+          # committed wrapper jars (same file copied into all 8 modules) predate
+          # gradle's official checksum list; skip validation, keep caching
+          validate-wrappers: false
 
       - name: Decode release keystore
         env:
