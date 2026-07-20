@@ -256,14 +256,14 @@ public class Proximity extends Aware_Sensor implements SensorEventListener {
                 saveSensorDevice(mProximity);
 
                 if (Aware.getSetting(this, Aware_Preferences.FREQUENCY_PROXIMITY).length() == 0) {
-                    Aware.setSetting(this, Aware_Preferences.FREQUENCY_PROXIMITY, 200000);
+                    Aware.setSetting(this, Aware_Preferences.FREQUENCY_PROXIMITY, 1000000);
                 }
 
                 if (Aware.getSetting(this, Aware_Preferences.THRESHOLD_PROXIMITY).length() == 0) {
                     Aware.setSetting(this, Aware_Preferences.THRESHOLD_PROXIMITY, 0.0);
                 }
 
-                int new_frequency = Aware.getSettingAsInt(getApplicationContext(), Aware_Preferences.FREQUENCY_PROXIMITY, 200000);
+                int new_frequency = Aware.getSettingAsInt(getApplicationContext(), Aware_Preferences.FREQUENCY_PROXIMITY, 1000000);
                 double new_threshold = Aware.getSettingAsDouble(getApplicationContext(), Aware_Preferences.THRESHOLD_PROXIMITY, 0.0);
                 boolean new_enforce_frequency = (Aware.getSetting(getApplicationContext(), Aware_Preferences.FREQUENCY_PROXIMITY_ENFORCE).equals("true")
                         || Aware.getSetting(getApplicationContext(), Aware_Preferences.ENFORCE_FREQUENCY_ALL).equals("true"));

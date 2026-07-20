@@ -318,7 +318,7 @@ public class Locations extends Aware_Sensor implements LocationListener {
             }
 
             if (Aware.getSetting(getApplicationContext(), Aware_Preferences.FREQUENCY_LOCATION_NETWORK).length() == 0) {
-                Aware.setSetting(getApplicationContext(), Aware_Preferences.FREQUENCY_LOCATION_NETWORK, 300);
+                Aware.setSetting(getApplicationContext(), Aware_Preferences.FREQUENCY_LOCATION_NETWORK, 180);
             }
             if (Aware.getSetting(getApplicationContext(), Aware_Preferences.MIN_LOCATION_NETWORK_ACCURACY).length() == 0) {
                 Aware.setSetting(getApplicationContext(), Aware_Preferences.MIN_LOCATION_NETWORK_ACCURACY, 1500);
@@ -360,7 +360,7 @@ public class Locations extends Aware_Sensor implements LocationListener {
             }
             if (Aware.getSetting(getApplicationContext(), Aware_Preferences.STATUS_LOCATION_NETWORK).equals("true")) {
                 if (locationManager.getProvider(LocationManager.NETWORK_PROVIDER) != null) {
-                    int frequencyLocationNetwork = Aware.getSettingAsInt(getApplicationContext(), Aware_Preferences.FREQUENCY_LOCATION_NETWORK, 300);
+                    int frequencyLocationNetwork = Aware.getSettingAsInt(getApplicationContext(), Aware_Preferences.FREQUENCY_LOCATION_NETWORK, 180);
                     if (FREQUENCY_NETWORK != frequencyLocationNetwork) {
                         locationManager.requestLocationUpdates(
                                 LocationManager.NETWORK_PROVIDER,
