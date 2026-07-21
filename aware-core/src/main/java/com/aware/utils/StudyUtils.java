@@ -11,10 +11,12 @@ import android.content.ComponentName;
 import android.content.ContentValues;
 import android.content.Context;
 import android.content.Intent;
+import android.content.SharedPreferences;
 import android.content.pm.PackageInfo;
 import android.content.pm.PackageManager;
 import android.database.Cursor;
 import android.database.DatabaseUtils;
+import android.preference.PreferenceManager;
 import android.net.Uri;
 import android.os.Handler;
 import android.os.Looper;
@@ -33,14 +35,18 @@ import org.json.JSONArray;
 import org.json.JSONException;
 import org.json.JSONObject;
 import org.skyscreamer.jsonassert.JSONAssert;
+import org.skyscreamer.jsonassert.JSONCompareMode;
 
 import java.io.FileNotFoundException;
 import java.io.IOException;
 import java.util.ArrayList;
 import java.util.HashMap;
+import java.util.HashSet;
+import java.util.Set;
 import java.util.Hashtable;
 import java.util.List;
 import java.util.Map;
+import java.util.TreeMap;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
@@ -398,6 +404,16 @@ public class StudyUtils extends IntentService {
             }
         }
 
+        // Log why any study-enabled sensor can't actually collect on this device (no hardware,
+        // missing permission, accessibility/location services off) into aware_log, which already
+        // syncs to the researcher's database — covers both the join flow and every config update,
+        // since this is the one place both paths funnel through.
+        try {
+            SensorDiagnostics.logSensorStatus(context, sensors);
+        } catch (Exception e) {
+            Log.e(Aware.TAG, "Error logging sensor diagnostics: " + e.getMessage());
+        }
+
         // Start Aware service and sync data
         Intent aware = new Intent(context, Aware.class);
         context.startService(aware);
@@ -477,6 +493,14 @@ public class StudyUtils extends IntentService {
         // Track all settings to verify they're applied correctly
         HashMap<String, String> appliedSettings = new HashMap<>();
 
+        // Mirror each setting into the UI SharedPreferences too. AWARE keeps sensor state in two
+        // stores: the aware_settings provider (read by startAWARE to actually run sensors) and the
+        // preference-screen SharedPreferences (what the checkboxes show and persist). Writing only
+        // the provider left the checkboxes OFF and let onSharedPreferenceChanged overwrite the
+        // provider back to the (false) UI default — so config-enabled sensors never activated until
+        // the participant tapped them. Keeping the two stores in sync fixes that.
+        SharedPreferences.Editor uiPrefs = PreferenceManager.getDefaultSharedPreferences(context).edit();
+
         for (int i = 0; i < sensors.length(); i++) {
             try {
                 JSONObject sensor_config = sensors.getJSONObject(i);
@@ -486,6 +510,17 @@ public class StudyUtils extends IntentService {
                     String setting = sensor_config.getString("setting");
                     Object value = sensor_config.get("value");
                     String valueType = value.getClass().getSimpleName();
+
+                    // WEBSERVICE_SERVER doubles as the join URL that Aware.getStudy()/isStudy()
+                    // match against aware_studies.study_url. Some study configs carry a
+                    // "webservice_server" sensor entry for the classic PHP-webservice upload
+                    // path (a different URL, e.g. per-platform); applying it here silently
+                    // overwrote the join URL and broke every getStudy() lookup from then on.
+                    if (setting.equals(Aware_Preferences.WEBSERVICE_SERVER)) {
+                        Log.d(Aware.TAG, "processSensorSettings: Skipping " + setting +
+                                " from sensors config (owned by the join/sync URL, not overridable here)");
+                        continue;
+                    }
 
                     Log.d(Aware.TAG, "processSensorSettings: Processing setting: " + setting +
                             " with value: " + value + " (type: " + valueType + ")");
@@ -506,6 +541,14 @@ public class StudyUtils extends IntentService {
                             // For any other type, convert to string
                             Aware.setSetting(context, setting, value.toString());
                         }
+                        // Mirror to the UI store with the type the preference persists as:
+                        // CheckBoxPreference persists a Boolean; EditText/List persist a String.
+                        if (value instanceof Boolean) {
+                            uiPrefs.putBoolean(setting, (Boolean) value);
+                        } else {
+                            uiPrefs.putString(setting, String.valueOf(value));
+                        }
+
                         appliedSettings.put(setting, value.toString());
                         Log.d(Aware.TAG, "processSensorSettings: Successfully applied setting: " + setting);
                     } catch (Exception e) {
@@ -519,6 +562,9 @@ public class StudyUtils extends IntentService {
                 Log.e(Aware.TAG, "processSensorSettings: JSONException: " + e.getMessage());
             }
         }
+
+        // Commit the mirrored UI settings so the preference screen reflects the study config.
+        uiPrefs.apply();
 
         // Verify all settings were successfully applied
         Log.d(Aware.TAG, "processSensorSettings: Verifying " + appliedSettings.size() + " applied settings");
@@ -870,16 +916,22 @@ public class StudyUtils extends IntentService {
     public static void syncStudyConfig(Context context, Boolean toast) {
         if (!Aware.isStudy(context)) return;
 
-        String studyUrl = Aware.getSetting(context, Aware_Preferences.WEBSERVICE_SERVER);
-        Cursor study = Aware.getStudy(context,
-                Aware.getSetting(context, Aware_Preferences.WEBSERVICE_SERVER));
+        // Aware.getActiveStudy() instead of Aware.getStudy(context, webservice_server): the latter
+        // does "WHERE study_url LIKE '<webservice_server>%'", which silently finds nothing (and
+        // makes this whole method a no-op) the moment webservice_server and the row's own
+        // study_url text ever diverge — e.g. joining via a short link that differs from the
+        // resolved config URL the row actually stored. getActiveStudy() matches on "currently
+        // joined, not exited" instead, with no URL comparison at all.
+        Cursor study = Aware.getActiveStudy(context);
 
         if (study != null && study.moveToFirst()) {
             try {
+                String studyUrl = study.getString(study.getColumnIndex(Aware_Provider.Aware_Studies.STUDY_URL));
                 JSONObject localConfig = new JSONObject(study.getString(
                         study.getColumnIndex(Aware_Provider.Aware_Studies.STUDY_CONFIG)));
                 JSONObject newConfig = getStudyConfig(studyUrl);
-                if (!validateStudyConfig(context, newConfig, Aware.getSetting(context, Aware_Preferences.DB_PASSWORD))) {
+                boolean valid = validateStudyConfig(context, newConfig, Aware.getSetting(context, Aware_Preferences.DB_PASSWORD));
+                if (!valid) {
                     String msg = "Failed to sync study, something is wrong with the config.";
                     Log.e(Aware.TAG, msg);
                     if (toast) {
@@ -892,21 +944,95 @@ public class StudyUtils extends IntentService {
                     }
                     return;
                 }
-                if (jsonEquals(localConfig, newConfig, false)) {
-                    String msg = "There are no study updates.";
-                    if (Aware.DEBUG) Aware.debug(context, msg);
-                    if (toast) {
-                        new Handler(Looper.getMainLooper()).post(new Runnable() {
-                            @Override
-                            public void run() {
-                                Toast.makeText(context, msg, Toast.LENGTH_SHORT).show();
-                            }
-                        });
+                if (jsonEquals(localConfig, newConfig)) {
+                    // The server config hasn't changed, but that alone doesn't guarantee the
+                    // device's live settings still match it — Aware.reset() and an interrupted
+                    // apply can both leave aware_settings drifted while the stored config blob
+                    // still reads the same as the server. Comparing blobs alone let that drift go
+                    // undetected forever: the participant would look "configured" while a sensor
+                    // was silently off. Check live settings too and self-heal if they've drifted.
+                    String drift = liveDriftSignature(context, newConfig);
+                    if (drift.isEmpty()) {
+                        String msg = "There are no study updates.";
+                        if (Aware.DEBUG) Aware.debug(context, msg);
+                        if (toast) {
+                            new Handler(Looper.getMainLooper()).post(new Runnable() {
+                                @Override
+                                public void run() {
+                                    Toast.makeText(context, msg, Toast.LENGTH_SHORT).show();
+                                }
+                            });
+                        }
+                        Aware.setSetting(context, Aware_Preferences.LAST_DRIFT_SIGNATURE, "");
+                        return;
                     }
+
+                    String lastDrift = Aware.getSetting(context, Aware_Preferences.LAST_DRIFT_SIGNATURE);
+                    long lastReconcileTs = Aware.getSettingAsLong(context, Aware_Preferences.LAST_DRIFT_RECONCILE_TS, 0);
+                    boolean sameDriftTriedRecently = drift.equals(lastDrift)
+                            && (System.currentTimeMillis() - lastReconcileTs) < DRIFT_RECONCILE_BACKOFF_MS;
+                    if (sameDriftTriedRecently) {
+                        // Same mismatch we already tried to fix recently — most likely a sensor
+                        // the device can't actually satisfy (e.g. no hardware), where re-applying
+                        // would restart every sensor service again on every ~1 min sync poll for
+                        // no benefit. Back off and retry later in case the cause was transient.
+                        if (Aware.DEBUG)
+                            Aware.debug(context, "Live settings drifted from study config but a fix was already attempted recently, skipping: " + drift);
+                        return;
+                    }
+
+                    if (Aware.DEBUG)
+                        Aware.debug(context, "Live settings drifted from study config, self-healing: " + drift);
+                    Aware.setSetting(context, Aware_Preferences.LAST_DRIFT_SIGNATURE, drift);
+                    Aware.setSetting(context, Aware_Preferences.LAST_DRIFT_RECONCILE_TS, System.currentTimeMillis());
+                    // insertCompliance=false: this is a silent local self-heal, not a real config
+                    // change, so it shouldn't log an "updated study" compliance row or notify the
+                    // participant the way an actual server-side edit does below.
+                    applySettings(context, studyUrl, new JSONArray().put(newConfig), false, Aware.getSetting(context, Aware_Preferences.DB_PASSWORD));
                     return;
                 }
+
+                // Real config change from the server — clear any stale drift bookkeeping, since
+                // the full re-apply below re-syncs every setting from scratch anyway.
+                Aware.setSetting(context, Aware_Preferences.LAST_DRIFT_SIGNATURE, "");
                 applySettings(context, studyUrl, new JSONArray().put(newConfig), true, Aware.getSetting(context, Aware_Preferences.DB_PASSWORD));
                 if (Aware.DEBUG) Aware.debug(context, "Updated study config: " + newConfig);
+
+                // Tell any open UI to rebuild (e.g. show newly enabled sensors) without a re-join,
+                // and report which sensors were added / removed so it can notify the participant.
+                ArrayList<String> added = new ArrayList<>();
+                ArrayList<String> removed = new ArrayList<>();
+                diffActiveSensors(localConfig, newConfig, added, removed);
+                Boolean configUpdateAllowedNewValue = enableConfigUpdateChanged(localConfig, newConfig);
+
+                // Persist the curated, participant-meaningful part of this diff so it can still be
+                // shown next time the app is opened even if no UI was around to receive the live
+                // broadcast below (syncs run on their own schedule regardless of whether the app is
+                // open). Cleared once shown by whichever path (live or catch-up) shows it first.
+                boolean hasCuratedChanges = !added.isEmpty() || !removed.isEmpty() || configUpdateAllowedNewValue != null;
+                if (hasCuratedChanges) {
+                    try {
+                        JSONObject notice = new JSONObject();
+                        notice.put("added", new JSONArray(added));
+                        notice.put("removed", new JSONArray(removed));
+                        if (configUpdateAllowedNewValue != null) {
+                            notice.put("cfgChanged", true);
+                            notice.put("cfgNewValue", configUpdateAllowedNewValue);
+                        }
+                        Aware.setSetting(context, Aware_Preferences.PENDING_STUDY_UPDATE_NOTICE, notice.toString());
+                    } catch (JSONException e) {
+                        e.printStackTrace();
+                    }
+                }
+
+                Intent configUpdated = new Intent(Aware.ACTION_AWARE_STUDY_CONFIG_UPDATED);
+                configUpdated.putStringArrayListExtra(Aware.EXTRA_SENSORS_ADDED, added);
+                configUpdated.putStringArrayListExtra(Aware.EXTRA_SENSORS_REMOVED, removed);
+                if (configUpdateAllowedNewValue != null) {
+                    configUpdated.putExtra(Aware.EXTRA_CONFIG_UPDATE_ALLOWED_CHANGED, true);
+                    configUpdated.putExtra(Aware.EXTRA_CONFIG_UPDATE_ALLOWED_NEW_VALUE, configUpdateAllowedNewValue);
+                }
+                context.sendBroadcast(configUpdated);
                 if (toast) {
                     new Handler(Looper.getMainLooper()).post(new Runnable() {
                         @Override
@@ -920,7 +1046,7 @@ public class StudyUtils extends IntentService {
 
                 // Notify the user that study config has been updated
                 Intent intent = new Intent()
-                        .setComponent(new ComponentName("com.aware.phone", "com.aware.phone.ui.Aware_Light_Client"))
+                        .setComponent(new ComponentName("com.aware.phone", "com.aware.phone.ui.Aware_Client"))
                         .setFlags(Intent.FLAG_ACTIVITY_NEW_TASK | Intent.FLAG_ACTIVITY_CLEAR_TASK);
                 PendingIntent clickIntent = PendingIntent.getActivity(context, 0, intent, 0);
 
@@ -937,6 +1063,8 @@ public class StudyUtils extends IntentService {
                 notManager.notify(Applications.ACCESSIBILITY_NOTIFICATION_ID, builder.build());
             } catch (JSONException e) {
                 e.printStackTrace();
+            } finally {
+                study.close();
             }
         }
     }
@@ -964,7 +1092,13 @@ public class StudyUtils extends IntentService {
         }
 
         OkHttpClient client = new OkHttpClient();
-        Request request = new Request.Builder().url(studyUrl).build();
+        // Always fetch fresh so researcher edits are picked up. no-store rather than no-cache: the
+        // latter only asks caches to revalidate before reuse, no-store tells them not to keep a
+        // copy at all — a stronger guarantee against intermediary proxies serving something stale.
+        Request request = new Request.Builder()
+                .url(studyUrl)
+                .header("Cache-Control", "no-store")
+                .build();
 
         try (Response response = client.newCall(request).execute()) {
             String responseStr = response.body().string();
@@ -1015,19 +1149,174 @@ public class StudyUtils extends IntentService {
     }
 
     /**
-     * Compares two JSON objects for equality
+     * Compares two JSON objects for equality.
+     *
+     * Uses NON_EXTENSIBLE rather than LENIENT: LENIENT treats arrays as one-directional subset
+     * checks, so a config edit that only adds entries to the sensors/schedulers arrays (rather
+     * than toggling an existing entry's value) compared equal to the old config and was silently
+     * ignored on sync. NON_EXTENSIBLE requires both arrays to contain exactly the same elements
+     * (order-independent), which catches additions and removals alike.
      *
      * @param obj1 First JSON object
      * @param obj2 Second JSON object
-     * @param strict Whether to perform strict comparison
      * @return true if the objects are equal, false otherwise
      */
-    private static boolean jsonEquals(JSONObject obj1, JSONObject obj2, boolean strict) {
+    // Package-private rather than private so StudyUtilsTest (same package, src/test) can call this
+    // directly and lock in the NON_EXTENSIBLE regression above without reflection.
+    static boolean jsonEquals(JSONObject obj1, JSONObject obj2) {
         try {
-            JSONAssert.assertEquals(obj1, obj2, strict);
+            JSONAssert.assertEquals(obj1, obj2, JSONCompareMode.NON_EXTENSIBLE);
             return true;
         } catch (JSONException | AssertionError e) {
             return false;
         }
+    }
+
+    /**
+     * How long to wait before retrying a self-heal for the same detected live-settings drift.
+     * Prevents an unfixable drift (e.g. a sensor whose hardware is missing, so it can never
+     * actually match the config) from re-triggering applySettings() — and restarting every sensor
+     * service — on every ~1 minute sync poll. Long enough to stop the hot loop, short enough that
+     * a transient cause (e.g. a permission the participant grants later) still self-heals same-day.
+     */
+    private static final long DRIFT_RECONCILE_BACKOFF_MS = 60 * 60 * 1000; // 1 hour
+
+    /**
+     * Compares every status_* sensor setting in {@code config} against its live value in the
+     * aware_settings provider (what actually controls whether a sensor service runs) and returns a
+     * stable, sorted signature of any mismatches — empty string if live settings already match.
+     *
+     * Only status_* (on/off) settings are checked, not every setting (frequency/threshold etc.):
+     * those don't affect whether data collection is happening at all, just its granularity, so a
+     * mismatch there isn't the "participant thinks they're compliant but a sensor is off" failure
+     * mode this exists to catch — and checking them would make the signature (and the reapply
+     * cadence below) noisier without covering a materially worse bug.
+     *
+     * Settings whose sensor hardware this device doesn't have (per SensorAvailability) are excluded
+     * entirely rather than left for the 1-hour reconcile backoff to suppress: a missing sensor is a
+     * permanent, known fact about the device, not a transient failure that might self-heal, so it
+     * shouldn't ever count as "drift" or occupy a slot in the backoff-tracked signature at all.
+     */
+    private static String liveDriftSignature(Context context, JSONObject config) {
+        JSONArray sensors = config.optJSONArray("sensors");
+        if (sensors == null) return "";
+
+        // Read every candidate setting's live value (and hardware availability) up front so the
+        // comparison itself (below) is a pure function of data, not of Context/ContentResolver —
+        // makes it directly unit-testable without Robolectric, same reasoning as
+        // Aware.parseLongOrDefault being split out from Aware.getSettingAsLong().
+        Map<String, String> liveValues = new HashMap<>();
+        Set<String> hardwareUnavailable = new HashSet<>();
+        for (int i = 0; i < sensors.length(); i++) {
+            JSONObject sensor = sensors.optJSONObject(i);
+            if (sensor == null) continue;
+            String setting = sensor.optString("setting", "");
+            if (!setting.startsWith("status_") || !sensor.has("value")) continue;
+            liveValues.put(setting, Aware.getSetting(context, setting));
+            if (!SensorAvailability.isHardwareAvailable(context, setting)) {
+                hardwareUnavailable.add(setting);
+            }
+        }
+        return driftSignature(config, liveValues, hardwareUnavailable);
+    }
+
+    /**
+     * Context-free core of {@link #liveDriftSignature(Context, JSONObject)}: compares each
+     * status_* sensor setting in {@code config} against its value in {@code liveValues} (missing
+     * from the map is treated the same as an empty/unset live setting) and returns a stable, sorted
+     * signature of any mismatches — empty string if everything matches. Settings named in
+     * {@code hardwareUnavailable} are skipped regardless of their live value: the device can never
+     * satisfy them, so they're not "drift" in the sense this method exists to catch. Split out so
+     * it's unit-testable without a Context.
+     *
+     * Only status_* (on/off) settings are checked, not every setting (frequency/threshold etc.):
+     * those don't affect whether data collection is happening at all, just its granularity, so a
+     * mismatch there isn't the "participant thinks they're compliant but a sensor is off" failure
+     * mode this exists to catch — and checking them would make the signature (and the reapply
+     * cadence below) noisier without covering a materially worse bug.
+     */
+    static String driftSignature(JSONObject config, Map<String, String> liveValues, Set<String> hardwareUnavailable) {
+        JSONArray sensors = config.optJSONArray("sensors");
+        if (sensors == null) return "";
+
+        TreeMap<String, String> mismatches = new TreeMap<>();
+        for (int i = 0; i < sensors.length(); i++) {
+            JSONObject sensor = sensors.optJSONObject(i);
+            if (sensor == null) continue;
+
+            String setting = sensor.optString("setting", "");
+            if (!setting.startsWith("status_") || !sensor.has("value")) continue;
+            if (hardwareUnavailable.contains(setting)) continue;
+
+            String expected = String.valueOf(sensor.opt("value"));
+            String live = liveValues.containsKey(setting) ? liveValues.get(setting) : "";
+            if (!expected.equalsIgnoreCase(live)) {
+                mismatches.put(setting, expected + "!=" + live);
+            }
+        }
+
+        if (mismatches.isEmpty()) return "";
+        StringBuilder signature = new StringBuilder();
+        for (Map.Entry<String, String> mismatch : mismatches.entrySet()) {
+            signature.append(mismatch.getKey()).append('=').append(mismatch.getValue()).append(';');
+        }
+        return signature.toString();
+    }
+
+    /**
+     * Computes which sensors became active/inactive between two study configs, as human-readable
+     * names, into {@code added} and {@code removed}.
+     */
+    private static void diffActiveSensors(JSONObject oldConfig, JSONObject newConfig,
+                                          List<String> added, List<String> removed) {
+        Set<String> before = activeSensorNames(oldConfig);
+        Set<String> after = activeSensorNames(newConfig);
+        for (String s : after) if (!before.contains(s)) added.add(s);
+        for (String s : before) if (!after.contains(s)) removed.add(s);
+    }
+
+    /** Human-readable names of sensors whose status_* setting is enabled (true) in a config. */
+    private static Set<String> activeSensorNames(JSONObject config) {
+        Set<String> active = new HashSet<>();
+        JSONArray sensors = config.optJSONArray("sensors");
+        if (sensors == null) return active;
+        for (int i = 0; i < sensors.length(); i++) {
+            JSONObject sensor = sensors.optJSONObject(i);
+            if (sensor == null) continue;
+            String setting = sensor.optString("setting", "");
+            if (setting.startsWith("status_") && sensor.optBoolean("value", false)) {
+                active.add(setting.substring("status_".length()).replace('_', ' '));
+            }
+        }
+        return active;
+    }
+
+    /**
+     * Value of a given setting key in a config's sensors array, or null if not present.
+     * Boolean-only (unlike processSensorSettings()'s multi-type handling elsewhere in this file) —
+     * fine for enable_config_update, but don't reuse this for a non-boolean setting.
+     */
+    private static Boolean sensorSettingValue(JSONObject config, String key) {
+        JSONArray sensors = config.optJSONArray("sensors");
+        if (sensors == null) return null;
+        for (int i = 0; i < sensors.length(); i++) {
+            JSONObject sensor = sensors.optJSONObject(i);
+            if (sensor == null) continue;
+            if (key.equals(sensor.optString("setting", ""))) {
+                return sensor.optBoolean("value", false);
+            }
+        }
+        return null;
+    }
+
+    /**
+     * Null if {@code enable_config_update} didn't change (or is absent from either config);
+     * otherwise its new value, for the participant-facing "study updated" notice.
+     */
+    private static Boolean enableConfigUpdateChanged(JSONObject oldConfig, JSONObject newConfig) {
+        Boolean before = sensorSettingValue(oldConfig, Aware_Preferences.ENABLE_CONFIG_UPDATE);
+        Boolean after = sensorSettingValue(newConfig, Aware_Preferences.ENABLE_CONFIG_UPDATE);
+        if (after == null || after.equals(before)) return null;
+        return after;
     }
 }

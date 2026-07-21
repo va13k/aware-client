@@ -81,7 +81,9 @@ public class Aware_Preferences {
     public static final String STATUS_APPLICATIONS = "status_applications";
 
     /**
-     * Background applications update frequency (default = 30) seconds
+     * Background applications update frequency, in minutes. Default = 0 (disabled) -- the
+     * scheduled background scan only runs when this is set > 0. Fed directly into
+     * Scheduler.Schedule#setInterval(long), which takes minutes.
      */
     public static final String FREQUENCY_APPLICATIONS = "frequency_applications";
 
@@ -301,7 +303,9 @@ public class Aware_Preferences {
     public static final String STATUS_NETWORK_TRAFFIC = "status_network_traffic";
 
     /**
-     * Network traffic frequency (default = 60), in seconds
+     * Network traffic frequency (default = 60), in seconds.
+     * Currently unused: Traffic.java does not read this setting -- its sync cadence is
+     * driven by FREQUENCY_WEBSERVICE instead.
      */
     public static final String FREQUENCY_NETWORK_TRAFFIC = "frequency_network_traffic";
 
@@ -371,7 +375,9 @@ public class Aware_Preferences {
     public static final String STATUS_TIMEZONE = "status_timezone";
 
     /**
-     * Timezone frequency (default = 3600) in seconds
+     * Timezone frequency (default = 3600) in seconds.
+     * Currently unused: Timezone.java does not read this setting -- its sync cadence is
+     * driven by FREQUENCY_WEBSERVICE instead.
      */
     public static final String FREQUENCY_TIMEZONE = "frequency_timezone";
 
@@ -631,6 +637,29 @@ public class Aware_Preferences {
      * Disable the sensors config settings from being updated from the mobile app.
      */
     public static final String ENABLE_CONFIG_UPDATE = "enable_config_update";
+
+    /**
+     * Serialized JSON payload describing the last study config update the participant hasn't
+     * seen yet (sensors added/removed, enable_config_update change). Written by
+     * StudyUtils.syncStudyConfig() so the notice survives even if no UI was open to receive the
+     * live ACTION_AWARE_STUDY_CONFIG_UPDATED broadcast; cleared once shown.
+     */
+    public static final String PENDING_STUDY_UPDATE_NOTICE = "pending_study_update_notice";
+
+    /**
+     * Signature of the last detected mismatch between live sensor settings and the study config
+     * that StudyUtils.syncStudyConfig() attempted to self-heal (empty string = none). Used to avoid
+     * re-applying settings on every sync poll when the drift can't actually be fixed (e.g. a sensor
+     * whose hardware is missing) — see LAST_DRIFT_RECONCILE_TS.
+     */
+    public static final String LAST_DRIFT_SIGNATURE = "last_drift_signature";
+
+    /**
+     * Timestamp (ms) of the last time syncStudyConfig() attempted to self-heal a live-settings
+     * drift matching LAST_DRIFT_SIGNATURE. Paired with a backoff window so an unfixable drift
+     * doesn't restart every sensor service on every ~1 minute sync poll forever.
+     */
+    public static final String LAST_DRIFT_RECONCILE_TS = "last_drift_reconcile_ts";
 
     /**
      * Key management strategy.

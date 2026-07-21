@@ -33,9 +33,19 @@ public class JoinStudyDialog extends DialogFragment {
     private static final String TAG = "AWARE::JoinStudyDialog";
     private Activity mActivity;
     private ProgressBar mProgressBar;
+    private String prefillUrl;
 
     public JoinStudyDialog(Activity activity) {
         this.mActivity = activity;
+    }
+
+    /**
+     * Pre-fills the study URL field. Used to re-join a previously joined study: the dialog is
+     * still shown (and thus attached), so the normal, working join path runs on confirm.
+     */
+    public JoinStudyDialog setStudyUrl(String url) {
+        this.prefillUrl = url;
+        return this;
     }
 
     @Override
@@ -43,6 +53,11 @@ public class JoinStudyDialog extends DialogFragment {
         AlertDialog.Builder builder = new AlertDialog.Builder(mActivity);
         LayoutInflater inflater = mActivity.getLayoutInflater();
         final View dialogView = inflater.inflate(R.layout.dialog_join_study, null);
+
+        if (prefillUrl != null && prefillUrl.length() > 0) {
+            EditText etPrefill = dialogView.findViewById(R.id.et_join_study_url);
+            etPrefill.setText(prefillUrl);
+        }
 
         builder.setView(dialogView);
         builder.setTitle("Enter URL for study")

@@ -1,5 +1,6 @@
 package com.aware.phone.ui.dialogs;
 
+import android.accounts.Account;
 import android.app.Activity;
 import android.app.AlertDialog;
 import android.app.Dialog;
@@ -43,7 +44,7 @@ public class QuitStudyDialog extends DialogFragment {
                 .setPositiveButton("Yes", new DialogInterface.OnClickListener() {
                     @Override
                     public void onClick(DialogInterface dialogInterface, int i) {
-                        Cursor dbStudy = Aware.getStudy(mActivity, Aware.getSetting(mActivity, Aware_Preferences.WEBSERVICE_SERVER));
+                        Cursor dbStudy = Aware.getActiveStudy(mActivity);
                         if (dbStudy != null && dbStudy.moveToFirst()) {
                             ContentValues complianceEntry = new ContentValues();
                             complianceEntry.put(Aware_Provider.Aware_Studies.STUDY_TIMESTAMP, System.currentTimeMillis());
@@ -71,7 +72,7 @@ public class QuitStudyDialog extends DialogFragment {
                 .setNegativeButton("No", new DialogInterface.OnClickListener() {
                     @Override
                     public void onClick(DialogInterface dialogInterface, int i) {
-                        Cursor dbStudy = Aware.getStudy(mActivity, Aware.getSetting(mActivity, Aware_Preferences.WEBSERVICE_SERVER));
+                        Cursor dbStudy = Aware.getActiveStudy(mActivity);
                         if (dbStudy != null && dbStudy.moveToFirst()) {
                             ContentValues complianceEntry = new ContentValues();
                             complianceEntry.put(Aware_Provider.Aware_Studies.STUDY_TIMESTAMP, System.currentTimeMillis());
@@ -110,10 +111,9 @@ public class QuitStudyDialog extends DialogFragment {
      * Store information on attempt to quit study and then show the dialog to confirm the quit.
      */
     public void showDialog() {
-        String study_url = Aware.getSetting(mActivity, Aware_Preferences.WEBSERVICE_SERVER);
-        Log.i(TAG, "Quitting from study with URL: " + study_url);
+        Log.i(TAG, "Quitting from active study");
 
-        Cursor dbStudy = Aware.getStudy(mActivity, study_url);
+        Cursor dbStudy = Aware.getActiveStudy(mActivity);
         if (dbStudy != null && dbStudy.moveToFirst()) {
             ContentValues complianceEntry = new ContentValues();
             complianceEntry.put(Aware_Provider.Aware_Studies.STUDY_TIMESTAMP, System.currentTimeMillis());
@@ -165,6 +165,13 @@ public class QuitStudyDialog extends DialogFragment {
             // Stop the screenshot service
             stopScreenshotService();
 
+            // Upload the "quit study" (exit) row to the researcher's server BEFORE reset(), while we
+            // are still enrolled. reset() clears webservice_server and flips isStudy() false, after
+            // which the exit event can no longer sync — so the researcher would never see the leave.
+            // Bounded wait: returns as soon as the sync finishes (usually ~1-3s); the cap only
+            // matters on a stalled/offline network, where we give up and reset anyway.
+            uploadStudyExitBlocking(6000);
+
             // Reset Aware settings
             Aware.reset(mActivity);
             return null;
@@ -181,6 +188,45 @@ public class QuitStudyDialog extends DialogFragment {
     private void stopScreenshotService() {
         Intent serviceIntent = new Intent(mActivity, ScreenShot.class);
         mActivity.stopService(serviceIntent);
+    }
+
+    /**
+     * Best-effort synchronous upload of the study rows (incl. the "quit study"/exit row) before the
+     * caller resets AWARE. Requests an expedited manual sync of the aware provider and waits, up to
+     * {@code timeoutMs}, for it to finish — so leaving the study is reported to the researcher even
+     * though {@link Aware#reset(android.content.Context)} is about to disable syncing. Never throws
+     * and never blocks longer than the timeout, so quitting stays responsive (and still works
+     * offline — the reset proceeds regardless).
+     */
+    private void uploadStudyExitBlocking(long timeoutMs) {
+        try {
+            Account account = Aware.getAWAREAccount(mActivity);
+            String authority = Aware_Provider.getAuthority(mActivity);
+            if (account == null || authority == null) return;
+
+            Bundle extras = new Bundle();
+            extras.putBoolean(ContentResolver.SYNC_EXTRAS_MANUAL, true);
+            extras.putBoolean(ContentResolver.SYNC_EXTRAS_EXPEDITED, true);
+            ContentResolver.requestSync(account, authority, extras);
+
+            long deadline = System.currentTimeMillis() + timeoutMs;
+            // Wait for the sync to start (it may be briefly pending before becoming active)...
+            while (System.currentTimeMillis() < deadline
+                    && !ContentResolver.isSyncActive(account, authority)
+                    && ContentResolver.isSyncPending(account, authority)) {
+                Thread.sleep(200);
+            }
+            // ...then wait for it to complete, or until the timeout.
+            while (System.currentTimeMillis() < deadline
+                    && (ContentResolver.isSyncActive(account, authority)
+                        || ContentResolver.isSyncPending(account, authority))) {
+                Thread.sleep(200);
+            }
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+        } catch (Exception e) {
+            Log.w(TAG, "Study exit sync before reset failed (best-effort): " + e.getMessage());
+        }
     }
 
 }

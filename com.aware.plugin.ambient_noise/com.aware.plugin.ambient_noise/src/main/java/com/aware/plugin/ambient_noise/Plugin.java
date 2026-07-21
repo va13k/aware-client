@@ -3,6 +3,7 @@ package com.aware.plugin.ambient_noise;
 import android.Manifest;
 import android.accounts.Account;
 import android.content.ContentResolver;
+import android.content.Context;
 import android.content.ContentValues;
 import android.content.Intent;
 import android.content.SyncRequest;
@@ -67,7 +68,7 @@ public class Plugin extends Aware_Plugin {
 
             DEBUG = Aware.getSetting(this, Aware_Preferences.DEBUG_FLAG).equals("true");
 
-            initializeSettings();
+            initializeSettings(getApplicationContext());
 
             setupScheduler();
 
@@ -87,24 +88,30 @@ public class Plugin extends Aware_Plugin {
 
 
 
-    private void initializeSettings() {
-        if (Aware.getSetting(getApplicationContext(), Settings.FREQUENCY_PLUGIN_AMBIENT_NOISE).isEmpty()) {
-            Aware.setSetting(getApplicationContext(), Settings.FREQUENCY_PLUGIN_AMBIENT_NOISE, 5);
+    /**
+     * Ensures the plugin's own settings have a value, defaulting any that are empty. Shared with
+     * AudioAnalyser (a separate IntentService triggered directly by the Scheduler, not through this
+     * Service's onStartCommand()) so both read from the same single source of truth for defaults
+     * instead of duplicating the literals.
+     */
+    static void initializeSettings(Context context) {
+        if (Aware.getSetting(context, Settings.FREQUENCY_PLUGIN_AMBIENT_NOISE).isEmpty()) {
+            Aware.setSetting(context, Settings.FREQUENCY_PLUGIN_AMBIENT_NOISE, 5);
         }
-        if (Aware.getSetting(getApplicationContext(), Settings.PLUGIN_AMBIENT_NOISE_SAMPLE_SIZE).isEmpty()) {
-            Aware.setSetting(getApplicationContext(), Settings.PLUGIN_AMBIENT_NOISE_SAMPLE_SIZE, 30);
+        if (Aware.getSetting(context, Settings.PLUGIN_AMBIENT_NOISE_SAMPLE_SIZE).isEmpty()) {
+            Aware.setSetting(context, Settings.PLUGIN_AMBIENT_NOISE_SAMPLE_SIZE, 30);
         }
-        if (Aware.getSetting(getApplicationContext(), Settings.PLUGIN_AMBIENT_NOISE_SILENCE_THRESHOLD).isEmpty()) {
-            Aware.setSetting(getApplicationContext(), Settings.PLUGIN_AMBIENT_NOISE_SILENCE_THRESHOLD, 50);
+        if (Aware.getSetting(context, Settings.PLUGIN_AMBIENT_NOISE_SILENCE_THRESHOLD).isEmpty()) {
+            Aware.setSetting(context, Settings.PLUGIN_AMBIENT_NOISE_SILENCE_THRESHOLD, 50);
         }
     }
 
     private void setupScheduler() {
         try {
             Scheduler.Schedule audioSampler = Scheduler.getSchedule(this, SCHEDULER_PLUGIN_AMBIENT_NOISE);
-            if (audioSampler == null || audioSampler.getInterval() != Long.parseLong(Aware.getSetting(this, Settings.FREQUENCY_PLUGIN_AMBIENT_NOISE))) {
+            if (audioSampler == null || audioSampler.getInterval() != Aware.getSettingAsLong(this, Settings.FREQUENCY_PLUGIN_AMBIENT_NOISE, 5)) {
                 audioSampler = new Scheduler.Schedule(SCHEDULER_PLUGIN_AMBIENT_NOISE)
-                        .setInterval(Long.parseLong(Aware.getSetting(this, Settings.FREQUENCY_PLUGIN_AMBIENT_NOISE)))
+                        .setInterval(Aware.getSettingAsLong(this, Settings.FREQUENCY_PLUGIN_AMBIENT_NOISE, 5))
                         .setActionType(Scheduler.ACTION_TYPE_SERVICE)
                         .setActionClass(getPackageName() + "/" + AudioAnalyser.class.getName());
                 Scheduler.saveSchedule(this, audioSampler);
@@ -126,7 +133,7 @@ public class Plugin extends Aware_Plugin {
                 ContentResolver.setSyncAutomatically(aware_account, authority, true);
 
                 if (Aware.isStudy(this)) {
-                    long frequency = Long.parseLong(Aware.getSetting(this, Aware_Preferences.FREQUENCY_WEBSERVICE)) * 60;
+                    long frequency = Aware.getSettingAsLong(this, Aware_Preferences.FREQUENCY_WEBSERVICE, 30) * 60;
 
                     SyncRequest request = new SyncRequest.Builder()
                             .syncPeriodic(frequency, frequency / 3)

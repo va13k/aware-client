@@ -26,6 +26,7 @@ import com.aware.providers.Rotation_Provider;
 import com.aware.providers.Rotation_Provider.Rotation_Data;
 import com.aware.providers.Rotation_Provider.Rotation_Sensor;
 import com.aware.utils.Aware_Sensor;
+import com.aware.utils.SensorTimeUnits;
 
 import java.util.ArrayList;
 import java.util.List;
@@ -294,14 +295,14 @@ public class Rotation extends Aware_Sensor implements SensorEventListener {
                 saveSensorDevice(mRotation);
 
                 if (Aware.getSetting(this, Aware_Preferences.FREQUENCY_ROTATION).length() == 0) {
-                    Aware.setSetting(this, Aware_Preferences.FREQUENCY_ROTATION, 200000);
+                    Aware.setSetting(this, Aware_Preferences.FREQUENCY_ROTATION, 20000);
                 }
 
                 if (Aware.getSetting(this, Aware_Preferences.THRESHOLD_ROTATION).length() == 0) {
                     Aware.setSetting(this, Aware_Preferences.THRESHOLD_ROTATION, 0.0);
                 }
-                int new_frequency = Integer.parseInt(Aware.getSetting(getApplicationContext(), Aware_Preferences.FREQUENCY_ROTATION));
-                double new_threshold = Double.parseDouble(Aware.getSetting(getApplicationContext(), Aware_Preferences.THRESHOLD_ROTATION));
+                int new_frequency = Aware.getSettingAsInt(getApplicationContext(), Aware_Preferences.FREQUENCY_ROTATION, 20000);
+                double new_threshold = Aware.getSettingAsDouble(getApplicationContext(), Aware_Preferences.THRESHOLD_ROTATION, 0.0);
                 boolean new_enforce_frequency = (Aware.getSetting(getApplicationContext(), Aware_Preferences.FREQUENCY_ROTATION_ENFORCE).equals("true")
                         || Aware.getSetting(getApplicationContext(), Aware_Preferences.ENFORCE_FREQUENCY_ALL).equals("true"));
 
@@ -317,7 +318,7 @@ public class Rotation extends Aware_Sensor implements SensorEventListener {
                     ENFORCE_FREQUENCY = new_enforce_frequency;
                 }
 
-                mSensorManager.registerListener(this, mRotation, Integer.parseInt(Aware.getSetting(getApplicationContext(), Aware_Preferences.FREQUENCY_ROTATION)), sensorHandler);
+                mSensorManager.registerListener(this, mRotation, SensorTimeUnits.samplingPeriodUs(new_frequency), sensorHandler);
                 LAST_SAVE = System.currentTimeMillis();
 
                 if (Aware.DEBUG) Log.d(TAG, "Rotation service active...");
@@ -326,7 +327,7 @@ public class Rotation extends Aware_Sensor implements SensorEventListener {
             if (Aware.isStudy(this)) {
                 ContentResolver.setIsSyncable(Aware.getAWAREAccount(this), Rotation_Provider.getAuthority(this), 1);
                 ContentResolver.setSyncAutomatically(Aware.getAWAREAccount(this), Rotation_Provider.getAuthority(this), true);
-                long frequency = Long.parseLong(Aware.getSetting(this, Aware_Preferences.FREQUENCY_WEBSERVICE)) * 60;
+                long frequency = Aware.getSettingAsLong(this, Aware_Preferences.FREQUENCY_WEBSERVICE, 30) * 60;
                 SyncRequest request = new SyncRequest.Builder()
                         .syncPeriodic(frequency, frequency / 3)
                         .setSyncAdapter(Aware.getAWAREAccount(this), Rotation_Provider.getAuthority(this))

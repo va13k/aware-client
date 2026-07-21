@@ -46,4 +46,101 @@
         <item>Fast (20ms)</item>
         <item>Fastest (0ms)</item>
     </string-array>
+
+    <string-array name="motion_frequency_values">
+        <item>20000</item>
+        <item>50000</item>
+        <item>100000</item>
+        <item>1000000</item>
+    </string-array>
+    <string-array name="motion_frequency_readable">
+        <item>Fall / impact detection (50 Hz)</item>
+        <item>Activity / transport-mode classification (20 Hz)</item>
+        <item>Coarse mobility type (10 Hz)</item>
+        <item>Long-term, battery-conservative (1 Hz)</item>
+    </string-array>
+
+    <string-array name="magnetometer_frequency_values">
+        <item>50000</item>
+        <item>200000</item>
+        <item>1000000</item>
+    </string-array>
+    <string-array name="magnetometer_frequency_readable">
+        <item>Indoor positioning / heading fusion (20 Hz)</item>
+        <item>Orientation / compass context (5 Hz)</item>
+        <item>Minimal footprint (1 Hz)</item>
+    </string-array>
+
+    <string-array name="light_frequency_values">
+        <item>200000</item>
+        <item>1000000</item>
+        <item>30000000</item>
+    </string-array>
+    <string-array name="light_frequency_readable">
+        <item>Fine environmental transitions (5 Hz)</item>
+        <item>Circadian / screen-exposure proxy (1 Hz)</item>
+        <item>Long-term passive monitoring (every 30s)</item>
+    </string-array>
+
+    <string-array name="barometer_frequency_values">
+        <item>200000</item>
+        <item>1000000</item>
+        <item>30000000</item>
+    </string-array>
+    <string-array name="barometer_frequency_readable">
+        <item>Real-time floor / vertical-transition detection (5 Hz)</item>
+        <item>Coarse elevation / weather context (1 Hz)</item>
+        <item>Minimal footprint (every 30s)</item>
+    </string-array>
+
+    <string-array name="proximity_frequency_values">
+        <item>200000</item>
+        <item>1000000</item>
+    </string-array>
+    <string-array name="proximity_frequency_readable">
+        <item>Real-time call / pocket-state detection (5 Hz)</item>
+        <item>Standard context logging (1 Hz)</item>
+    </string-array>
+
+    <string-array name="temperature_frequency_values">
+        <item>10000000</item>
+        <item>60000000</item>
+    </string-array>
+    <string-array name="temperature_frequency_readable">
+        <item>Standard environmental logging (every 10s)</item>
+        <item>Minimal footprint (every 60s)</item>
+    </string-array>
+
+    <string-array name="location_frequency_values">
+        <item>30</item>
+        <item>180</item>
+        <item>600</item>
+    </string-array>
+    <string-array name="location_frequency_readable">
+        <item>Trip / transportation-mode capture (30s)</item>
+        <item>Standard mobility-pattern capture (3 min)</item>
+        <item>Battery-conservative (10 min)</item>
+    </string-array>
+
+    <string-array name="scan_frequency_values">
+        <item>15</item>
+        <item>60</item>
+        <item>300</item>
+    </string-array>
+    <string-array name="scan_frequency_readable">
+        <item>Real-time co-location / indoor positioning (15s)</item>
+        <item>Standard social-proximity detection (60s)</item>
+        <item>Battery-conservative (5 min)</item>
+    </string-array>
+
+    <string-array name="processor_frequency_values">
+        <item>1</item>
+        <item>10</item>
+        <item>60</item>
+    </string-array>
+    <string-array name="processor_frequency_readable">
+        <item>Diagnostic / real-time load monitoring (1s)</item>
+        <item>Standard housekeeping (10s)</item>
+        <item>Minimal footprint (60s)</item>
+    </string-array>
 </resources>

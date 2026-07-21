@@ -89,74 +89,24 @@ public class AwareSyncAdapter extends AbstractThreadedSyncAdapter {
      * @param syncResult
      */
     @Override
-    public void onPerformSync(Account account, Bundle extras, String authority, ContentProviderClient provider, SyncResult syncResult) {
+    public void onPerformSync(
+        Account account,
+        Bundle extras,
+        String authority,
+        ContentProviderClient provider,
+        SyncResult syncResult
+    ) {
         Log.i(Aware.TAG, "Performing sync for " + Arrays.toString(DATABASE_TABLES));
         
         if (!Aware.getSetting(mContext, Aware_Preferences.WEBSERVICE_SILENT).equals("true"))
             notManager = (NotificationManager) mContext.getSystemService(Context.NOTIFICATION_SERVICE);
 
-
-
         if (DATABASE_TABLES != null && TABLES_FIELDS != null && CONTEXT_URIS != null) {
             for (int i = 0; i < DATABASE_TABLES.length; i++) {
-
-
-
                 offloadData(mContext, DATABASE_TABLES[i], Aware.getSetting(getContext(), Aware_Preferences.WEBSERVICE_SERVER), TABLES_FIELDS[i], CONTEXT_URIS[i]);
             }
         }
     }
-
-    /**
-     * Offloads data stored in a content provider to a remote MySQL database.
-     *
-     * @param context application context
-     * @param database_table name of database table that contains the data to offload
-     * @param table_fields string representing the fields for database_table
-     * @param CONTENT_URI URI of the content provider
-     */
-    private void offloadData(Context context, String database_table, String table_fields, Uri CONTENT_URI) {
-
-        // Check if charging is required for offloading data
-        if (Aware.getSetting(context, Aware_Preferences.WEBSERVICE_CHARGING).equals("true")) {
-            Intent batt = context.registerReceiver(null, new IntentFilter(Intent.ACTION_BATTERY_CHANGED));
-            int plugged = batt.getIntExtra(BatteryManager.EXTRA_PLUGGED, -1);
-            boolean isCharging = (plugged == BatteryManager.BATTERY_PLUGGED_AC || plugged == BatteryManager.BATTERY_PLUGGED_USB);
-
-            if (!isCharging) {
-                if (Aware.DEBUG) Log.d(Aware.TAG, "Only sync data if charging...");
-                return;
-            }
-        }
-
-        // Check if WiFi is required for offloading data
-        if (!isWifiNeededAndConnected()) {
-            if (!isForce3G(database_table)) {
-                if (Aware.DEBUG)
-                    Log.d(Aware.TAG, "Sync data only over Wi-Fi. Will try again later...");
-                return;
-            }
-        }
-
-        Aware.debug(mContext, "STUDY-SYNC: " + database_table);
-
-        boolean web_service_remove_data = Aware.getSetting(context, Aware_Preferences.WEBSERVICE_REMOVE_DATA).equals("true");
-        int MAX_POST_SIZE = getBatchSize();
-
-        // Max number of rows to place on the HTTP(s) post
-        if (MAX_POST_SIZE == 0) {
-            Log.d(Aware.TAG, "Device without available memory left for sync.");
-            return;
-        }
-
-//        try {
-//            Jdbc.insertData(database_table, table_fields, data);
-//        } catch (SQLException e) {
-//            e.printStackTrace();
-//        }
-    }
-
-
 
 /// Send data to the database
     private void offloadData(Context context, String database_table, String web_server, String table_fields, Uri CONTENT_URI) {
@@ -189,7 +139,6 @@ public class AwareSyncAdapter extends AbstractThreadedSyncAdapter {
 
         Aware.debug(mContext, "STUDY-SYNC: " + database_table);
 
-        String protocol = web_server.substring(0, web_server.indexOf(":"));
         boolean web_service_simple = Aware.getSetting(context, Aware_Preferences.WEBSERVICE_SIMPLE).equals("true");
         boolean web_service_remove_data = Aware.getSetting(context, Aware_Preferences.WEBSERVICE_REMOVE_DATA).equals("true");
 
@@ -212,17 +161,13 @@ public class AwareSyncAdapter extends AbstractThreadedSyncAdapter {
         String device_id = Aware.getSetting(context, Aware_Preferences.DEVICE_ID);
         boolean DEBUG = Aware.getSetting(context, Aware_Preferences.DEBUG_FLAG).equals("true");
 
-        // TODO RIO: Remove this
-//        String response = createRemoteTable(device_id, table_fields, web_service_simple, protocol, context, web_server, database_table);
         try {
             String[] columnsStr = getTableColumnsNames(CONTENT_URI, context);
 
             /**
              * We used to check the latest timestamp from the server side. We now keep track of it locally on the phone for scalability and performance hit on MySQL per sync event.
              */
-            String latest;
-            //latest = getLatestRecordFromServer(device_id, web_service_simple, web_service_remove_data, database_table, protocol, context, web_server);
-            latest = getLatestRecordSynched(database_table, columnsStr);
+            String latest = getLatestRecordSynched(database_table, columnsStr);
 
             String study_condition = getStudySyncCondition(context, database_table);
             int total_records = getNumberOfRecordsToSync(CONTENT_URI, columnsStr, latest, study_condition, context);
@@ -255,7 +200,7 @@ public class AwareSyncAdapter extends AbstractThreadedSyncAdapter {
                         notifyUser(context, "Table: " + database_table + " syncing batch " + (uploaded_records + MAX_POST_SIZE) / MAX_POST_SIZE + " of " + batches, false, true, notificationID);
 
                     Cursor sync_data = getSyncData(remoteLatestData, CONTENT_URI, study_condition, columnsStr, uploaded_records, context, MAX_POST_SIZE);
-                    lastSynced = syncBatch(sync_data, database_table, device_id, context, protocol, web_server, DEBUG);
+                    lastSynced = syncBatch(sync_data, database_table, device_id, context, DEBUG);
                     if (lastSynced == null) {
                         removeFrom = 0;
                         Log.d(Aware.TAG, "Connection to server interrupted. Will try again later.");
@@ -377,10 +322,10 @@ public class AwareSyncAdapter extends AbstractThreadedSyncAdapter {
                 long synched = lastSynched.getLong(lastSynched.getColumnIndex(Aware_Provider.Aware_Log.LOG_TIMESTAMP));
 
                 Log.d(Aware.TAG, "Checking forced sync over 3G...");
-                Log.d(Aware.TAG, "Last sync: " + synched + " elapsed: " + (System.currentTimeMillis() - synched) + " force: " + (System.currentTimeMillis() - synched >= Integer.parseInt(Aware.getSetting(mContext, Aware_Preferences.WEBSERVICE_FALLBACK_NETWORK)) * 60 * 60 * 1000));
+                Log.d(Aware.TAG, "Last sync: " + synched + " elapsed: " + (System.currentTimeMillis() - synched) + " force: " + (System.currentTimeMillis() - synched >= Aware.getSettingAsInt(mContext, Aware_Preferences.WEBSERVICE_FALLBACK_NETWORK, 0) * 60 * 60 * 1000));
 
                 lastSynched.close();
-                return (System.currentTimeMillis() - synched >= Integer.parseInt(Aware.getSetting(mContext, Aware_Preferences.WEBSERVICE_FALLBACK_NETWORK)) * 60 * 60 * 1000);
+                return (System.currentTimeMillis() - synched >= Aware.getSettingAsInt(mContext, Aware_Preferences.WEBSERVICE_FALLBACK_NETWORK, 0) * 60 * 60 * 1000);
             } else
                 return true; //first time synching.
         }
@@ -565,7 +510,7 @@ public class AwareSyncAdapter extends AbstractThreadedSyncAdapter {
             Calendar cal = Calendar.getInstance();
             cal.setTimeInMillis(last);
             int rowsDeleted = 0;
-            switch (Integer.parseInt(Aware.getSetting(mContext, Aware_Preferences.FREQUENCY_CLEAN_OLD_DATA))) {
+            switch (Aware.getSettingAsInt(mContext, Aware_Preferences.FREQUENCY_CLEAN_OLD_DATA, 0)) {
                 case 1: //Weekly
                     cal.add(Calendar.DAY_OF_YEAR, -7);
                     if (Aware.DEBUG)
@@ -595,7 +540,7 @@ public class AwareSyncAdapter extends AbstractThreadedSyncAdapter {
         }
     }
 
-    private Long syncBatch(Cursor context_data, String DATABASE_TABLE, String DEVICE_ID, Context mContext, String protocol, String WEBSERVER, Boolean DEBUG) throws JSONException {
+    private Long syncBatch(Cursor context_data, String DATABASE_TABLE, String DEVICE_ID, Context mContext, Boolean DEBUG) throws JSONException {
         JSONArray rows = new JSONArray();
         long lastSynced = 0;
         if (context_data != null && context_data.moveToFirst()) {

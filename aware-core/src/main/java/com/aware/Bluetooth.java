@@ -29,6 +29,7 @@ import com.aware.providers.Bluetooth_Provider.Bluetooth_Data;
 import com.aware.providers.Bluetooth_Provider.Bluetooth_Sensor;
 import com.aware.utils.Aware_Sensor;
 import com.aware.utils.Encrypter;
+import com.aware.utils.SensorTimeUnits;
 
 import java.util.HashMap;
 
@@ -204,14 +205,14 @@ public class Bluetooth extends Aware_Sensor {
 
                 save_bluetooth_device(bluetoothAdapter);
 
-                if (FREQUENCY != Integer.parseInt(Aware.getSetting(getApplicationContext(), Aware_Preferences.FREQUENCY_BLUETOOTH))) {
+                if (FREQUENCY != Aware.getSettingAsInt(getApplicationContext(), Aware_Preferences.FREQUENCY_BLUETOOTH, 60)) {
                     alarmManager.cancel(bluetoothScan);
                     alarmManager.setRepeating(AlarmManager.RTC_WAKEUP,
-                            System.currentTimeMillis() + Integer.parseInt(Aware.getSetting(getApplicationContext(), Aware_Preferences.FREQUENCY_BLUETOOTH)) * 1000,
-                            Integer.parseInt(Aware.getSetting(getApplicationContext(), Aware_Preferences.FREQUENCY_BLUETOOTH)) * 2 * 1000,
+                            System.currentTimeMillis() + SensorTimeUnits.secondsToMillis(Aware.getSettingAsInt(getApplicationContext(), Aware_Preferences.FREQUENCY_BLUETOOTH, 60)),
+                            SensorTimeUnits.doubleSecondsToMillis(Aware.getSettingAsInt(getApplicationContext(), Aware_Preferences.FREQUENCY_BLUETOOTH, 60)),
                             bluetoothScan);
 
-                    FREQUENCY = Integer.parseInt(Aware.getSetting(getApplicationContext(), Aware_Preferences.FREQUENCY_BLUETOOTH));
+                    FREQUENCY = Aware.getSettingAsInt(getApplicationContext(), Aware_Preferences.FREQUENCY_BLUETOOTH, 60);
                 }
                 if (Aware.DEBUG) Log.d(TAG, "Bluetooth service active: " + FREQUENCY + "s");
 
@@ -229,7 +230,7 @@ public class Bluetooth extends Aware_Sensor {
                 ContentResolver.setIsSyncable(Aware.getAWAREAccount(this), Bluetooth_Provider.getAuthority(this), 1);
                 ContentResolver.setSyncAutomatically(Aware.getAWAREAccount(this), Bluetooth_Provider.getAuthority(this), true);
 
-                long frequency = Long.parseLong(Aware.getSetting(this, Aware_Preferences.FREQUENCY_WEBSERVICE)) * 60;
+                long frequency = Aware.getSettingAsLong(this, Aware_Preferences.FREQUENCY_WEBSERVICE, 30) * 60;
                 SyncRequest request = new SyncRequest.Builder()
                         .syncPeriodic(frequency, frequency / 3)
                         .setSyncAdapter(Aware.getAWAREAccount(this), Bluetooth_Provider.getAuthority(this))

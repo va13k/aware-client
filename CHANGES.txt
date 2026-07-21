@@ -1,60 +1,51 @@
 Change log for AWARE
-4.7.3.beta
-- add column for record bluetooth connection status
+4.8.1.beta
+- Sensor sampling-rate settings (accelerometer, barometer, gravity, gyroscope, light, magnetometer, proximity, rotation, temperature, location, Wi-Fi/Bluetooth scanning, processor, Ambient Noise, OpenWeather) changed from raw numeric entry to descriptive dropdown presets, with more sensible default frequencies per sensor
+- New sensor diagnostic logging: when a sensor isn't collecting data, the reason (missing hardware, permission, or accessibility) is now recorded so researchers can see it in the synced data
+- Sensors without supported hardware are now excluded from study config sync instead of silently failing to apply
+- Fixed study config sync not always saving and applying updated settings correctly
+- Added missing consent requests for some sensors; consent checks are now consistent across all sensors
+- New per-sensor consent screen shown after joining a study
+- Fixed crash loops in the Ambient Noise and OpenWeather plugins
+- Wi-Fi scanning now correctly enforces the device's Location services toggle
+- Redesigned study info/history view with a shared study card; improved join/quit/rejoin tracking and sync
+- Fixed a crash when enabling or updating the accessibility service
+- Security: stopped exposing the API key in the UI and source
 
 4.7.2.beta
 - Fix ESM settings parsing crashes and improve error handling
 
 4.7.1.beta
 - New feature: Allow participants to add notes and save them to the remote database
-
-4.6.2.beta
 - Adjust function to count installation, change the official website url used for receive device info
-
-4.6.1.beta
 - New feature to new plugin: Ambient Noise and OpenWeather
 - Rename "AWARE-Light" to "AWARE"
-
-Change log for AWARE-Light
-4.6.1.beta
 - New feature: Allow users to take notes if config file container correspond setting.
-
-4.5.5.beta
 - Add function to count installation and send info to official website
-
-4.5.4.beta
 - Fix logic of reschedule next day random esm trigger, avoid repeat appear of esm notification
-
-4.5.3.beta
 - Fix the ESM queue logic to ensure that the correct number of questions are displayed according to the configurator settings.
-
-4.5.2.beta
 - Screenshot sensor can capture application name for foreground app.
-
-4.5.1.beta
 - New feature: Allow users to filter and save screenshots based on specific package names. Support for inclusive or exclusive.
-
-4.4.1.beta
 - New feature to synchronize the screenshot image data to the remote database specified by the aware-light configurator through base64 encoding.
-
-4.3.1.beta
 - New feature to capture screenshots at regular intervals and save them to the device's storage.
-
-4.2.2.beta
 - Fix display issues: long question titles can be displayed completely.
-
-4.2.1.beta
 - New feature to export the aware-light database files to the device's storage.
 
-4.1.6.beta
-- Fixed a crash that occurred when enabling accessibility before starting a study.
+Change log for AWARE-Light
+4.1.6.light.bundle
+- A crash that occurred when enabling accessibility before starting a study has been fixed.
 - The screen text sensor now correctly collects duplicate text when the foreground app changes, ensuring that screen text is captured during app switches, home screen access, and notification checks.
+- Fix display issues: long question titles can be displayed completely.
+- Fix the ESM queue logic to ensure that the correct number of questions are displayed according to the configurator settings.
+- Fix logic of reschedule next day random esm trigger, avoid repeat appear of esm notification.
+- A stronger password detection added in ScreenText Sensor
 
-4.1.5.beta
+4.1.5.light.bundle
 - Logging if the application is terminated by user actions or system actions to aware_log table
-
-4.1.4.beta
 - Screen reader function improved performance
+
+4.1.4.light.bundle
+- same as 4.1.3.light.bundle
 
 4.1.3.light.bundle
 - Fixed bug for random EMA triggered condition

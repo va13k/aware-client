@@ -3,15 +3,19 @@ package com.aware.phone.ui;
 import android.Manifest;
 import android.app.ActivityManager;
 import android.app.Dialog;
+import android.app.AlertDialog;
 import android.app.NotificationManager;
 import android.app.PendingIntent;
 import android.content.BroadcastReceiver;
 import android.content.Context;
+import android.content.ComponentName;
+import android.content.ContentValues;
 import android.content.DialogInterface;
 import android.content.Intent;
 import android.content.IntentFilter;
 import android.content.SharedPreferences;
 import android.content.pm.PackageInfo;
+import android.database.Cursor;
 import android.content.pm.PackageManager;
 import android.graphics.PorterDuff;
 import android.graphics.PorterDuffColorFilter;
@@ -25,6 +29,7 @@ import android.os.Build;
 import android.os.Bundle;
 import android.os.Handler;
 import android.os.PowerManager;
+import android.os.SystemClock;
 import android.preference.CheckBoxPreference;
 import android.preference.EditTextPreference;
 import android.preference.ListPreference;
@@ -35,7 +40,9 @@ import android.preference.PreferenceManager;
 import android.preference.PreferenceScreen;
 import android.provider.Settings;
 import android.text.TextUtils;
+import android.text.format.DateUtils;
 import android.util.Log;
+import android.view.View;
 import android.view.ViewGroup;
 import android.widget.ListAdapter;
 import android.widget.Toast;
@@ -45,7 +52,12 @@ import com.aware.Aware;
 import com.aware.Aware_Preferences;
 import com.aware.Notes;
 import com.aware.phone.R;
+import com.aware.phone.ui.dialogs.JoinStudyDialog;
+import com.aware.phone.ui.prefs.SensorCollection;
+import com.aware.phone.ui.prefs.StudyCard;
 import com.aware.phone.ui.prefs.TakeNotesPref;
+import com.aware.phone.utils.AwareUtil;
+import com.aware.providers.Aware_Provider;
 import com.aware.ui.PermissionsHandler;
 import com.aware.ScreenShot;
 
@@ -54,7 +66,9 @@ import org.json.JSONException;
 import org.json.JSONObject;
 
 import java.lang.reflect.Field;
+import java.text.DateFormat;
 import java.util.ArrayList;
+import java.util.Date;
 import java.util.Hashtable;
 import java.util.List;
 import java.util.Map;
@@ -94,6 +108,8 @@ public class Aware_Client extends Aware_Activity {
     private static final Hashtable<String, Integer> optionalSensors = new Hashtable<>();
     private final Aware.AndroidPackageMonitor packageMonitor = new Aware.AndroidPackageMonitor();
     private TakeNotesPref originalTakeNotesPref = null;
+    // Generated "previously joined studies" rows (device mode); tracked so we can refresh them.
+    private final ArrayList<Preference> studyHistoryPrefs = new ArrayList<>();
 
     private BroadcastReceiver screenshotServiceStoppedReceiver = new BroadcastReceiver() {
         @Override
@@ -112,6 +128,118 @@ public class Aware_Client extends Aware_Activity {
             }
         }
     };
+
+    // Rebuild the screen when a study config update is applied, so newly enabled/disabled sensors
+    // appear immediately after "Sync config" — no re-join needed.
+    private BroadcastReceiver studyConfigUpdatedReceiver = new BroadcastReceiver() {
+        @Override
+        public void onReceive(Context context, Intent intent) {
+            if (Aware.ACTION_AWARE_STUDY_CONFIG_UPDATED.equals(intent.getAction())) {
+                ArrayList<String> added = intent.getStringArrayListExtra(Aware.EXTRA_SENSORS_ADDED);
+                ArrayList<String> removed = intent.getStringArrayListExtra(Aware.EXTRA_SENSORS_REMOVED);
+                Boolean configUpdateAllowedNewValue = intent.getBooleanExtra(Aware.EXTRA_CONFIG_UPDATE_ALLOWED_CHANGED, false)
+                        ? intent.getBooleanExtra(Aware.EXTRA_CONFIG_UPDATE_ALLOWED_NEW_VALUE, false) : null;
+                // Don't clear the pending notice here: this receiver stays registered (and keeps
+                // receiving broadcasts) even while the Activity is merely stopped/backgrounded, not
+                // just while visible — so a dialog "shown" here may never actually be seen. Only
+                // notifyStudyConfigUpdated()'s own dismiss handler, which only fires once the
+                // participant has actually interacted with a visible dialog, clears it.
+                notifyStudyConfigUpdated(added, removed, configUpdateAllowedNewValue);
+            }
+        }
+    };
+
+    /**
+     * If a study config update was applied while no UI was around to receive the live broadcast
+     * (the sync runs on its own schedule regardless of whether the app is open), show it now.
+     */
+    private void showPendingStudyUpdateNoticeIfAny() {
+        String pending = Aware.getSetting(getApplicationContext(), Aware_Preferences.PENDING_STUDY_UPDATE_NOTICE);
+        if (pending == null || pending.trim().length() == 0) return;
+
+        try {
+            JSONObject notice = new JSONObject(pending);
+            ArrayList<String> added = new ArrayList<>();
+            JSONArray addedJson = notice.optJSONArray("added");
+            if (addedJson != null) {
+                for (int i = 0; i < addedJson.length(); i++) added.add(addedJson.getString(i));
+            }
+            ArrayList<String> removed = new ArrayList<>();
+            JSONArray removedJson = notice.optJSONArray("removed");
+            if (removedJson != null) {
+                for (int i = 0; i < removedJson.length(); i++) removed.add(removedJson.getString(i));
+            }
+            Boolean configUpdateAllowedNewValue = notice.optBoolean("cfgChanged", false)
+                    ? notice.optBoolean("cfgNewValue", false) : null;
+            notifyStudyConfigUpdated(added, removed, configUpdateAllowedNewValue);
+        } catch (JSONException e) {
+            e.printStackTrace();
+            Aware.setSetting(getApplicationContext(), Aware_Preferences.PENDING_STUDY_UPDATE_NOTICE, "");
+        }
+    }
+
+    /**
+     * Tracks the currently-open nested PreferenceScreen dialog (e.g. "AWARE Study"), set in
+     * onPreferenceTreeClick. recreate() destroys this Activity's window; if a dialog anchored to
+     * it is still showing at that point, Android throws a fatal WindowLeaked crash — which is
+     * exactly what "the app closes" turned out to be, since the sync-now button that triggers a
+     * config update notification lives inside one of these nested screens. Dismiss it first.
+     */
+    private Dialog openSubPrefDialog = null;
+
+    private void dismissOpenSubPrefDialogIfAny() {
+        if (openSubPrefDialog != null && openSubPrefDialog.isShowing()) {
+            openSubPrefDialog.dismiss();
+        }
+        openSubPrefDialog = null;
+    }
+
+    /**
+     * Tells the participant the study changed — sensors added/removed, and/or whether they can now
+     * edit their own settings — then rebuilds the screen so the new state is shown. If nothing
+     * curated changed (e.g. a threshold/frequency tweak the participant doesn't need to know about),
+     * there's nothing to show and nothing worth rebuilding the screen for.
+     */
+    private void notifyStudyConfigUpdated(ArrayList<String> added, ArrayList<String> removed,
+                                          Boolean configUpdateAllowedNewValue) {
+        boolean hasChanges = (added != null && !added.isEmpty()) || (removed != null && !removed.isEmpty())
+                || configUpdateAllowedNewValue != null;
+        if (!hasChanges || isFinishing()) {
+            return;
+        }
+
+        dismissOpenSubPrefDialogIfAny();
+
+        StringBuilder msg = new StringBuilder("The study was updated by the researcher.\n");
+        if (added != null && !added.isEmpty()) {
+            msg.append("\nNow collecting:\n• ").append(TextUtils.join("\n• ", added));
+        }
+        if (removed != null && !removed.isEmpty()) {
+            msg.append("\n\nNo longer collecting:\n• ").append(TextUtils.join("\n• ", removed));
+        }
+        if (configUpdateAllowedNewValue != null) {
+            msg.append("\n\n").append(configUpdateAllowedNewValue
+                    ? "You can now change your own settings for this study."
+                    : "Your settings are locked to the researcher's configuration again.");
+        }
+
+        new AlertDialog.Builder(this)
+                .setTitle("Study updated")
+                .setMessage(msg.toString())
+                .setPositiveButton("OK", null)
+                .setOnDismissListener(new DialogInterface.OnDismissListener() {
+                    @Override
+                    public void onDismiss(DialogInterface dialog) {
+                        // Only clear here — once the participant has actually seen and dismissed a
+                        // visible dialog — not eagerly when merely attempting to show one (see the
+                        // comment on studyConfigUpdatedReceiver for why that was unsafe).
+                        Aware.setSetting(getApplicationContext(), Aware_Preferences.PENDING_STUDY_UPDATE_NOTICE, "");
+                        // rebuild the sensor list after the participant has seen the changes
+                        if (!isFinishing()) recreate();
+                    }
+                })
+                .show();
+    }
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
@@ -133,6 +261,9 @@ public class Aware_Client extends Aware_Activity {
         } else {
             setContentView(R.layout.activity_aware);
             addPreferencesFromResource(R.xml.pref_aware_device);
+
+            // Device mode: list previously joined studies below "Join a study".
+            populateStudyHistory();
         }
 //        hideUnusedPreferences();
 
@@ -156,28 +287,27 @@ public class Aware_Client extends Aware_Activity {
             listSensorType.put(sensors.get(i).getType(), true);
         }
 
-        REQUIRED_PERMISSIONS.add(Manifest.permission.WRITE_EXTERNAL_STORAGE);
-        REQUIRED_PERMISSIONS.add(Manifest.permission.ACCESS_WIFI_STATE);
+        // Only permissions the AWARE core itself needs to start are requested up front.
+        // Sensor-specific permissions (location, phone state, bluetooth scanning, etc.) are requested on demand by each sensor's Service (see Aware_Sensor.onStartCommand)
 
-//        REQUIRED_PERMISSIONS.add(Manifest.permission.CAMERA);
-        REQUIRED_PERMISSIONS.add(Manifest.permission.BLUETOOTH);
-        REQUIRED_PERMISSIONS.add(Manifest.permission.BLUETOOTH_ADMIN);
-        REQUIRED_PERMISSIONS.add(Manifest.permission.ACCESS_COARSE_LOCATION);
-        REQUIRED_PERMISSIONS.add(Manifest.permission.ACCESS_FINE_LOCATION);
-        REQUIRED_PERMISSIONS.add(Manifest.permission.READ_PHONE_STATE);
+        // Core sync framework (account creation + SyncAdapters)
         REQUIRED_PERMISSIONS.add(Manifest.permission.GET_ACCOUNTS);
         REQUIRED_PERMISSIONS.add(Manifest.permission.WRITE_SYNC_SETTINGS);
         REQUIRED_PERMISSIONS.add(Manifest.permission.READ_SYNC_SETTINGS);
         REQUIRED_PERMISSIONS.add(Manifest.permission.READ_SYNC_STATS);
-        REQUIRED_PERMISSIONS.add(Manifest.permission.REQUEST_IGNORE_BATTERY_OPTIMIZATIONS);
+
+        // Core storage (local database, data export, certificates)
         REQUIRED_PERMISSIONS.add(Manifest.permission.WRITE_EXTERNAL_STORAGE);
         REQUIRED_PERMISSIONS.add(Manifest.permission.READ_EXTERNAL_STORAGE);
+
+        // Background survival, can ask enabling additional Accesibility settings
+        REQUIRED_PERMISSIONS.add(Manifest.permission.REQUEST_IGNORE_BATTERY_OPTIMIZATIONS);
 
         if(Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) REQUIRED_PERMISSIONS.add(Manifest.permission.FOREGROUND_SERVICE);
 
         boolean PERMISSIONS_OK = true;
         for (String p : REQUIRED_PERMISSIONS) {
-            if (PermissionChecker.checkSelfPermission(this, p) != PermissionChecker.PERMISSION_GRANTED) {
+            if (PermissionChecker.checkSelfPermission(this, p) != PackageManager.PERMISSION_GRANTED) {
                 PERMISSIONS_OK = false;
                 break;
             }
@@ -201,6 +331,7 @@ public class Aware_Client extends Aware_Activity {
         registerReceiver(screenshotServiceStoppedReceiver, new IntentFilter(ScreenShot.ACTION_SCREENSHOT_SERVICE_STOPPED));
         registerReceiver(screenshotStatusReceiver, new IntentFilter(ScreenShot.ACTION_SCREENSHOT_STATUS));
         registerReceiver(noteStatusReceiver, new IntentFilter(Notes.ACTION_NOTE_STATUS));
+        registerReceiver(studyConfigUpdatedReceiver, new IntentFilter(Aware.ACTION_AWARE_STUDY_CONFIG_UPDATED));
         checkAndStartScreenshotService();
         checkAndStartPlugin();
     }
@@ -233,6 +364,14 @@ public class Aware_Client extends Aware_Activity {
 
     @Override
     public boolean onPreferenceTreeClick(PreferenceScreen preferenceScreen, final Preference preference) {
+        // In a study, tapping a sensor shows its data-collection status instead of the locked settings
+        // — unless the researcher opted in to participant edits via enable_config_update.
+        if (isStudySettingsLocked()
+                && preference instanceof PreferenceScreen
+                && SensorCollection.isSensor(preference.getKey())) {
+            showSensorCollectionDialog((PreferenceScreen) preference);
+            return true;
+        }
         if (preference instanceof PreferenceScreen) {
             Dialog subpref = ((PreferenceScreen) preference).getDialog();
             ViewGroup root = (ViewGroup) subpref.findViewById(android.R.id.content).getParent();
@@ -242,9 +381,11 @@ public class Aware_Client extends Aware_Activity {
             toolbar.setTitle(preference.getTitle());
             root.addView(toolbar, 0); //add to the top
 
+            openSubPrefDialog = subpref;
             subpref.setOnDismissListener(new DialogInterface.OnDismissListener() {
                 @Override
                 public void onDismiss(DialogInterface dialog) {
+                    if (openSubPrefDialog == dialog) openSubPrefDialog = null;
                     new SettingsSync().execute(preference);
                 }
             });
@@ -252,8 +393,71 @@ public class Aware_Client extends Aware_Activity {
         return super.onPreferenceTreeClick(preferenceScreen, preference);
     }
 
+    /** Shows whether the given sensor is currently collecting data, and if not, why + what to do. */
+    private void showSensorCollectionDialog(PreferenceScreen sensor) {
+        boolean accessibilityOn = isAccessibilityServiceEnabled(this, Applications.class);
+        SensorCollection.Status status =
+                SensorCollection.getStatus(getApplicationContext(), sensor.getKey(), accessibilityOn);
+
+        StringBuilder msg = new StringBuilder();
+        msg.append(status.collecting ? "●  Collecting data" : "○  Not collecting");
+        msg.append("\n\n").append(status.reason);
+        if (status.lastDataMs > 0) {
+            msg.append("\n\nLast data: ")
+               .append(DateUtils.getRelativeTimeSpanString(status.lastDataMs, System.currentTimeMillis(),
+                       DateUtils.MINUTE_IN_MILLIS));
+        } else {
+            msg.append("\n\nLast data: never");
+        }
+        if (status.fixHint != null) {
+            msg.append("\n\nWhat to do: ").append(status.fixHint);
+        }
+
+        new AlertDialog.Builder(this)
+                .setTitle(sensor.getTitle())
+                .setMessage(msg.toString())
+                .setPositiveButton("OK", null)
+                .show();
+    }
+
+    // Guards the revert below from re-triggering itself: reverting a preference re-persists it,
+    // which fires this listener again for the same key.
+    private boolean revertingStudyPreference = false;
+
+    /**
+     * Settings stay researcher-controlled while enrolled in a study, unless the researcher opted
+     * in to participant edits via the study config's enable_config_update setting.
+     */
+    private boolean isStudySettingsLocked() {
+        boolean inStudy = Aware.isStudy(getApplicationContext());
+        boolean editsAllowed = Boolean.valueOf(Aware.getSetting(getApplicationContext(), Aware_Preferences.ENABLE_CONFIG_UPDATE));
+        return inStudy && !editsAllowed;
+    }
+
     @Override
     public void onSharedPreferenceChanged(SharedPreferences sharedPreferences, String key) {
+        // onPreferenceTreeClick only stops navigating INTO a sensor's screen — it doesn't stop a
+        // change from taking effect once a checkbox is visible and tapped. Enforce it here too, at
+        // the point the value actually gets written, so a participant can never actually flip a
+        // researcher-controlled setting while in a study (unless enable_config_update allows it).
+        if (!revertingStudyPreference && isStudySettingsLocked()) {
+            revertingStudyPreference = true;
+            try {
+                String currentValue = Aware.getSetting(getApplicationContext(), key);
+                Preference pref = findPreference(key);
+                if (CheckBoxPreference.class.isInstance(pref)) {
+                    ((CheckBoxPreference) pref).setChecked(currentValue.equals("true"));
+                } else if (EditTextPreference.class.isInstance(pref)) {
+                    ((EditTextPreference) pref).setText(currentValue);
+                } else if (ListPreference.class.isInstance(pref)) {
+                    ((ListPreference) pref).setValue(currentValue);
+                }
+            } finally {
+                revertingStudyPreference = false;
+            }
+            return;
+        }
+
         String value = "";
         Map<String, ?> keys = sharedPreferences.getAll();
         if (keys.containsKey(key)) {
@@ -373,11 +577,15 @@ public class Aware_Client extends Aware_Activity {
             if (PreferenceScreen.class.isInstance(getPreferenceParent(pref))) {
                 PreferenceScreen parent = (PreferenceScreen) getPreferenceParent(pref);
 
+                boolean inStudy = Aware.isStudy(getApplicationContext());
                 boolean prefEnabled = Boolean.valueOf(Aware.getSetting(Aware_Client.this, Aware_Preferences.ENABLE_CONFIG_UPDATE));
-                parent.setEnabled(prefEnabled);  // enabled/disabled based on config
+                // In a study the settings stay researcher-controlled, but keep the row tappable so
+                // the participant can open the data-collection status dialog (click is intercepted
+                // in onPreferenceTreeClick, so the editable sub-screen never opens).
+                parent.setEnabled(inStudy || prefEnabled);
+                parent.setShouldDisableView(!inStudy);
 
                 ListAdapter children = parent.getRootAdapter();
-                boolean isActive = false;
                 ArrayList sensorStatuses = new ArrayList<String>();
                 for (int i = 0; i < children.getCount(); i++) {
                     Object obj = children.getItem(i);
@@ -385,17 +593,14 @@ public class Aware_Client extends Aware_Activity {
                         CheckBoxPreference child = (CheckBoxPreference) obj;
                         if (child.getKey().contains("status_")) {
                             sensorStatuses.add(child.getKey());
-                            if (child.isChecked()) {
-                                isActive = true;
-                                break;
-                            }
                         }
                     }
                 }
 
                 // Check if any of the status settings of a sensor (parent pref) is active in the study config
-                JSONObject studyConfig = Aware.getStudyConfig(getApplicationContext(), Aware.getSetting(getApplicationContext(), Aware_Preferences.WEBSERVICE_SERVER));
+                JSONObject studyConfig = Aware.getActiveStudyConfig(getApplicationContext());
                 boolean isActiveInConfig = false;
+                ArrayList<String> activeSensorStatuses = new ArrayList<String>();
                 try {
                     JSONArray sensorsList = studyConfig.getJSONArray("sensors");
                     for (int i = 0; i < sensorsList.length(); i++) {
@@ -403,11 +608,12 @@ public class Aware_Client extends Aware_Activity {
                         String sensorSetting = sensorInfo.getString("setting");
 
                         if (sensorStatuses.contains(sensorSetting)) {
-                            sensorStatuses.remove(sensorSetting);
-                            isActiveInConfig = sensorInfo.getBoolean("value");
+                            boolean sensorEnabled = sensorInfo.getBoolean("value");
+                            if (sensorEnabled) {
+                                isActiveInConfig = true;
+                                activeSensorStatuses.add(sensorSetting);
+                            }
                         }
-
-                        if (isActiveInConfig || sensorStatuses.size() == 0) break;
                     }
                 } catch (JSONException e) {
                     e.printStackTrace();
@@ -422,7 +628,12 @@ public class Aware_Client extends Aware_Activity {
                         int icon_id = field.getInt(null);
                         Drawable category_icon = ContextCompat.getDrawable(getApplicationContext(), icon_id);
                         if (category_icon != null) {
-                            int colorId = isActive ? R.color.accent : R.color.lightGray;
+                            // Blue if AWARE is actually collecting this sensor's data (recent rows
+                            // in its provider), grey otherwise. Tap the sensor for the reason.
+                            boolean accessibilityOn = isAccessibilityServiceEnabled(getApplicationContext(), Applications.class);
+                            SensorCollection.Status collectionStatus =
+                                    SensorCollection.getStatus(getApplicationContext(), parent.getKey(), accessibilityOn);
+                            int colorId = collectionStatus.collecting ? R.color.accent : R.color.lightGray;
                             category_icon.setColorFilter(new PorterDuffColorFilter(ContextCompat.getColor(getApplicationContext(), colorId), PorterDuff.Mode.SRC_IN));
                             parent.setIcon(category_icon);
                             onContentChanged();
@@ -463,21 +674,26 @@ public class Aware_Client extends Aware_Activity {
     }
 
     private void checkAndStartScreenshotService() {
+        // Only act when the active study actually enabled screenshot. Outside a study, or in a
+        // study that doesn't use screenshot, do nothing — and never prompt for accessibility on
+        // plain app start / device mode. Screenshot is the only sensor started here and the only
+        // reason this path needs accessibility, so gating on it also gates the accessibility ask.
+        if (!Aware.isStudy(this)) return;
+        if (!Aware.getSetting(getApplicationContext(), Aware_Preferences.STATUS_SCREENSHOT).equals("true")) return;
+
         if (!isAccessibilityServiceEnabled(this, Applications.class)) {
             enableAccessibilityService();
             return;
         }
 
-        if (Aware.getSetting(getApplicationContext(), Aware_Preferences.STATUS_SCREENSHOT).equals("true")) {
-            if (ScreenShot.mediaProjectionResultCode != 0 && ScreenShot.mediaProjectionResultData != null) {
-                if (!isScreenshotServiceRunning()) {
-                    startScreenshotService(ScreenShot.mediaProjectionResultCode, ScreenShot.mediaProjectionResultData);
-                }
-            } else {
-                MediaProjectionManager projectionManager = (MediaProjectionManager) this.getSystemService(Context.MEDIA_PROJECTION_SERVICE);
-                Intent intent = projectionManager.createScreenCaptureIntent();
-                startActivityForResult(intent, REQUEST_CODE_SCREENSHOT);
+        if (ScreenShot.mediaProjectionResultCode != 0 && ScreenShot.mediaProjectionResultData != null) {
+            if (!isScreenshotServiceRunning()) {
+                startScreenshotService(ScreenShot.mediaProjectionResultCode, ScreenShot.mediaProjectionResultData);
             }
+        } else {
+            MediaProjectionManager projectionManager = (MediaProjectionManager) this.getSystemService(Context.MEDIA_PROJECTION_SERVICE);
+            Intent intent = projectionManager.createScreenCaptureIntent();
+            startActivityForResult(intent, REQUEST_CODE_SCREENSHOT);
         }
     }
 
@@ -496,13 +712,198 @@ public class Aware_Client extends Aware_Activity {
         }
     }
 
-    private void enableAccessibilityService() {
-        Intent intent = new Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS);
-        intent.setFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
-        startActivity(intent);
-        Toast.makeText(this, "Please enable the accessibility service.", Toast.LENGTH_LONG).show();
+private AlertDialog accessibilityDialog;
+
+private void enableAccessibilityService() {
+    if (accessibilityDialog != null && accessibilityDialog.isShowing()) {
+        return; // already prompting; don't stack dialogs on repeated onResume
+    }
+    final ComponentName service = new ComponentName(this, Applications.class);
+
+    accessibilityDialog = new AlertDialog.Builder(this)
+        .setTitle("Enable AWARE accessibility")
+        .setMessage("AWARE needs the Accessibility service to record app usage and screen content. On the next screen, find \"AWARE\", open it, and turn the switch ON.")
+        .setPositiveButton("Open settings", new DialogInterface.OnClickListener() {
+            @Override
+            public void onClick(DialogInterface dialog, int which) {
+                if (Build.VERSION.SDK_INT >= 30) {
+                    try {
+                        Intent details = new Intent("android.settings.ACCESSIBILITY_DETAILS_SETTINGS");
+                        details.putExtra("android.intent.extra.COMPONENT_NAME", service.flattenToString());
+                        details.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
+                        startActivity(details);
+                        return;
+                    } catch (Exception e) {
+                        Log.w(TAG, "Accessibility detail settings unavailable, falling back to list", e);
+                    }
+                }
+                try {
+                    startActivity(new Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS)
+                            .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK));
+                } catch (Exception e) {
+                    Toast.makeText(Aware_Client.this,
+                            "Please open Settings > Accessibility and enable AWARE.",
+                            Toast.LENGTH_LONG).show();
+                }
+            }
+        })
+        .setNegativeButton("Not now", null)
+        .setCancelable(false)
+        .show();
     }
 
+    private AlertDialog locationServicesDialog;
+
+    /**
+     * WiFi scanning requires the OS-level Location toggle on system-wide (Android blocks
+     * WifiManager.startScan() with a SecurityException otherwise, regardless of granted
+     * permissions) — prompt the participant to enable it, mirroring enableAccessibilityService().
+     */
+    private void enableLocationServices() {
+        if (locationServicesDialog != null && locationServicesDialog.isShowing()) {
+            return; // already prompting; don't stack dialogs on repeated onResume
+        }
+        locationServicesDialog = new AlertDialog.Builder(this)
+            .setTitle("Enable Location services")
+            .setMessage("This study collects WiFi data, which requires Location services to be turned on for the whole phone (Android requires this even though AWARE doesn't use your location for WiFi scanning). On the next screen, turn Location ON.")
+            .setPositiveButton("Open settings", new DialogInterface.OnClickListener() {
+                @Override
+                public void onClick(DialogInterface dialog, int which) {
+                    try {
+                        startActivity(new Intent(Settings.ACTION_LOCATION_SOURCE_SETTINGS)
+                                .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK));
+                    } catch (Exception e) {
+                        Toast.makeText(Aware_Client.this,
+                                "Please open Settings > Location and turn it on.",
+                                Toast.LENGTH_LONG).show();
+                    }
+                }
+            })
+            .setNegativeButton("Not now", null)
+            .setCancelable(false)
+            .show();
+    }
+
+    /**
+     * True if the joined study currently has WiFi scanning enabled, i.e. Location services are
+     * actually needed right now. Used to avoid prompting participants in studies that don't use it.
+     */
+    private boolean studyNeedsWifi() {
+        return "true".equalsIgnoreCase(Aware.getSetting(getApplicationContext(), Aware_Preferences.STATUS_WIFI));
+    }
+
+    /**
+     * Device mode only: lists previously joined studies in the "study_actions" category, below
+     * the Join button. Each row opens a details dialog with re-join / copy link / delete actions.
+     * Safe to call again to refresh (e.g. after a delete).
+     */
+    private void populateStudyHistory() {
+        PreferenceCategory studyActions = (PreferenceCategory) findPreference("study_actions");
+        if (studyActions == null) return;
+
+        for (Preference p : studyHistoryPrefs) studyActions.removePreference(p);
+        studyHistoryPrefs.clear();
+
+        List<ContentValues> studies = Aware.getJoinedStudies(getApplicationContext());
+        for (final ContentValues study : studies) {
+            Preference row = new Preference(this);
+            String title = study.getAsString(Aware_Provider.Aware_Studies.STUDY_TITLE);
+            row.setTitle((title == null || title.trim().length() == 0) ? "(untitled study)" : title);
+            row.setSummary(studyHistorySummary(study));
+            row.setOnPreferenceClickListener(new Preference.OnPreferenceClickListener() {
+                @Override
+                public boolean onPreferenceClick(Preference preference) {
+                    showStudyHistoryDialog(study);
+                    return true;
+                }
+            });
+            studyActions.addPreference(row);
+            studyHistoryPrefs.add(row);
+        }
+    }
+
+    private String studyHistorySummary(ContentValues study) {
+        Double joined = study.getAsDouble(Aware_Provider.Aware_Studies.STUDY_JOINED);
+        Double exit = study.getAsDouble(Aware_Provider.Aware_Studies.STUDY_EXIT);
+        String status = (exit == null || exit == 0) ? "Enrolled" : "Left";
+        if (joined != null && joined > 0)
+            return "Joined " + DateFormat.getDateInstance().format(new Date(joined.longValue())) + " · " + status;
+        return status;
+    }
+
+    /** Details + management dialog for a past study: view (the card), re-join, copy link, delete. */
+    private void showStudyHistoryDialog(final ContentValues study) {
+        View card = getLayoutInflater().inflate(R.layout.study_card, null);
+        StudyCard.bind(this, card, study);
+        final String url = study.getAsString(Aware_Provider.Aware_Studies.STUDY_URL);
+
+        new AlertDialog.Builder(this)
+                .setView(card)
+                .setPositiveButton("Re-join", new DialogInterface.OnClickListener() {
+                    @Override
+                    public void onClick(DialogInterface dialog, int which) {
+                        rejoinStudy(url);
+                    }
+                })
+                .setNeutralButton("Copy link", new DialogInterface.OnClickListener() {
+                    @Override
+                    public void onClick(DialogInterface dialog, int which) {
+                        AwareUtil.copyToClipboard(Aware_Client.this, "AWARE study link", url);
+                    }
+                })
+                .setNegativeButton("Delete", new DialogInterface.OnClickListener() {
+                    @Override
+                    public void onClick(DialogInterface dialog, int which) {
+                        confirmDeleteStudy(study);
+                    }
+                })
+                .show();
+    }
+
+    private void rejoinStudy(String url) {
+        if (url == null || url.length() == 0) return;
+        // Reuse the standard join dialog (properly shown/attached) with the URL pre-filled,
+        // rather than the direct Aware_Join_Study URL path, which crashes (unattached fragment).
+        new JoinStudyDialog(this).setStudyUrl(url).showDialog();
+    }
+
+    private void confirmDeleteStudy(final ContentValues study) {
+        final String url = study.getAsString(Aware_Provider.Aware_Studies.STUDY_URL);
+
+        // Guard: never delete the study we're currently enrolled in.
+        if (url != null && Aware.isStudy(getApplicationContext())) {
+            Cursor active = Aware.getActiveStudy(getApplicationContext());
+            boolean isActive = false;
+            if (active != null) {
+                if (active.moveToFirst()) {
+                    isActive = url.equals(active.getString(
+                            active.getColumnIndex(Aware_Provider.Aware_Studies.STUDY_URL)));
+                }
+                active.close();
+            }
+            if (isActive) {
+                Toast.makeText(this, "You can't delete the study you're currently in.",
+                        Toast.LENGTH_LONG).show();
+                return;
+            }
+        }
+
+        new AlertDialog.Builder(this)
+                .setTitle("Delete from history")
+                .setMessage("Remove this study from your history? This does not affect any data already uploaded to the server.")
+                .setPositiveButton("Delete", new DialogInterface.OnClickListener() {
+                    @Override
+                    public void onClick(DialogInterface dialog, int which) {
+                        if (url != null && url.length() > 0) {
+                            getContentResolver().delete(Aware_Provider.Aware_Studies.CONTENT_URI,
+                                    Aware_Provider.Aware_Studies.STUDY_URL + "=?", new String[]{url});
+                        }
+                        populateStudyHistory();
+                    }
+                })
+                .setNegativeButton("Cancel", null)
+                .show();
+    }
 
     private boolean isScreenshotServiceRunning() {
         ActivityManager manager = (ActivityManager) getSystemService(Context.ACTIVITY_SERVICE);
@@ -706,43 +1107,104 @@ public class Aware_Client extends Aware_Activity {
     }
 
     private boolean isAccessibilityServiceEnabled(Context context, Class<?> accessibilityServiceClass) {
-        int accessibilityEnabled = 0;
-        final String service = context.getPackageName() + "/" + accessibilityServiceClass.getCanonicalName();
-        try {
-            accessibilityEnabled = Settings.Secure.getInt(context.getApplicationContext().getContentResolver(), Settings.Secure.ACCESSIBILITY_ENABLED);
-        } catch (Settings.SettingNotFoundException e) {
-            Log.e(TAG, "Error finding setting, default accessibility to not found: " + e.getMessage());
+        final ComponentName expected = new ComponentName(context, accessibilityServiceClass);
+        final String settingValue = Settings.Secure.getString(
+                context.getApplicationContext().getContentResolver(),
+                Settings.Secure.ENABLED_ACCESSIBILITY_SERVICES);
+        if (settingValue == null) {
+            return false;
         }
 
         TextUtils.SimpleStringSplitter colonSplitter = new TextUtils.SimpleStringSplitter(':');
-
-        if (accessibilityEnabled == 1) {
-            String settingValue = Settings.Secure.getString(context.getApplicationContext().getContentResolver(), Settings.Secure.ENABLED_ACCESSIBILITY_SERVICES);
-            if (settingValue != null) {
-                colonSplitter.setString(settingValue);
-                while (colonSplitter.hasNext()) {
-                    String componentName = colonSplitter.next();
-
-                    if (componentName.equalsIgnoreCase(service)) {
-                        return true;
-                    }
-                }
+        colonSplitter.setString(settingValue);
+        while (colonSplitter.hasNext()) {
+            ComponentName enabled = ComponentName.unflattenFromString(colonSplitter.next());
+            if (expected.equals(enabled)) {
+                return true;
             }
         }
 
         return false;
     }
 
+    private boolean isCollectionAvailable(ArrayList<String> activeSensorStatuses) {
+        boolean accessibilityEnabled = true;
+        for (String setting : activeSensorStatuses) {
+            if (requiresAccessibility(setting)) {
+                if (accessibilityEnabled) {
+                    accessibilityEnabled = isAccessibilityServiceEnabled(this, Applications.class);
+                }
+                if (!accessibilityEnabled) return false;
+            }
+        }
+        return true;
+    }
 
+    private boolean requiresAccessibility(String setting) {
+        return Aware_Preferences.STATUS_APPLICATIONS.equals(setting)
+                || Aware_Preferences.STATUS_NOTIFICATIONS.equals(setting)
+                || Aware_Preferences.STATUS_CRASHES.equals(setting)
+                || Aware_Preferences.STATUS_SCREENTEXT.equals(setting)
+                || Aware_Preferences.STATUS_KEYBOARD.equals(setting)
+                || Aware_Preferences.STATUS_TOUCH.equals(setting);
+    }
+
+    /**
+     * True if any accessibility-backed sensor is currently enabled in settings, i.e. the
+     * accessibility service is actually needed for data collection right now. Used to avoid
+     * prompting participants in studies that don't rely on accessibility.
+     */
+    private boolean studyNeedsAccessibility() {
+        final String[] accessibilitySensors = {
+                Aware_Preferences.STATUS_APPLICATIONS,
+                Aware_Preferences.STATUS_NOTIFICATIONS,
+                Aware_Preferences.STATUS_CRASHES,
+                Aware_Preferences.STATUS_SCREENTEXT,
+                Aware_Preferences.STATUS_KEYBOARD,
+                Aware_Preferences.STATUS_TOUCH
+        };
+        for (String setting : accessibilitySensors) {
+            if ("true".equalsIgnoreCase(Aware.getSetting(getApplicationContext(), setting))) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+
+
+    // Debounces the onResume() sync trigger below: rapid app-switching or a rotation-triggered
+    // recreate() (this Activity calls its own recreate() after showing a study-update dialog) can
+    // fire onResume() several times in quick succession. Each one spawns its own background thread
+    // in Aware's receiver (syncStudyConfig -> a network fetch + a DB-credential check that can
+    // block), so without this, those can stack up concurrently for no benefit — the config can't
+    // meaningfully have changed again within a few seconds of the last check. static + elapsedRealtime
+    // so it survives this Activity being recreated and isn't affected by wall-clock changes.
+    private static volatile long lastSyncConfigBroadcastAtMs = 0;
+    private static final long SYNC_CONFIG_DEBOUNCE_MS = 10_000;
 
     @Override
     protected void onResume() {
         super.onResume();
 
+        // Reconcile to the current study config every time the app is opened, so researcher changes
+        // show up without waiting for the periodic sync or requiring a rejoin.
+        if (Aware.isStudy(getApplicationContext())) {
+            long now = SystemClock.elapsedRealtime();
+            if (now - lastSyncConfigBroadcastAtMs >= SYNC_CONFIG_DEBOUNCE_MS) {
+                lastSyncConfigBroadcastAtMs = now;
+                sendBroadcast(new Intent(Aware.ACTION_AWARE_SYNC_CONFIG));
+            }
+        }
+
+        // Catch up on any study update that was applied while this Activity wasn't alive to
+        // receive the live broadcast (the sync runs on its own schedule regardless of the app).
+        showPendingStudyUpdateNoticeIfAny();
+
         permissions_ok = true;
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
             for (String p : REQUIRED_PERMISSIONS) {
-                if (PermissionChecker.checkSelfPermission(this, p) != PermissionChecker.PERMISSION_GRANTED) {
+                if (PermissionChecker.checkSelfPermission(this, p) != PackageManager.PERMISSION_GRANTED) {
                     permissions_ok = false;
                     break;
                 }
@@ -769,6 +1231,12 @@ public class Aware_Client extends Aware_Activity {
 
             Map<String, ?> defaults = prefs.getAll();
             for (Map.Entry<String, ?> entry : defaults.entrySet()) {
+                // Skip webservice_server: see the matching comment in Aware.onStartCommand()'s copy
+                // of this loop — the cached "com.aware.phone" SharedPreferences default is a stale
+                // placeholder URL, and copying it in here whenever the real setting is momentarily
+                // empty is the same landmine as the fallback removed below, just reached via the
+                // defaults cache instead of a literal.
+                if (entry.getKey().equals(Aware_Preferences.WEBSERVICE_SERVER)) continue;
                 if (Aware.getSetting(getApplicationContext(), entry.getKey(), "com.aware.phone").length() == 0) {
                     Aware.setSetting(getApplicationContext(), entry.getKey(), entry.getValue(), "com.aware.phone"); //default AWARE settings
                 }
@@ -779,9 +1247,11 @@ public class Aware_Client extends Aware_Activity {
                 Aware.setSetting(getApplicationContext(), Aware_Preferences.DEVICE_ID, uuid.toString(), "com.aware.phone");
             }
 
-            if (Aware.getSetting(getApplicationContext(), Aware_Preferences.WEBSERVICE_SERVER).length() == 0) {
-                Aware.setSetting(getApplicationContext(), Aware_Preferences.WEBSERVICE_SERVER, "http://api.awareframework.com/index.php");
-            }
+            // Deliberately no "if empty, default to the public AWARE demo server" fallback here
+            // anymore — see the matching comment in Aware.onStartCommand(). This ran on every
+            // onResume(), unsynchronized, and permanently overwrote a legitimate join URL with this
+            // placeholder the instant it observed the setting momentarily empty (e.g. mid-reset()),
+            // breaking study lookup with no way to self-correct afterward.
 
             Set<String> keys = optionalSensors.keySet();
             for (String optionalSensor : keys) {
@@ -798,9 +1268,22 @@ public class Aware_Client extends Aware_Activity {
                 e.printStackTrace();
             }
 
-            //Check if AWARE is active on the accessibility services. Android Wear doesn't support accessibility services (no API yet...)
-            if (!Aware.is_watch(this)) {
-                Applications.isAccessibilityServiceActive(this);
+            // Prompt for the accessibility service only when the joined study actually uses an
+            // accessibility-backed sensor and the service is currently off. Shown as an in-app
+            // dialog (no tray notification) so the request is contextual and actionable.
+            if (!Aware.is_watch(this)
+                    && Aware.isStudy(this)
+                    && studyNeedsAccessibility()
+                    && !isAccessibilityServiceEnabled(this, Applications.class)) {
+                enableAccessibilityService();
+            }
+
+            // Same contextual prompt pattern, for WiFi's OS-level Location-toggle requirement.
+            if (!Aware.is_watch(this)
+                    && Aware.isStudy(this)
+                    && studyNeedsWifi()
+                    && !SensorCollection.isLocationServicesEnabled(this)) {
+                enableLocationServices();
             }
 
             //Check if AWARE is allowed to run on Doze
@@ -951,6 +1434,7 @@ public class Aware_Client extends Aware_Activity {
         unregisterReceiver(packageMonitor);
         unregisterReceiver(screenshotServiceStoppedReceiver);
         unregisterReceiver(noteStatusReceiver);
+        unregisterReceiver(studyConfigUpdatedReceiver);
     }
 
     private void hideUnusedPreferences() {

@@ -143,9 +143,12 @@ public class Jdbc {
      * @throws JdbcConnectionException
      * @throws JSONException
      */
-    private static synchronized void insertBatch(Context context, String table, List<String> fields,
-                                                 JSONArray rows)
-            throws JdbcConnectionException, JSONException, SQLException {
+    private static synchronized void insertBatch(
+        Context context,
+        String table,
+        List<String> fields,
+        JSONArray rows
+    ) throws JdbcConnectionException, JSONException, SQLException {
         try {
             if (Jdbc.connection == null || Jdbc.connection.isClosed()) {
                 Jdbc.transactionCount = 1; // reset transaction count if this is the first INSERT
