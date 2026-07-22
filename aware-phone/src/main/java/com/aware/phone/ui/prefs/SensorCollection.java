@@ -287,6 +287,39 @@ public final class SensorCollection {
         }
     }
 
+    // Referenced by string (not Manifest.permission.*) because they were added in API 31 and this
+    // module compiles against an older SDK. Requesting them still works at runtime on API 31+.
+    private static final String PERMISSION_BLUETOOTH_SCAN = "android.permission.BLUETOOTH_SCAN";
+    private static final String PERMISSION_BLUETOOTH_CONNECT = "android.permission.BLUETOOTH_CONNECT";
+
+    /**
+     * Runtime permissions the Bluetooth sensor needs to scan and read the local adapter. On Android
+     * 12 (API 31) and up that's BLUETOOTH_SCAN + BLUETOOTH_CONNECT; below it, scanning is gated on
+     * location instead. Without the API-31 pair the sensor throws SecurityException on modern devices.
+     */
+    private static String[] bluetoothPermissions() {
+        if (Build.VERSION.SDK_INT >= 31) {
+            return new String[]{ PERMISSION_BLUETOOTH_SCAN, PERMISSION_BLUETOOTH_CONNECT };
+        }
+        return new String[]{ Manifest.permission.ACCESS_COARSE_LOCATION };
+    }
+
+    // Added in API 29; referenced by string because this module compiles against an older SDK.
+    private static final String PERMISSION_BACKGROUND_LOCATION = "android.permission.ACCESS_BACKGROUND_LOCATION";
+
+    /**
+     * True if AWARE can read location in the background ("Allow all the time"). Before Android 10
+     * (API 29) there's no separate background-location permission, so it's always true. On API 29+ it
+     * requires ACCESS_BACKGROUND_LOCATION, which the participant grants as "Allow all the time" — the
+     * foreground ("while using the app") grant does NOT include it, and without it location logging
+     * stops whenever AWARE isn't in the foreground.
+     */
+    public static boolean hasBackgroundLocation(Context context) {
+        if (Build.VERSION.SDK_INT < 29) return true;
+        return ContextCompat.checkSelfPermission(context, PERMISSION_BACKGROUND_LOCATION)
+                == PackageManager.PERMISSION_GRANTED;
+    }
+
     private static final ConsentItem[] CONSENTS = new ConsentItem[]{
             new ConsentItem(
                 "locations",
@@ -319,9 +352,7 @@ public final class SensorCollection {
                 new String[]{
                     Aware_Preferences.STATUS_BLUETOOTH
                 },
-                new String[]{
-                    Manifest.permission.ACCESS_COARSE_LOCATION
-                }
+                bluetoothPermissions()
             ),
             new ConsentItem(
                 "telephony",

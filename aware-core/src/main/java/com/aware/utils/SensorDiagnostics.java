@@ -98,7 +98,11 @@ public final class SensorDiagnostics {
         GATES.put(
             Aware_Preferences.STATUS_BLUETOOTH,
             new Gate(
-                new String[]{Manifest.permission.ACCESS_COARSE_LOCATION},
+                // API 31+ needs BLUETOOTH_SCAN/CONNECT (referenced by string — added after this
+                // module's compile SDK); older versions gate Bluetooth scanning on location.
+                Build.VERSION.SDK_INT >= 31
+                    ? new String[]{"android.permission.BLUETOOTH_SCAN", "android.permission.BLUETOOTH_CONNECT"}
+                    : new String[]{Manifest.permission.ACCESS_COARSE_LOCATION},
                 false,
                 false
             )

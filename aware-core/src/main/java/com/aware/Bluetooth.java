@@ -247,13 +247,20 @@ public class Bluetooth extends Aware_Sensor {
         public void run() {
             BluetoothLeScanner scanner = bluetoothAdapter.getBluetoothLeScanner();
             if (scanner != null && !isBLEScanning) {
-                mBLEHandler.postDelayed(stopScan, 3000);
-                scanner.startScan(null, scanSettings, scanCallback);
-                if (awareSensor != null) awareSensor.onBLEScanStarted();
-                if (Aware.DEBUG) Log.d(TAG, ACTION_AWARE_BLUETOOTH_BLE_SCAN_STARTED);
-                Intent scanStart = new Intent(ACTION_AWARE_BLUETOOTH_BLE_SCAN_STARTED);
-                sendBroadcast(scanStart);
-                isBLEScanning = !isBLEScanning;
+                try {
+                    // startScan needs BLUETOOTH_SCAN on Android 12+; skip the scan rather than crash
+                    // the app if it isn't granted.
+                    mBLEHandler.postDelayed(stopScan, 3000);
+                    scanner.startScan(null, scanSettings, scanCallback);
+                    if (awareSensor != null) awareSensor.onBLEScanStarted();
+                    if (Aware.DEBUG) Log.d(TAG, ACTION_AWARE_BLUETOOTH_BLE_SCAN_STARTED);
+                    Intent scanStart = new Intent(ACTION_AWARE_BLUETOOTH_BLE_SCAN_STARTED);
+                    sendBroadcast(scanStart);
+                    isBLEScanning = !isBLEScanning;
+                } catch (SecurityException e) {
+                    Log.w(TAG, "Skipping BLE scan: missing BLUETOOTH_SCAN permission", e);
+                    mBLEHandler.removeCallbacks(stopScan);
+                }
             }
         }
     };
@@ -263,7 +270,11 @@ public class Bluetooth extends Aware_Sensor {
         public void run() {
             BluetoothLeScanner scanner = bluetoothAdapter.getBluetoothLeScanner();
             if (scanner != null && isBLEScanning) {
-                scanner.stopScan(scanCallback);
+                try {
+                    scanner.stopScan(scanCallback);
+                } catch (SecurityException e) {
+                    Log.w(TAG, "Skipping BLE stopScan: missing BLUETOOTH_SCAN permission", e);
+                }
                 if (awareSensor != null) awareSensor.onBLEScanEnded();
                 if (Aware.DEBUG) Log.d(TAG, ACTION_AWARE_BLUETOOTH_BLE_SCAN_ENDED);
                 Intent scanEnd = new Intent(ACTION_AWARE_BLUETOOTH_BLE_SCAN_ENDED);
@@ -437,11 +448,14 @@ public class Bluetooth extends Aware_Sensor {
 
             if (intent.getAction().equals(ACTION_AWARE_BLUETOOTH_REQUEST_SCAN)) {
                 //interrupt ongoing scans
-                if (bluetoothAdapter.isDiscovering()) bluetoothAdapter.cancelDiscovery();
-                if (!bluetoothAdapter.isDiscovering()) {
-                    if (bluetoothAdapter.isEnabled()) {
-                        bluetoothAdapter.startDiscovery();
-                    } else {
+                try {
+                    // isDiscovering/cancelDiscovery/startDiscovery need BLUETOOTH_SCAN on Android 12+;
+                    // skip the scan rather than crash the app if it isn't granted.
+                    if (bluetoothAdapter.isDiscovering()) bluetoothAdapter.cancelDiscovery();
+                    if (!bluetoothAdapter.isDiscovering()) {
+                        if (bluetoothAdapter.isEnabled()) {
+                            bluetoothAdapter.startDiscovery();
+                        } else {
                         //Bluetooth is off
                         if (Aware.DEBUG) Log.d(TAG, "Bluetooth is turned off...");
                         ContentValues rowData = new ContentValues();
@@ -461,6 +475,9 @@ public class Bluetooth extends Aware_Sensor {
                             if (Aware.DEBUG) Log.d(TAG, e.getMessage());
                         }
                     }
+                    }
+                } catch (SecurityException se) {
+                    Log.w(TAG, "Skipping Bluetooth discovery: missing BLUETOOTH_SCAN permission", se);
                 }
             }
 
@@ -521,15 +538,23 @@ public class Bluetooth extends Aware_Sensor {
 
         Cursor sensorBT = getContentResolver().query(Bluetooth_Sensor.CONTENT_URI, null, null, null, null);
         if (sensorBT == null || !sensorBT.moveToFirst()) {
-            ContentValues rowData = new ContentValues();
-            rowData.put(Bluetooth_Sensor.TIMESTAMP, System.currentTimeMillis());
-            rowData.put(Bluetooth_Sensor.DEVICE_ID, Aware.getSetting(getApplicationContext(), Aware_Preferences.DEVICE_ID));
-            rowData.put(Bluetooth_Sensor.BT_ADDRESS, Encrypter.hashMac(getApplicationContext(), btAdapter.getAddress()));
-            rowData.put(Bluetooth_Sensor.BT_NAME, Encrypter.hashSsid(getApplicationContext(), btAdapter.getName()));
+            try {
+                // getAddress()/getName() require the BLUETOOTH_CONNECT runtime permission on Android 12+
+                // (API 31). Without it the platform throws a SecurityException — and since this runs in
+                // onStartCommand on the main thread, an uncaught one crashes the whole app. Skip saving
+                // the local device info rather than crash if the permission isn't granted.
+                ContentValues rowData = new ContentValues();
+                rowData.put(Bluetooth_Sensor.TIMESTAMP, System.currentTimeMillis());
+                rowData.put(Bluetooth_Sensor.DEVICE_ID, Aware.getSetting(getApplicationContext(), Aware_Preferences.DEVICE_ID));
+                rowData.put(Bluetooth_Sensor.BT_ADDRESS, Encrypter.hashMac(getApplicationContext(), btAdapter.getAddress()));
+                rowData.put(Bluetooth_Sensor.BT_NAME, Encrypter.hashSsid(getApplicationContext(), btAdapter.getName()));
 
-            getContentResolver().insert(Bluetooth_Sensor.CONTENT_URI, rowData);
+                getContentResolver().insert(Bluetooth_Sensor.CONTENT_URI, rowData);
 
-            if (Aware.DEBUG) Log.d(TAG, "Bluetooth local information: " + rowData.toString());
+                if (Aware.DEBUG) Log.d(TAG, "Bluetooth local information: " + rowData.toString());
+            } catch (SecurityException e) {
+                Log.w(TAG, "Skipping local Bluetooth info: missing BLUETOOTH_CONNECT permission", e);
+            }
         }
         if (sensorBT != null && !sensorBT.isClosed()) sensorBT.close();
     }
