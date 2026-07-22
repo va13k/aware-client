@@ -169,4 +169,37 @@ public class StudyUtilsTest {
         assertTrue(signature.contains("status_wifi"));
         assertFalse(signature.contains("status_temperature"));
     }
+
+    @Test
+    public void consentRequiring_picksEnabledPermissionAndAccessibilitySensors() throws JSONException {
+        JSONObject config = configWithSensors(
+                sensor("status_location_gps", true),   // runtime permission
+                sensor("status_applications", true),   // accessibility service
+                sensor("status_battery", true));       // no gate
+
+        Set<String> result = StudyUtils.consentRequiringEnabledSettings(new JSONArray().put(config));
+
+        assertTrue(result.contains("status_location_gps"));
+        assertTrue(result.contains("status_applications"));
+        assertFalse(result.contains("status_battery"));
+    }
+
+    @Test
+    public void consentRequiring_ignoresDisabledSensors() throws JSONException {
+        JSONObject config = configWithSensors(
+                sensor("status_location_gps", false),
+                sensor("status_battery", true));
+
+        assertTrue(StudyUtils.consentRequiringEnabledSettings(new JSONArray().put(config)).isEmpty());
+    }
+
+    @Test
+    public void consentRequiring_baseOnlyConfig_isEmpty() throws JSONException {
+        JSONObject config = configWithSensors(
+                sensor("status_battery", true),
+                sensor("status_screen", true),
+                sensor("status_accelerometer", true));
+
+        assertTrue(StudyUtils.consentRequiringEnabledSettings(new JSONArray().put(config)).isEmpty());
+    }
 }

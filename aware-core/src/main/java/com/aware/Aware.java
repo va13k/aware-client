@@ -2075,13 +2075,21 @@ public class Aware extends Service {
                             }
                         }
 
+                        // Programmatic join with no consent UI: hold every consent-requiring sensor
+                        // off and persist it to the declined set, so a sensor needing a runtime
+                        // permission or the Accessibility Service isn't silently enabled. Base
+                        // (permission-free) sensors apply as the config specifies.
+                        Set<String> declined = StudyUtils.holdConsentSensorsUnlessAgreed(getApplicationContext(), study_config);
+
                         //Set the sensors' settings first
                         for (int i = 0; i < sensors.length(); i++) {
                             try {
                                 JSONObject sensor_config = sensors.getJSONObject(i);
+                                String setting = sensor_config.getString("setting");
                                 String package_name = "com.aware.phone";
                                 if (getApplicationContext().getResources().getBoolean(R.bool.standalone)) package_name = getApplicationContext().getPackageName();
-                                Aware.setSetting(getApplicationContext(), sensor_config.getString("setting"), sensor_config.get("value"), package_name);
+                                Object value = declined.contains(setting) ? Boolean.FALSE : sensor_config.get("value");
+                                Aware.setSetting(getApplicationContext(), setting, value, package_name);
                             } catch (JSONException e) {
                                 e.printStackTrace();
                             }

@@ -209,7 +209,12 @@ public class StudyUtils extends IntentService {
 
                 if (dbStudy != null && !dbStudy.isClosed()) dbStudy.close();
 
-                applySettings(getApplicationContext(), full_url, study_config, input_password_);
+                // This is a programmatic join with no consent UI, so a sensor that needs a runtime
+                // permission or the Accessibility Service must not be silently switched on. Hold
+                // every such sensor off (persisted, so a later config sync keeps honouring it);
+                // permission-free base sensors still start, and the held ones await the participant.
+                Set<String> declined = holdConsentSensorsUnlessAgreed(getApplicationContext(), study_config);
+                applySettings(getApplicationContext(), full_url, study_config, false, input_password_, declined);
 
             } catch (JSONException e) {
                 e.printStackTrace();
@@ -1406,6 +1411,50 @@ public class StudyUtils extends IntentService {
             joined.append(setting);
         }
         Aware.setSetting(context, Aware_Preferences.STUDY_DECLINED_SENSORS, joined.toString());
+    }
+
+    /**
+     * The consent-requiring status_* settings enabled across {@code configs} — every sensor that
+     * gates on a runtime permission or the Accessibility Service (per
+     * {@link SensorDiagnostics#requiresConsent}). Permission-free base sensors are excluded. Pure
+     * (no Context) so it's unit-testable, mirroring {@link #driftSignature}'s split from
+     * {@link #liveDriftSignature}.
+     */
+    static Set<String> consentRequiringEnabledSettings(JSONArray configs) {
+        Set<String> out = new HashSet<>();
+        if (configs == null) return out;
+        for (int i = 0; i < configs.length(); i++) {
+            for (String setting : enabledStatusSettings(configs.optJSONObject(i))) {
+                if (SensorDiagnostics.requiresConsent(setting)) out.add(setting);
+            }
+        }
+        return out;
+    }
+
+    /**
+     * Holds every consent-requiring sensor enabled in {@code configs} OFF, by persisting it into the
+     * declined set (unioned with anything already there), and returns the resulting declined set.
+     * The programmatic join entry points ({@link Aware#joinStudy} / the {@link StudyUtils} service)
+     * have no consent UI, so a sensor needing a runtime permission or the Accessibility Service must
+     * not be silently enabled — this keeps it off, and keeps it off across later config syncs via the
+     * persisted set. Permission-free base sensors are untouched and still start; a held sensor can be
+     * enabled later once the participant consents (the consent screen, or the per-sensor Enable
+     * action).
+     */
+    public static Set<String> holdConsentSensorsUnlessAgreed(Context context, JSONArray configs) {
+        Set<String> declined = new HashSet<>();
+        for (String key : Aware.getSetting(context, Aware_Preferences.STUDY_DECLINED_SENSORS).split(",")) {
+            if (key.trim().length() > 0) declined.add(key.trim());
+        }
+        declined.addAll(consentRequiringEnabledSettings(configs));
+
+        StringBuilder joined = new StringBuilder();
+        for (String setting : declined) {
+            if (joined.length() > 0) joined.append(',');
+            joined.append(setting);
+        }
+        Aware.setSetting(context, Aware_Preferences.STUDY_DECLINED_SENSORS, joined.toString());
+        return declined;
     }
 
     /**
