@@ -346,7 +346,6 @@ public final class SensorCollection {
                 },
                 new String[]{
                     Manifest.permission.READ_CALL_LOG,
-                    Manifest.permission.READ_CONTACTS,
                     Manifest.permission.READ_PHONE_STATE,
                     Manifest.permission.READ_SMS
                 }

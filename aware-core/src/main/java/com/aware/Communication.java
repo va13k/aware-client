@@ -390,7 +390,6 @@ public class Communication extends Aware_Sensor {
         callsObs = new CallsObserver(new Handler());
         msgsObs = new MessagesObserver(new Handler());
 
-        REQUIRED_PERMISSIONS.add(Manifest.permission.READ_CONTACTS);
         REQUIRED_PERMISSIONS.add(Manifest.permission.READ_PHONE_STATE);
         REQUIRED_PERMISSIONS.add(Manifest.permission.READ_CALL_LOG);
         REQUIRED_PERMISSIONS.add(Manifest.permission.READ_SMS);
