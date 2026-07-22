@@ -68,7 +68,9 @@ import org.json.JSONObject;
 import java.lang.reflect.Field;
 import java.text.DateFormat;
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.Date;
+import java.util.HashSet;
 import java.util.Hashtable;
 import java.util.List;
 import java.util.Map;
@@ -76,6 +78,7 @@ import java.util.Set;
 import java.util.UUID;
 
 import androidx.appcompat.widget.Toolbar;
+import androidx.core.app.ActivityCompat;
 import androidx.core.app.NotificationCompat;
 import androidx.core.content.ContextCompat;
 import androidx.core.content.PermissionChecker;
@@ -210,9 +213,17 @@ public class Aware_Client extends Aware_Activity {
 
         dismissOpenSubPrefDialogIfAny();
 
+        // Some newly-added sensors need the participant's permission before they can collect and were
+        // held off until agreed. Offer a "Review" action when any are pending, and word the "added"
+        // line so it doesn't claim those are already collecting.
+        JSONObject activeConfig = Aware.getActiveStudyConfig(getApplicationContext());
+        JSONArray activeConfigs = new JSONArray();
+        if (activeConfig != null) activeConfigs.put(activeConfig);
+        final boolean hasHeld = SensorCollection.hasHeldConsents(getApplicationContext(), activeConfigs);
+
         StringBuilder msg = new StringBuilder("The study was updated by the researcher.\n");
         if (added != null && !added.isEmpty()) {
-            msg.append("\nNow collecting:\n• ").append(TextUtils.join("\n• ", added));
+            msg.append("\nAdded to the study:\n• ").append(TextUtils.join("\n• ", added));
         }
         if (removed != null && !removed.isEmpty()) {
             msg.append("\n\nNo longer collecting:\n• ").append(TextUtils.join("\n• ", removed));
@@ -222,11 +233,13 @@ public class Aware_Client extends Aware_Activity {
                     ? "You can now change your own settings for this study."
                     : "Your settings are locked to the researcher's configuration again.");
         }
+        if (hasHeld) {
+            msg.append("\n\nSome added sensors need your permission before they can collect. Review them now?");
+        }
 
-        new AlertDialog.Builder(this)
+        AlertDialog.Builder builder = new AlertDialog.Builder(this)
                 .setTitle("Study updated")
                 .setMessage(msg.toString())
-                .setPositiveButton("OK", null)
                 .setOnDismissListener(new DialogInterface.OnDismissListener() {
                     @Override
                     public void onDismiss(DialogInterface dialog) {
@@ -237,8 +250,22 @@ public class Aware_Client extends Aware_Activity {
                         // rebuild the sensor list after the participant has seen the changes
                         if (!isFinishing()) recreate();
                     }
-                })
-                .show();
+                });
+        if (hasHeld) {
+            builder.setPositiveButton("Review", new DialogInterface.OnClickListener() {
+                @Override
+                public void onClick(DialogInterface dialog, int which) {
+                    Intent consent = new Intent(getApplicationContext(), SensorConsentActivity.class);
+                    consent.putExtra(SensorConsentActivity.EXTRA_UPDATE_MODE, true);
+                    consent.setFlags(Intent.FLAG_ACTIVITY_NEW_TASK | Intent.FLAG_ACTIVITY_CLEAR_TASK);
+                    startActivity(consent);
+                }
+            });
+            builder.setNegativeButton("Not now", null);
+        } else {
+            builder.setPositiveButton("OK", null);
+        }
+        builder.show();
     }
 
     @Override
@@ -408,6 +435,13 @@ public class Aware_Client extends Aware_Activity {
         SensorCollection.Status status =
                 SensorCollection.getStatus(getApplicationContext(), sensor.getKey(), accessibilityOn);
 
+        JSONObject activeConfig = Aware.getActiveStudyConfig(getApplicationContext());
+        final JSONArray activeConfigs = new JSONArray();
+        if (activeConfig != null) activeConfigs.put(activeConfig);
+        final List<SensorCollection.ConsentItem> heldForCategory =
+                SensorCollection.heldConsentsForCategory(
+                        getApplicationContext(), activeConfigs, sensor.getKey());
+
         StringBuilder msg = new StringBuilder();
         msg.append(status.collecting ? "●  Collecting data" : "○  Not collecting");
         msg.append("\n\n").append(status.reason);
@@ -422,10 +456,124 @@ public class Aware_Client extends Aware_Activity {
             msg.append("\n\nWhat to do: ").append(status.fixHint);
         }
 
-        new AlertDialog.Builder(this)
+        AlertDialog.Builder builder = new AlertDialog.Builder(this)
                 .setTitle(sensor.getTitle())
-                .setMessage(msg.toString())
-                .setPositiveButton("OK", null)
+                .setMessage(msg.toString());
+
+        // A category can already be collecting while one of its other consent choices is still off
+        // (Applications contains both app usage and masked keyboard text). Keep re-consent reachable
+        // in that case instead of hiding it merely because the category has recent application data.
+        final SensorCollection.ConsentItem consent = SensorCollection.consentItemForCategory(sensor.getKey());
+        if (!heldForCategory.isEmpty()) {
+            msg.append("\n\nWaiting for your consent: ");
+            List<String> heldLabels = new ArrayList<>();
+            for (SensorCollection.ConsentItem held : heldForCategory) heldLabels.add(held.label);
+            msg.append(TextUtils.join(", ", heldLabels));
+            builder.setMessage(msg.toString());
+            builder.setPositiveButton("Review consent", new DialogInterface.OnClickListener() {
+                @Override
+                public void onClick(DialogInterface dialog, int which) {
+                    Intent review = new Intent(getApplicationContext(), SensorConsentActivity.class);
+                    review.putExtra(SensorConsentActivity.EXTRA_UPDATE_MODE, true);
+                    startActivity(review);
+                }
+            });
+            builder.setNegativeButton("Close", null);
+        } else if (!status.collecting && consent != null) {
+            builder.setPositiveButton("Enable", new DialogInterface.OnClickListener() {
+                @Override
+                public void onClick(DialogInterface dialog, int which) {
+                    enableConsentSensor(consent);
+                }
+            });
+            builder.setNegativeButton("Close", null);
+        } else {
+            builder.setPositiveButton("OK", null);
+        }
+        builder.show();
+    }
+
+    private static final int RC_ENABLE_SENSOR = 47001;
+
+    // The consent group whose permission request is in flight from enableConsentSensor(), so the
+    // result callback can follow up (e.g. nudge for background location once Location is granted).
+    private String pendingEnableConsentKey;
+
+    /**
+     * Participant-initiated enable of a study sensor they hadn't consented to: undo the decline, turn
+     * on the sub-settings the study actually wants, start collection, and route to whatever grant is
+     * still missing (runtime permission dialog, or the accessibility / Location-services screens).
+     */
+    private void enableConsentSensor(SensorCollection.ConsentItem consent) {
+        // Un-decline this consent group so the config sync won't force it back off.
+        Set<String> declined = new HashSet<>(Arrays.asList(
+                Aware.getSetting(getApplicationContext(), Aware_Preferences.STUDY_DECLINED_SENSORS).split(",")));
+        declined.removeAll(Arrays.asList(consent.statusSettings));
+        declined.remove("");
+        Aware.setSetting(getApplicationContext(), Aware_Preferences.STUDY_DECLINED_SENSORS,
+                TextUtils.join(",", declined));
+
+        // Turn on only the sub-settings the study config enables (fall back to the whole group if the
+        // config can't be read), so enabling "Calls & messages" doesn't switch on more than the study wants.
+        List<String> toEnable = SensorCollection.configEnabledSettings(
+                Aware.getActiveStudyConfig(getApplicationContext()), consent.statusSettings);
+        if (toEnable.isEmpty()) toEnable = Arrays.asList(consent.statusSettings);
+        for (String setting : toEnable) {
+            Aware.setSetting(getApplicationContext(), setting, true);
+        }
+
+        JSONArray configs = new JSONArray();
+        JSONObject activeConfig = Aware.getActiveStudyConfig(getApplicationContext());
+        if (activeConfig != null) configs.put(activeConfig);
+        Aware.logStudyCompliance(getApplicationContext(),
+                "consent updated: " + SensorCollection.consentStateSummary(configs, declined));
+
+        Aware.startAWARE(getApplicationContext());
+
+        // Route to the still-missing grant so collection can actually start. Skip it when the grant
+        // is already in place — the accessibility service is a single shared toggle, so if it's
+        // already on (enabled for another accessibility sensor) there's nothing to send them to.
+        if (consent.needsAccessibility) {
+            if (!SensorCollection.isAccessibilityServiceEnabled(getApplicationContext())) {
+                enableAccessibilityService();
+            }
+        } else if (consent.permissions.length > 0) {
+            pendingEnableConsentKey = consent.key;
+            ActivityCompat.requestPermissions(this, consent.permissions, RC_ENABLE_SENSOR);
+        }
+    }
+
+    @Override
+    public void onRequestPermissionsResult(int requestCode, String[] permissions, int[] grantResults) {
+        super.onRequestPermissionsResult(requestCode, permissions, grantResults);
+        if (requestCode == RC_ENABLE_SENSOR) {
+            // Whatever was granted, (re)start AWARE so the just-enabled sensor comes up now.
+            Aware.startAWARE(getApplicationContext());
+            // Foreground location alone stops logging when AWARE isn't open — nudge for "Allow all
+            // the time" so location collected from here is complete, just like the consent screen does.
+            if ("locations".equals(pendingEnableConsentKey)
+                    && !SensorCollection.hasBackgroundLocation(getApplicationContext())) {
+                promptAlwaysLocation();
+            }
+            pendingEnableConsentKey = null;
+        }
+    }
+
+    private void promptAlwaysLocation() {
+        new AlertDialog.Builder(this)
+                .setTitle("Set location to \"Allow all the time\"")
+                .setMessage("To record the places you visit continuously — even when AWARE isn't open — " +
+                        "set this app's Location permission to \"Allow all the time\". With only " +
+                        "\"While using the app\", location is recorded just while AWARE is open, so the data " +
+                        "will be incomplete.")
+                .setPositiveButton("Open settings", new DialogInterface.OnClickListener() {
+                    @Override
+                    public void onClick(DialogInterface dialog, int which) {
+                        startActivity(new Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS,
+                                Uri.parse("package:" + getPackageName())));
+                    }
+                })
+                .setNegativeButton("Not now", null)
                 .show();
     }
 

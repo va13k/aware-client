@@ -199,7 +199,29 @@ public class Aware_Join_Study extends Aware_Activity {
                 }
                 if (study != null && !study.isClosed()) study.close();
 
-                new JoinStudyAsync().execute();
+                // The consent screen is skipped only when there is nothing to show at all (no
+                // promptable sensors), or when nothing still needs granting AND the participant's
+                // recorded consent covers this exact study and sensor set. Granted OS permissions
+                // alone are not enough: they survive quitting a study, but agreement doesn't —
+                // quitting wipes the record, so a re-join always shows the screen again.
+                boolean nothingToShow = SensorCollection.enabledConsentsForConfig(study_configs).isEmpty();
+                boolean alreadyConsented = !SensorCollection.hasPendingConsents(getApplicationContext(), study_configs)
+                        && SensorCollection.hasMatchingConsentRecord(getApplicationContext(), study_url, study_configs);
+                if (nothingToShow || alreadyConsented) {
+                    new JoinStudyAsync().execute();
+                } else {
+                    Intent consent = new Intent(getApplicationContext(), SensorConsentActivity.class);
+                    consent.putExtra(EXTRA_STUDY_URL, study_url);
+                    try {
+                        consent.putExtra(EXTRA_STUDY_CONFIG, study_configs.getJSONObject(0).toString());
+                    } catch (JSONException e) {
+                        e.printStackTrace();
+                    }
+                    consent.putExtra(INPUT_PASSWORD, input_password);
+                    consent.setFlags(Intent.FLAG_ACTIVITY_NEW_TASK | Intent.FLAG_ACTIVITY_CLEAR_TASK);
+                    startActivity(consent);
+                    finish();
+                }
             }
         });
 
@@ -487,12 +509,9 @@ public class Aware_Join_Study extends Aware_Activity {
                 @Override
                 public void onDismiss(DialogInterface dialogInterface) {
                     finish();
-                    // If the joined study needs runtime permissions, go through the consent screen
-                    // first (it asks one sensor at a time, then opens Aware_Client). Otherwise go
-                    // straight to the main UI.
-                    Intent next = SensorCollection.neededConsents(getApplicationContext()).isEmpty()
-                            ? new Intent(getApplicationContext(), Aware_Client.class)
-                            : new Intent(getApplicationContext(), SensorConsentActivity.class);
+                    // Only reached when this study had nothing needing consent, so the main UI is
+                    // always the right destination here.
+                    Intent next = new Intent(getApplicationContext(), Aware_Client.class);
                     next.setFlags(Intent.FLAG_ACTIVITY_NEW_TASK | Intent.FLAG_ACTIVITY_CLEAR_TASK);
                     startActivity(next);
                 }
@@ -501,7 +520,7 @@ public class Aware_Join_Study extends Aware_Activity {
 
         @Override
         protected Void doInBackground(Void... params) {
-            StudyUtils.applySettings(getApplicationContext(), study_url, study_configs, input_password);
+            StudyUtils.applySettings(getApplicationContext(), study_url, study_configs, false, input_password, Collections.<String>emptySet());
             return null;
         }
 

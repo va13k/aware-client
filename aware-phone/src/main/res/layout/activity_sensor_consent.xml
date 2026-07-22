@@ -14,6 +14,7 @@
     android:paddingBottom="16dp">
 
     <TextView
+        android:id="@+id/consent_title"
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
         android:text="Permissions this study needs"
@@ -21,10 +22,11 @@
         android:textStyle="bold" />
 
     <TextView
+        android:id="@+id/consent_subtitle"
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
         android:layout_marginTop="8dp"
-        android:text="Enable each sensor so the study can collect its data. You can change these later in system settings."
+        android:text="Enable the sensors you agree to share. Enabling is optional — you can continue without enabling any, and turn a sensor on later from its entry in the sensor list. You can also change these in system settings."
         android:textSize="14sp"
         android:textColor="?android:attr/textColorSecondary" />
 
@@ -47,4 +49,13 @@
         android:layout_height="wrap_content"
         android:layout_marginTop="12dp"
         android:text="Continue" />
+
+    <Button
+        android:id="@+id/btn_dont_join"
+        style="?android:attr/borderlessButtonStyle"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:layout_marginTop="4dp"
+        android:text="Don't join this study"
+        android:textColor="?android:attr/textColorSecondary" />
 </LinearLayout>

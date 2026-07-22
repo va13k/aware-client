@@ -19,10 +19,15 @@ import com.aware.Aware;
 import com.aware.Aware_Preferences;
 import com.aware.utils.SensorAvailability;
 
+import org.json.JSONArray;
+import org.json.JSONObject;
+
 import java.util.ArrayList;
 import java.util.HashMap;
+import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 
 /**
  * Determines, per sensor, whether AWARE is actually collecting data on this device, and — when it
@@ -402,47 +407,243 @@ public final class SensorCollection {
                 },
                 NONE,
                 true
+            ),
+            new ConsentItem(
+                "screenshot",
+                "Screenshots",
+                "Periodic screenshots of what's on screen.",
+                new String[]{
+                    Aware_Preferences.STATUS_SCREENSHOT
+                },
+                NONE,
+                true
             )
     };
 
     /**
-     * The consent items the current study still needs the participant to grant: the sensor is enabled
-     * by the study AND at least one of its runtime permissions is not yet granted. Sensors with no
-     * runtime permissions, disabled sensors, and fully-granted sensors are omitted.
+     * The consent item covering a sensor-list category key (as used by the study sensor list and
+     * {@link #getStatus}), or null if that category needs no participant grant. Handles the one key
+     * that differs between the two vocabularies ("applications" category ↔ "application" consent).
      */
-    public static List<ConsentItem> neededConsents(Context context) {
-        List<ConsentItem> needed = new ArrayList<>();
+    public static ConsentItem consentItemForCategory(String categoryKey) {
+        String consentKey = "applications".equals(categoryKey) ? "application" : categoryKey;
         for (ConsentItem item : CONSENTS) {
-            if (item.permissions.length == 0 && !item.needsAccessibility) continue;
-            if (!isSensorEnabled(context, item.statusSettings)) continue;
-            if (isGranted(context, item)) continue;
-            needed.add(item);
+            if (item.key.equals(consentKey)) return item;
         }
-        return needed;
+        return null;
     }
 
     /**
-     * All promptable sensors the study has enabled, regardless of whether their permissions are
-     * granted yet. Used by the consent screen to show every relevant sensor (granted ones as ✓).
+     * Consent items represented by a top-level sensor category. Applications is special: its
+     * preference screen contains both application-usage and keyboard collection, even though they
+     * are independent consent choices backed by the same Accessibility Service toggle.
      */
-    public static List<ConsentItem> enabledConsents(Context context) {
+    public static List<ConsentItem> consentItemsForCategory(String categoryKey) {
+        List<ConsentItem> matches = new ArrayList<>();
+        for (ConsentItem item : CONSENTS) {
+            if (item.key.equals(categoryKey)
+                    || ("applications".equals(categoryKey)
+                    && ("application".equals(item.key) || "keyboard".equals(item.key)))) {
+                matches.add(item);
+            }
+        }
+        return matches;
+    }
+
+    /**
+     * Which of {@code candidates} the active study config actually enables (value == true). Used when
+     * a participant enables a consent group from a sensor's details, so only the sub-settings the
+     * study wants are turned on, not the whole group.
+     */
+    public static List<String> configEnabledSettings(JSONObject config, String[] candidates) {
+        List<String> out = new ArrayList<>();
+        JSONArray sensors = config == null ? null : config.optJSONArray("sensors");
+        if (sensors == null) return out;
+        for (int i = 0; i < sensors.length(); i++) {
+            JSONObject sensor = sensors.optJSONObject(i);
+            if (sensor == null || !sensor.optBoolean("value", false)) continue;
+            String setting = sensor.optString("setting", "");
+            for (String candidate : candidates) {
+                if (candidate.equals(setting)) out.add(candidate);
+            }
+        }
+        return out;
+    }
+
+    /**
+     * The consent items a study's config would enable, regardless of whether their permissions are
+     * granted yet. Reads sensor enablement directly from the not-yet-applied config JSON, so this can
+     * run before {@code StudyUtils.applySettings} has flipped any status_* setting — consent must gate
+     * enabling, not just follow it.
+     */
+    public static List<ConsentItem> enabledConsentsForConfig(JSONArray configs) {
         List<ConsentItem> enabled = new ArrayList<>();
         for (ConsentItem item : CONSENTS) {
             if (item.permissions.length == 0 && !item.needsAccessibility) continue;
-            if (isSensorEnabled(context, item.statusSettings)) enabled.add(item);
+            if (isSensorEnabledInConfig(configs, item.statusSettings)) enabled.add(item);
         }
         return enabled;
     }
 
     /**
-     * True if a consent item is already granted: for accessibility-backed sensors that means the
-     * Accessibility Service is on; for everything else, that all its runtime permissions are granted.
+     * True if the study config enables at least one sensor that still needs a permission grant or
+     * Accessibility Service enable the participant hasn't already given — i.e. there's actually
+     * something new to ask about. False when every promptable sensor the config enables is already
+     * satisfied, so the consent screen would have nothing left to show.
      */
-    public static boolean isGranted(Context context, ConsentItem item) {
+    public static boolean hasPendingConsents(Context context, JSONArray configs) {
+        for (ConsentItem item : enabledConsentsForConfig(configs)) {
+            if (!isAlreadyGranted(context, item)) return true;
+        }
+        return false;
+    }
+
+    /**
+     * Fingerprint of what a consent for this study would cover: the study URL plus the sorted keys
+     * of every promptable sensor its config enables (e.g. "https://…|bluetooth,locations,wifi").
+     * Stored as {@link com.aware.Aware_Preferences#STUDY_CONSENT_RECORD} when the participant
+     * completes the consent screen; a mismatch (different study, or a changed sensor set) means
+     * their recorded agreement doesn't cover this join.
+     */
+    public static String consentFingerprint(String studyUrl, JSONArray configs) {
+        List<String> keys = new ArrayList<>();
+        for (ConsentItem item : enabledConsentsForConfig(configs)) {
+            keys.add(item.key);
+        }
+        java.util.Collections.sort(keys);
+        return (studyUrl == null ? "" : studyUrl) + "|" + TextUtils.join(",", keys);
+    }
+
+    /**
+     * True if the participant's recorded consent (if any) covers exactly this study and its current
+     * promptable-sensor set. False when there is no record — never consented, or the record was
+     * wiped by quitting the study — or when the set changed since they agreed.
+     */
+    public static boolean hasMatchingConsentRecord(Context context, String studyUrl, JSONArray configs) {
+        String recorded = Aware.getSetting(context, Aware_Preferences.STUDY_CONSENT_RECORD);
+        return recorded.length() > 0 && recorded.equals(consentFingerprint(studyUrl, configs));
+    }
+
+    /** The set of status_* keys the participant has declined (persisted, comma-joined). */
+    private static Set<String> declinedSet(Context context) {
+        Set<String> out = new HashSet<>();
+        for (String key : Aware.getSetting(context, Aware_Preferences.STUDY_DECLINED_SENSORS).split(",")) {
+            if (key.trim().length() > 0) out.add(key.trim());
+        }
+        return out;
+    }
+
+    /**
+     * Promptable sensors the study config enables that are currently declined (held off) — i.e. the
+     * study wants them but the participant hasn't agreed. Used by the "study updated" re-consent
+     * prompt to show exactly what's waiting on agreement after a config change.
+     */
+    public static List<ConsentItem> heldConsentsForConfig(Context context, JSONArray configs) {
+        Set<String> declined = declinedSet(context);
+        List<ConsentItem> held = new ArrayList<>();
+        for (ConsentItem item : enabledConsentsForConfig(configs)) {
+            for (String setting : item.statusSettings) {
+                if (declined.contains(setting)) {
+                    held.add(item);
+                    break;
+                }
+            }
+        }
+        return held;
+    }
+
+    /** Held consent choices belonging to one top-level sensor category. */
+    public static List<ConsentItem> heldConsentsForCategory(Context context, JSONArray configs,
+                                                            String categoryKey) {
+        List<ConsentItem> categoryItems = consentItemsForCategory(categoryKey);
+        List<ConsentItem> held = new ArrayList<>();
+        for (ConsentItem item : heldConsentsForConfig(context, configs)) {
+            if (categoryItems.contains(item)) held.add(item);
+        }
+        return held;
+    }
+
+    /**
+     * Researcher-visible snapshot of the current consent state for every promptable sensor enabled
+     * by the study config. Unlike an isolated "sensor enabled" event, this supersedes ambiguity in
+     * an earlier consent row after the participant changes their choice during the study.
+     */
+    public static String consentStateSummary(JSONArray configs, Set<String> declinedSettings) {
+        List<String> enabled = new ArrayList<>();
+        List<String> declined = new ArrayList<>();
+        Set<String> declinedKeys = declinedSettings == null
+                ? new HashSet<String>() : declinedSettings;
+        for (ConsentItem item : enabledConsentsForConfig(configs)) {
+            boolean itemDeclined = false;
+            for (String setting : item.statusSettings) {
+                if (declinedKeys.contains(setting)) {
+                    itemDeclined = true;
+                    break;
+                }
+            }
+            (itemDeclined ? declined : enabled).add(item.label);
+        }
+        return "enabled=" + enabled + " declined=" + declined;
+    }
+
+    /** True if the study config enables at least one promptable sensor currently declined/held off. */
+    public static boolean hasHeldConsents(Context context, JSONArray configs) {
+        return !heldConsentsForConfig(context, configs).isEmpty();
+    }
+
+    /**
+     * READ_SMS and READ_CALL_LOG are Android "hard-restricted" permissions: the platform refuses to
+     * grant them to an app that isn't the device's default SMS/Dialer app (and isn't whitelisted by
+     * its installer), so the runtime dialog is effectively a no-op. Treating them as required would
+     * trap the Communication row on "Enable" forever, since checkSelfPermission can never return
+     * granted. They're best-effort instead — the sensor collects call/message metadata only if the
+     * platform does grant them, but consent doesn't hinge on it.
+     */
+    private static boolean isBestEffortPermission(String permission) {
+        return Manifest.permission.READ_SMS.equals(permission)
+                || Manifest.permission.READ_CALL_LOG.equals(permission);
+    }
+
+    /**
+     * True if a consent item's requirement is already satisfied — the Accessibility Service is on
+     * (for accessibility-backed items) or every one of its required runtime permissions is granted.
+     * Hard-restricted permissions (see {@link #isBestEffortPermission}) don't count against this, so a
+     * row isn't trapped waiting on a grant the platform will never give. Judged from the live
+     * permission state so it reflects reality regardless of the request callback's result array. Used
+     * both to decide whether the consent screen needs to appear ({@link #hasPendingConsents}) and, once
+     * shown, which rows are satisfied.
+     */
+    public static boolean isAlreadyGranted(Context context, ConsentItem item) {
         if (item.needsAccessibility) {
             return isAccessibilityServiceEnabled(context);
         }
-        return firstMissingPermission(context, item.permissions) == null;
+        for (String permission : item.permissions) {
+            if (isBestEffortPermission(permission)) continue;
+            if (ContextCompat.checkSelfPermission(context, permission) != PackageManager.PERMISSION_GRANTED) {
+                return false;
+            }
+        }
+        return true;
+    }
+
+    /** True if any of the given status settings is "value": true for some sensor entry in the config. */
+    private static boolean isSensorEnabledInConfig(JSONArray configs, String[] statusSettings) {
+        for (int i = 0; i < configs.length(); i++) {
+            JSONObject element = configs.optJSONObject(i);
+            if (element == null) continue;
+            JSONArray sensors = element.optJSONArray("sensors");
+            if (sensors == null) continue;
+            for (int j = 0; j < sensors.length(); j++) {
+                JSONObject sensor = sensors.optJSONObject(j);
+                if (sensor == null) continue;
+                String setting = sensor.optString("setting", "");
+                if (!sensor.optBoolean("value", false)) continue;
+                for (String s : statusSettings) {
+                    if (s.equals(setting)) return true;
+                }
+            }
+        }
+        return false;
     }
 
     /**
@@ -466,13 +667,4 @@ public final class SensorCollection {
         return false;
     }
 
-    /** True if any of the given status settings is currently "true". */
-    private static boolean isSensorEnabled(Context context, String[] statusSettings) {
-        for (String setting : statusSettings) {
-            if ("true".equalsIgnoreCase(Aware.getSetting(context, setting))) {
-                return true;
-            }
-        }
-        return false;
-    }
 }

@@ -194,6 +194,18 @@ public final class SensorDiagnostics {
     }
 
     /**
+     * True if a status_* setting needs an explicit participant grant — a runtime permission or the
+     * Accessibility Service — i.e. it's a sensor consent must cover before it may collect. Base
+     * sensors (no gate, or a gate needing only the Location-services toggle) return false: they need
+     * no per-sensor agreement. Lets aware-core (e.g. the config sync) decide which newly-added
+     * sensors to hold off until consent, without depending on aware-phone's SensorCollection.
+     */
+    public static boolean requiresConsent(String statusSetting) {
+        Gate gate = GATES.get(statusSetting);
+        return gate != null && (gate.permissions.length > 0 || gate.needsAccessibility);
+    }
+
+    /**
      * Pure reason computation given already-resolved booleans — split out from
      * {@link #computeReason(Context, String, boolean)} so it's directly unit-testable without a
      * Context, same reasoning as StudyUtils.driftSignature()'s split from liveDriftSignature().

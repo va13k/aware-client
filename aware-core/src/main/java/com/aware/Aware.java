@@ -701,6 +701,33 @@ public class Aware extends Service {
     }
 
     /**
+     * Append a compliance row to aware_studies for the currently active study, carrying a free-text
+     * {@code message}. This is the server-visible audit trail the researcher reads (same mechanism as
+     * "quit study"/"updated study" events) — used here to record consent decisions (given, declined,
+     * per-sensor enables). No-op if not currently enrolled. Caller need not hold a study cursor.
+     */
+    public static void logStudyCompliance(Context c, String message) {
+        Cursor study = getActiveStudy(c);
+        if (study != null && study.moveToFirst()) {
+            ContentValues entry = new ContentValues();
+            entry.put(Aware_Provider.Aware_Studies.STUDY_TIMESTAMP, System.currentTimeMillis());
+            entry.put(Aware_Provider.Aware_Studies.STUDY_DEVICE_ID, getSetting(c, Aware_Preferences.DEVICE_ID));
+            entry.put(Aware_Provider.Aware_Studies.STUDY_KEY, study.getInt(study.getColumnIndex(Aware_Provider.Aware_Studies.STUDY_KEY)));
+            entry.put(Aware_Provider.Aware_Studies.STUDY_API, study.getString(study.getColumnIndex(Aware_Provider.Aware_Studies.STUDY_API)));
+            entry.put(Aware_Provider.Aware_Studies.STUDY_URL, study.getString(study.getColumnIndex(Aware_Provider.Aware_Studies.STUDY_URL)));
+            entry.put(Aware_Provider.Aware_Studies.STUDY_PI, study.getString(study.getColumnIndex(Aware_Provider.Aware_Studies.STUDY_PI)));
+            entry.put(Aware_Provider.Aware_Studies.STUDY_CONFIG, study.getString(study.getColumnIndex(Aware_Provider.Aware_Studies.STUDY_CONFIG)));
+            entry.put(Aware_Provider.Aware_Studies.STUDY_JOINED, study.getLong(study.getColumnIndex(Aware_Provider.Aware_Studies.STUDY_JOINED)));
+            entry.put(Aware_Provider.Aware_Studies.STUDY_EXIT, study.getLong(study.getColumnIndex(Aware_Provider.Aware_Studies.STUDY_EXIT)));
+            entry.put(Aware_Provider.Aware_Studies.STUDY_TITLE, study.getString(study.getColumnIndex(Aware_Provider.Aware_Studies.STUDY_TITLE)));
+            entry.put(Aware_Provider.Aware_Studies.STUDY_DESCRIPTION, study.getString(study.getColumnIndex(Aware_Provider.Aware_Studies.STUDY_DESCRIPTION)));
+            entry.put(Aware_Provider.Aware_Studies.STUDY_COMPLIANCE, message);
+            c.getContentResolver().insert(Aware_Provider.Aware_Studies.CONTENT_URI, entry);
+        }
+        if (study != null && !study.isClosed()) study.close();
+    }
+
+    /**
      * Returns the list of studies the device has successfully joined at any point, most recent
      * first, collapsed to one entry per distinct study. The aware_studies table keeps a row for
      * every join and every compliance event, so this de-duplicates by study URL (falling back to
