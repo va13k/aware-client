@@ -87,6 +87,13 @@ public class SensorConsentActivity extends AppCompatActivity {
     // The "Allow all the time" (background location) nudge is shown at most once per screen instance.
     private boolean shownAlwaysLocationHelp;
 
+    // Bundle keys used to carry the above state across a process death while the participant is away
+    // in the Settings app, so their prior taps and one-time dialogs aren't forgotten on return.
+    private static final String STATE_CONSENTED_KEYS = "consented_keys";
+    private static final String STATE_PENDING_ACCESSIBILITY_KEY = "pending_accessibility_key";
+    private static final String STATE_SHOWN_RESTRICTED_HELP = "shown_restricted_settings_help";
+    private static final String STATE_SHOWN_ALWAYS_LOCATION_HELP = "shown_always_location_help";
+
     @Override
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
@@ -144,14 +151,23 @@ public class SensorConsentActivity extends AppCompatActivity {
             return;
         }
 
-        // A row already satisfied before this screen ever opened (e.g. granted during an earlier
-        // study join) doesn't need a redundant tap. Snapshotted once, here, rather than re-checked
-        // on every buildRows(): a permission that only becomes satisfied DURING this screen because
-        // another row's tap happens to share it (ACCESS_COARSE_LOCATION backs Location, Wi-Fi and
-        // Bluetooth alike) must still go through that row's own tap, not get a free pass.
-        for (ConsentItem item : items) {
-            if (SensorCollection.isAlreadyGranted(getApplicationContext(), item)) {
-                consentedKeys.add(item.key);
+        if (savedInstanceState != null) {
+            // Coming back after a process death: restore the per-row consent exactly as it was.
+            // Re-deriving it from live OS state here would be wrong, because several rows share one
+            // gate (ACCESS_COARSE_LOCATION backs Location, Wi-Fi and Bluetooth; the Accessibility
+            // toggle backs Applications and Keyboard) — a permission granted for one tapped row would
+            // otherwise silently mark every row sharing it as consented.
+            restoreInstanceState(savedInstanceState);
+        } else {
+            // A row already satisfied before this screen ever opened (e.g. granted during an earlier
+            // study join) doesn't need a redundant tap. Snapshotted once, here, rather than re-checked
+            // on every buildRows(): a permission that only becomes satisfied DURING this screen because
+            // another row's tap happens to share it (ACCESS_COARSE_LOCATION backs Location, Wi-Fi and
+            // Bluetooth alike) must still go through that row's own tap, not get a free pass.
+            for (ConsentItem item : items) {
+                if (SensorCollection.isAlreadyGranted(getApplicationContext(), item)) {
+                    consentedKeys.add(item.key);
+                }
             }
         }
         buildRows();
@@ -283,6 +299,23 @@ public class SensorConsentActivity extends AppCompatActivity {
             pendingAccessibilityKey = null;
         }
         if (items != null) buildRows();
+    }
+
+    @Override
+    protected void onSaveInstanceState(@NonNull Bundle outState) {
+        super.onSaveInstanceState(outState);
+        outState.putStringArrayList(STATE_CONSENTED_KEYS, new ArrayList<>(consentedKeys));
+        outState.putString(STATE_PENDING_ACCESSIBILITY_KEY, pendingAccessibilityKey);
+        outState.putBoolean(STATE_SHOWN_RESTRICTED_HELP, shownRestrictedSettingsHelp);
+        outState.putBoolean(STATE_SHOWN_ALWAYS_LOCATION_HELP, shownAlwaysLocationHelp);
+    }
+
+    private void restoreInstanceState(Bundle state) {
+        ArrayList<String> saved = state.getStringArrayList(STATE_CONSENTED_KEYS);
+        if (saved != null) consentedKeys.addAll(saved);
+        pendingAccessibilityKey = state.getString(STATE_PENDING_ACCESSIBILITY_KEY);
+        shownRestrictedSettingsHelp = state.getBoolean(STATE_SHOWN_RESTRICTED_HELP);
+        shownAlwaysLocationHelp = state.getBoolean(STATE_SHOWN_ALWAYS_LOCATION_HELP);
     }
 
     /**
