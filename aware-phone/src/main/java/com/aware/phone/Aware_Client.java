@@ -85,8 +85,10 @@ public class Aware_Client extends Aware_Activity implements SharedPreferences.On
             listSensorType.put(sensors.get(i).getType(), true);
         }
 
-        // Core sync framework (account creation + SyncAdapters)
-        REQUIRED_PERMISSIONS.add(Manifest.permission.GET_ACCOUNTS);
+        // Core sync framework (account creation + SyncAdapters). GET_ACCOUNTS is only
+        // needed below API 26 -- see the matching comment in ui/Aware_Client.java.
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.O)
+            REQUIRED_PERMISSIONS.add(Manifest.permission.GET_ACCOUNTS);
         REQUIRED_PERMISSIONS.add(Manifest.permission.WRITE_SYNC_SETTINGS);
         REQUIRED_PERMISSIONS.add(Manifest.permission.READ_SYNC_SETTINGS);
         REQUIRED_PERMISSIONS.add(Manifest.permission.READ_SYNC_STATS);

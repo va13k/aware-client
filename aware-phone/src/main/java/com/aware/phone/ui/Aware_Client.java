@@ -290,8 +290,13 @@ public class Aware_Client extends Aware_Activity {
         // Only permissions the AWARE core itself needs to start are requested up front.
         // Sensor-specific permissions (location, phone state, bluetooth scanning, etc.) are requested on demand by each sensor's Service (see Aware_Sensor.onStartCommand)
 
-        // Core sync framework (account creation + SyncAdapters)
-        REQUIRED_PERMISSIONS.add(Manifest.permission.GET_ACCOUNTS);
+        // Core sync framework (account creation + SyncAdapters). GET_ACCOUNTS is only
+        // needed below API 26: from Android 8.0 onward, Account Visibility lets an app
+        // see/manage an account it created itself (ours, via Aware_Accounts' own
+        // AbstractAccountAuthenticator) without this permission -- requesting it anyway
+        // is what put a Contacts-labelled prompt in front of participants for no reason.
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.O)
+            REQUIRED_PERMISSIONS.add(Manifest.permission.GET_ACCOUNTS);
         REQUIRED_PERMISSIONS.add(Manifest.permission.WRITE_SYNC_SETTINGS);
         REQUIRED_PERMISSIONS.add(Manifest.permission.READ_SYNC_SETTINGS);
         REQUIRED_PERMISSIONS.add(Manifest.permission.READ_SYNC_STATS);
@@ -323,9 +328,13 @@ public class Aware_Client extends Aware_Activity {
         awarePackages.addDataScheme("package");
         registerReceiver(packageMonitor, awarePackages);
 
-        Intent whitelisting = new Intent(Settings.ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS);
-        whitelisting.setData(Uri.parse("package:" + getPackageName()));
-        startActivity(whitelisting);
+        PowerManager powerManager = (PowerManager) getSystemService(Context.POWER_SERVICE);
+        if (Build.VERSION.SDK_INT <= Build.VERSION_CODES.LOLLIPOP_MR1
+                || !powerManager.isIgnoringBatteryOptimizations(getPackageName())) {
+            Intent whitelisting = new Intent(Settings.ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS);
+            whitelisting.setData(Uri.parse("package:" + getPackageName()));
+            startActivity(whitelisting);
+        }
 
         // Register the broadcast receiver
         registerReceiver(screenshotServiceStoppedReceiver, new IntentFilter(ScreenShot.ACTION_SCREENSHOT_SERVICE_STOPPED));
