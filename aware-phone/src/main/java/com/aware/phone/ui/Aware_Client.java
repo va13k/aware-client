@@ -871,10 +871,24 @@ public class Aware_Client extends Aware_Activity {
 
 private AlertDialog accessibilityDialog;
 
+// Whether each prompt has already been shown this session (this Activity's lifetime), so neither
+// is re-shown on every subsequent onResume once the participant has dismissed it.
+private boolean accessibilityPromptedThisSession = false;
+private boolean locationServicesPromptedThisSession = false;
+
 private void enableAccessibilityService() {
+    enableAccessibilityService(null);
+}
+
+/**
+ * @param onResolved run when the dialog is dismissed, whichever button the participant chose;
+ *                   pass null for no follow-up action.
+ */
+private void enableAccessibilityService(final Runnable onResolved) {
     if (accessibilityDialog != null && accessibilityDialog.isShowing()) {
         return; // already prompting; don't stack dialogs on repeated onResume
     }
+    accessibilityPromptedThisSession = true;
     final ComponentName service = new ComponentName(this, Applications.class);
 
     accessibilityDialog = new AlertDialog.Builder(this)
@@ -906,6 +920,12 @@ private void enableAccessibilityService() {
         })
         .setNegativeButton("Not now", null)
         .setCancelable(false)
+        .setOnDismissListener(new DialogInterface.OnDismissListener() {
+            @Override
+            public void onDismiss(DialogInterface dialog) {
+                if (onResolved != null) onResolved.run();
+            }
+        })
         .show();
     }
 
@@ -920,6 +940,7 @@ private void enableAccessibilityService() {
         if (locationServicesDialog != null && locationServicesDialog.isShowing()) {
             return; // already prompting; don't stack dialogs on repeated onResume
         }
+        locationServicesPromptedThisSession = true;
         locationServicesDialog = new AlertDialog.Builder(this)
             .setTitle("Enable Location services")
             .setMessage("This study collects WiFi data, which requires Location services to be turned on for the whole phone (Android requires this even though AWARE doesn't use your location for WiFi scanning). On the next screen, turn Location ON.")
@@ -939,6 +960,42 @@ private void enableAccessibilityService() {
             .setNegativeButton("Not now", null)
             .setCancelable(false)
             .show();
+    }
+
+    /**
+     * Prompts for the accessibility service and the OS-level Location toggle the joined study needs,
+     * one dialog at a time. When both are needed the accessibility prompt is shown first and the
+     * Location prompt follows only once it is dismissed, so the two non-cancelable dialogs are never
+     * shown together. Each prompt is shown at most once per session.
+     */
+    private void promptForRequiredServices() {
+        if (Aware.is_watch(this) || !Aware.isStudy(this)) return;
+
+        boolean needsAccessibility = studyNeedsAccessibility()
+                && !isAccessibilityServiceEnabled(this, Applications.class);
+
+        if (needsAccessibility && !accessibilityPromptedThisSession) {
+            enableAccessibilityService(new Runnable() {
+                @Override
+                public void run() {
+                    promptForLocationServicesIfNeeded();
+                }
+            });
+        } else if (accessibilityDialog == null || !accessibilityDialog.isShowing()) {
+            promptForLocationServicesIfNeeded();
+        }
+    }
+
+    /**
+     * Shows the Location-services prompt when the joined study needs WiFi, the OS Location toggle is
+     * off, and it hasn't already been shown this session.
+     */
+    private void promptForLocationServicesIfNeeded() {
+        if (Aware.is_watch(this) || !Aware.isStudy(this)) return;
+        if (locationServicesPromptedThisSession) return;
+        if (studyNeedsWifi() && !SensorCollection.isLocationServicesEnabled(this)) {
+            enableLocationServices();
+        }
     }
 
     /**
@@ -1425,23 +1482,10 @@ private void enableAccessibilityService() {
                 e.printStackTrace();
             }
 
-            // Prompt for the accessibility service only when the joined study actually uses an
-            // accessibility-backed sensor and the service is currently off. Shown as an in-app
-            // dialog (no tray notification) so the request is contextual and actionable.
-            if (!Aware.is_watch(this)
-                    && Aware.isStudy(this)
-                    && studyNeedsAccessibility()
-                    && !isAccessibilityServiceEnabled(this, Applications.class)) {
-                enableAccessibilityService();
-            }
-
-            // Same contextual prompt pattern, for WiFi's OS-level Location-toggle requirement.
-            if (!Aware.is_watch(this)
-                    && Aware.isStudy(this)
-                    && studyNeedsWifi()
-                    && !SensorCollection.isLocationServicesEnabled(this)) {
-                enableLocationServices();
-            }
+            // Prompt for the accessibility service and the OS-level Location toggle the joined study
+            // needs. Shown as in-app dialogs (no tray notification) so the request is contextual and
+            // actionable, one at a time and at most once per session — see the helper below.
+            promptForRequiredServices();
 
             //Check if AWARE is allowed to run on Doze
             //Aware.isBatteryOptimizationIgnored(this, getPackageName());
