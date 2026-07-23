@@ -18,6 +18,7 @@ import com.aware.Applications;
 import com.aware.Aware;
 import com.aware.Aware_Preferences;
 import com.aware.utils.SensorAvailability;
+import com.aware.utils.SensorFreshness;
 
 import org.json.JSONArray;
 import org.json.JSONObject;
@@ -42,18 +43,21 @@ public final class SensorCollection {
 
     private SensorCollection() {}
 
-    /** A sensor counts as "collecting" if its provider has a row within this window. */
-    private static final long RECENT_WINDOW_MS = 30 * 60 * 1000L; // 30 minutes
-
     /** Result of a collection check for one sensor. */
     public static final class Status {
         public final boolean collecting;
+        public final boolean waitingForEvent;
         public final long lastDataMs;  // 0 = never any data
         public final String reason;    // short human-readable status
         public final String fixHint;   // actionable hint, or null
 
         Status(boolean collecting, long lastDataMs, String reason, String fixHint) {
+            this(collecting, false, lastDataMs, reason, fixHint);
+        }
+
+        Status(boolean collecting, boolean waitingForEvent, long lastDataMs, String reason, String fixHint) {
             this.collecting = collecting;
+            this.waitingForEvent = waitingForEvent;
             this.lastDataMs = lastDataMs;
             this.reason = reason;
             this.fixHint = fixHint;
@@ -85,6 +89,20 @@ public final class SensorCollection {
 
     private static final String[] NONE = new String[0];
     private static final Map<String, Def> REGISTRY = new HashMap<>();
+    private static final Map<String, String[]> STATUS_SETTINGS = new HashMap<>();
+    private static final Map<String, SampleDef> SAMPLED = new HashMap<>();
+
+    private static final class SampleDef {
+        final String frequencySetting;
+        final long defaultValue;
+        final SensorFreshness.Unit unit;
+
+        SampleDef(String frequencySetting, long defaultValue, SensorFreshness.Unit unit) {
+            this.frequencySetting = frequencySetting;
+            this.defaultValue = defaultValue;
+            this.unit = unit;
+        }
+    }
 
     static {
         REGISTRY.put("accelerometer", new Def(".provider.accelerometer", "sensor_accelerometer", Sensor.TYPE_ACCELEROMETER, NONE, false));
@@ -118,11 +136,100 @@ public final class SensorCollection {
         // Accessibility-backed sensors
         REGISTRY.put("applications", new Def(".provider.applications", "applications_foreground", -1, NONE, true));
         REGISTRY.put("screenshot", new Def(".provider.screenshot", "screenshot", -1, NONE, true));
+
+        status("accelerometer", Aware_Preferences.STATUS_ACCELEROMETER);
+        status("linear_accelerometer", Aware_Preferences.STATUS_LINEAR_ACCELEROMETER);
+        status("significant_motion", Aware_Preferences.STATUS_SIGNIFICANT_MOTION);
+        status("barometer", Aware_Preferences.STATUS_BAROMETER);
+        status("gravity", Aware_Preferences.STATUS_GRAVITY);
+        status("gyroscope", Aware_Preferences.STATUS_GYROSCOPE);
+        status("light", Aware_Preferences.STATUS_LIGHT);
+        status("magnetometer", Aware_Preferences.STATUS_MAGNETOMETER);
+        status("proximity", Aware_Preferences.STATUS_PROXIMITY);
+        status("rotation", Aware_Preferences.STATUS_ROTATION);
+        status("temperature", Aware_Preferences.STATUS_TEMPERATURE);
+        status("battery", Aware_Preferences.STATUS_BATTERY);
+        status("screen", Aware_Preferences.STATUS_SCREEN);
+        status("network", Aware_Preferences.STATUS_NETWORK_EVENTS, Aware_Preferences.STATUS_NETWORK_TRAFFIC);
+        status("processor", Aware_Preferences.STATUS_PROCESSOR);
+        status("timezone", Aware_Preferences.STATUS_TIMEZONE);
+        status("esm", Aware_Preferences.STATUS_ESM);
+        status("locations", Aware_Preferences.STATUS_LOCATION_GPS,
+                Aware_Preferences.STATUS_LOCATION_NETWORK, Aware_Preferences.STATUS_LOCATION_PASSIVE);
+        status("wifi", Aware_Preferences.STATUS_WIFI);
+        status("bluetooth", Aware_Preferences.STATUS_BLUETOOTH);
+        status("communication", Aware_Preferences.STATUS_COMMUNICATION_EVENTS,
+                Aware_Preferences.STATUS_CALLS, Aware_Preferences.STATUS_MESSAGES);
+        status("telephony", Aware_Preferences.STATUS_TELEPHONY);
+        status("applications", Aware_Preferences.STATUS_APPLICATIONS,
+                Aware_Preferences.STATUS_INSTALLATIONS, Aware_Preferences.STATUS_NOTIFICATIONS,
+                Aware_Preferences.STATUS_CRASHES, Aware_Preferences.STATUS_KEYBOARD,
+                Aware_Preferences.STATUS_SCREENTEXT);
+        status("screenshot", Aware_Preferences.STATUS_SCREENSHOT);
+
+        sampled("accelerometer", Aware_Preferences.FREQUENCY_ACCELEROMETER, 200000, SensorFreshness.Unit.MICROSECONDS);
+        sampled("linear_accelerometer", Aware_Preferences.FREQUENCY_LINEAR_ACCELEROMETER, 200000, SensorFreshness.Unit.MICROSECONDS);
+        sampled("barometer", Aware_Preferences.FREQUENCY_BAROMETER, 200000, SensorFreshness.Unit.MICROSECONDS);
+        sampled("gravity", Aware_Preferences.FREQUENCY_GRAVITY, 200000, SensorFreshness.Unit.MICROSECONDS);
+        sampled("gyroscope", Aware_Preferences.FREQUENCY_GYROSCOPE, 200000, SensorFreshness.Unit.MICROSECONDS);
+        sampled("light", Aware_Preferences.FREQUENCY_LIGHT, 200000, SensorFreshness.Unit.MICROSECONDS);
+        sampled("magnetometer", Aware_Preferences.FREQUENCY_MAGNETOMETER, 200000, SensorFreshness.Unit.MICROSECONDS);
+        sampled("proximity", Aware_Preferences.FREQUENCY_PROXIMITY, 200000, SensorFreshness.Unit.MICROSECONDS);
+        sampled("rotation", Aware_Preferences.FREQUENCY_ROTATION, 200000, SensorFreshness.Unit.MICROSECONDS);
+        sampled("temperature", Aware_Preferences.FREQUENCY_TEMPERATURE, 200000, SensorFreshness.Unit.MICROSECONDS);
+        sampled("bluetooth", Aware_Preferences.FREQUENCY_BLUETOOTH, 60, SensorFreshness.Unit.SECONDS);
+        sampled("processor", Aware_Preferences.FREQUENCY_PROCESSOR, 10, SensorFreshness.Unit.SECONDS);
+        sampled("wifi", Aware_Preferences.FREQUENCY_WIFI, 60, SensorFreshness.Unit.SECONDS);
+        sampled("screenshot", Aware_Preferences.CAPTURE_TIME_INTERVAL, 60000, SensorFreshness.Unit.MILLISECONDS);
+    }
+
+    private static void status(String category, String... settings) {
+        STATUS_SETTINGS.put(category, settings);
+    }
+
+    private static void sampled(
+            String category, String frequencySetting, long defaultValue, SensorFreshness.Unit unit) {
+        SAMPLED.put(category, new SampleDef(frequencySetting, defaultValue, unit));
     }
 
     /** True if the given preference key is a known sensor category. */
     public static boolean isSensor(String categoryKey) {
         return REGISTRY.containsKey(categoryKey);
+    }
+
+    // --- Status text (pure; shared by the locked-mode status dialog and the editable-mode status row) ---
+
+    /** The one-line collecting / not-collecting headline. */
+    public static String statusHeadline(boolean collecting) {
+        return collecting ? "●  Collecting data" : "○  Not collecting";
+    }
+
+    public static String statusHeadline(Status status) {
+        return status.waitingForEvent ? "●  Enabled — waiting for an event"
+                : statusHeadline(status.collecting);
+    }
+
+    /**
+     * The detail block: why, last data, and what to do. {@code lastData} is the pre-formatted relative
+     * time (or "never"), passed in so this stays free of Android time formatting; {@code fixHint} may
+     * be null.
+     */
+    public static String statusDetail(String reason, CharSequence lastData, String fixHint) {
+        StringBuilder msg = new StringBuilder();
+        msg.append(reason);
+        msg.append("\n\nLast data: ").append(lastData);
+        if (fixHint != null) msg.append("\n\nWhat to do: ").append(fixHint);
+        return msg.toString();
+    }
+
+    /** Full multi-line status text (headline + detail), as shown in the sensor status dialog. */
+    public static String statusSummary(boolean collecting, String reason, CharSequence lastData, String fixHint) {
+        return statusHeadline(collecting) + "\n\n" + statusDetail(reason, lastData, fixHint);
+    }
+
+    public static String statusSummary(Status status, CharSequence lastData) {
+        return statusHeadline(status) + "\n\n"
+                + statusDetail(status.reason, lastData, status.fixHint);
     }
 
     /**
@@ -144,23 +251,18 @@ public final class SensorCollection {
         }
 
         long lastData = latestTimestamp(context, def);
-        boolean recent = lastData > 0 && (System.currentTimeMillis() - lastData) <= RECENT_WINDOW_MS;
-        if (recent) {
-            return new Status(
-                true,
-                lastData,
-                "Collecting data",
-                null
-            );
-        }
 
-        // Not collecting — find the most likely reason.
-        if (def.hardwareType != -1 && !hasHardware(context, def.hardwareType)) {
+        // Resolve permanent/permission blockers before freshness. A stale row from before a setting
+        // or permission change must not make a currently blocked sensor look healthy.
+        if (!isHardwareAvailable(context, categoryKey)) {
             return new Status(
                 false,
                 lastData,
                 "This device has no " + prettyName(categoryKey) + " sensor",
                 null);
+        }
+        if (!isCategoryEnabled(context, categoryKey)) {
+            return new Status(false, lastData, "Sensor is disabled", "Turn on Activate to collect data");
         }
         if (def.needsAccessibility && !accessibilityEnabled) {
             return new Status(
@@ -188,20 +290,76 @@ public final class SensorCollection {
                 "Grant the " + p + " permission in app settings"
             );
         }
+
+        long freshnessWindow = freshnessWindowMs(context, categoryKey);
+        if (freshnessWindow < 0) {
+            return new Status(
+                    true,
+                    true,
+                    lastData,
+                    "This sensor records data when an event occurs",
+                    null);
+        }
+
+        if (SensorFreshness.isFresh(System.currentTimeMillis(), lastData, freshnessWindow)) {
+            return new Status(true, lastData, "Collecting data", null);
+        }
         if (lastData == 0) {
             return new Status(
                 false,
                 0,
-                "No data collected yet",
-                "Data may take a moment to appear after joining"
+                "Waiting for the first sample",
+                "Expected within " + formatDuration(freshnessWindow)
             );
         }
         return new Status(
             false,
             lastData,
-            "No recent data",
-            null
+            "Data is delayed",
+            "Expected at least one sample every " + formatDuration(freshnessWindow)
         );
+    }
+
+    private static boolean isCategoryEnabled(Context context, String categoryKey) {
+        String[] settings = STATUS_SETTINGS.get(categoryKey);
+        if (settings == null) return true;
+        for (String setting : settings) {
+            if ("true".equals(Aware.getSetting(context, setting))) return true;
+        }
+        return false;
+    }
+
+    /**
+     * Returns the recency window for sampled categories, or -1 for event-driven categories.
+     * Location shares one provider table, so use the shortest enabled GPS/network interval.
+     */
+    private static long freshnessWindowMs(Context context, String categoryKey) {
+        if ("locations".equals(categoryKey)) {
+            long window = Long.MAX_VALUE;
+            if ("true".equals(Aware.getSetting(context, Aware_Preferences.STATUS_LOCATION_GPS))) {
+                window = Math.min(window, SensorFreshness.windowMs(
+                        Aware.getSetting(context, Aware_Preferences.FREQUENCY_LOCATION_GPS),
+                        180, SensorFreshness.Unit.SECONDS));
+            }
+            if ("true".equals(Aware.getSetting(context, Aware_Preferences.STATUS_LOCATION_NETWORK))) {
+                window = Math.min(window, SensorFreshness.windowMs(
+                        Aware.getSetting(context, Aware_Preferences.FREQUENCY_LOCATION_NETWORK),
+                        300, SensorFreshness.Unit.SECONDS));
+            }
+            return window == Long.MAX_VALUE ? -1 : window;
+        }
+
+        SampleDef sample = SAMPLED.get(categoryKey);
+        if (sample == null) return -1;
+        return SensorFreshness.windowMs(
+                Aware.getSetting(context, sample.frequencySetting), sample.defaultValue, sample.unit);
+    }
+
+    private static String formatDuration(long durationMs) {
+        long minutes = Math.max(1, durationMs / (60L * 1000L));
+        if (minutes < 60) return minutes + (minutes == 1 ? " minute" : " minutes");
+        long hours = minutes / 60;
+        return hours + (hours == 1 ? " hour" : " hours");
     }
 
     private static long latestTimestamp(Context context, Def def) {
@@ -228,6 +386,15 @@ public final class SensorCollection {
     // status check can't drift apart on what "this device has no <sensor>" means.
     private static boolean hasHardware(Context context, int sensorType) {
         return SensorAvailability.hasHardware(context, sensorType);
+    }
+
+    /**
+     * Whether this category can exist on the current device. Categories that do not depend on a
+     * physical Android sensor are available by definition.
+     */
+    public static boolean isHardwareAvailable(Context context, String categoryKey) {
+        Def def = REGISTRY.get(categoryKey);
+        return def == null || def.hardwareType == -1 || hasHardware(context, def.hardwareType);
     }
 
     /** The OS-level Location toggle (Settings › Location) — distinct from the location permission. */
@@ -429,6 +596,21 @@ public final class SensorCollection {
         String consentKey = "applications".equals(categoryKey) ? "application" : categoryKey;
         for (ConsentItem item : CONSENTS) {
             if (item.key.equals(consentKey)) return item;
+        }
+        return null;
+    }
+
+    /**
+     * The consent item whose status settings include this exact setting key, or null if the setting
+     * needs no participant grant. Lets a directly-toggled sensor checkbox (e.g. status_applications,
+     * status_keyboard) find the accessibility / permission grant it still requires.
+     */
+    public static ConsentItem consentItemForSetting(String statusSetting) {
+        if (statusSetting == null) return null;
+        for (ConsentItem item : CONSENTS) {
+            for (String setting : item.statusSettings) {
+                if (setting.equals(statusSetting)) return item;
+            }
         }
         return null;
     }
