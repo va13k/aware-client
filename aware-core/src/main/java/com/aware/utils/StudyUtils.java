@@ -448,8 +448,8 @@ public class StudyUtils extends IntentService {
             }
         }
 
-        // Log why any study-enabled sensor can't actually collect on this device (no hardware,
-        // missing permission, accessibility/location services off) into aware_log, which already
+        // Log the health of every study-enabled sensor (including unavailable/blocked/disabled,
+        // frequency-based delayed data, and event-driven waiting) into aware_log, which already
         // syncs to the researcher's database — covers both the join flow and every config update,
         // since this is the one place both paths funnel through.
         try {
