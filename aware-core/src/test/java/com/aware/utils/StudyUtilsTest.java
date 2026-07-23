@@ -33,10 +33,72 @@ public class StudyUtilsTest {
     }
 
     private static JSONObject sensor(String setting, boolean value) throws JSONException {
+        return sensorValue(setting, value);
+    }
+
+    private static JSONObject sensorValue(String setting, Object value) throws JSONException {
         JSONObject sensor = new JSONObject();
         sensor.put("setting", setting);
         sensor.put("value", value);
         return sensor;
+    }
+
+    @Test
+    public void editableSync_skipsAutomaticUpdates() {
+        assertTrue(StudyUtils.shouldSkipAutomaticConfigSync(true, false));
+    }
+
+    @Test
+    public void editableSync_manualCheckAppliesServerUpdate() {
+        assertFalse(StudyUtils.shouldSkipAutomaticConfigSync(true, true));
+    }
+
+    @Test
+    public void lockedSync_keepsAutomaticUpdates() {
+        assertFalse(StudyUtils.shouldSkipAutomaticConfigSync(false, false));
+    }
+
+    @Test
+    public void editableManualUpdate_requiresPreviewBeforeApplying() {
+        assertTrue(StudyUtils.shouldPreviewManualConfigUpdate(
+                true, true, false, false));
+    }
+
+    @Test
+    public void editableManualUpdate_matchingApprovalCanApply() {
+        assertFalse(StudyUtils.shouldPreviewManualConfigUpdate(
+                true, true, false, true));
+    }
+
+    @Test
+    public void lockedManualUpdateDoesNotRequireParticipantApproval() {
+        assertFalse(StudyUtils.shouldPreviewManualConfigUpdate(
+                false, true, false, false));
+    }
+
+    @Test
+    public void unchangedManualUpdateNeedsNoApproval() {
+        assertFalse(StudyUtils.shouldPreviewManualConfigUpdate(
+                true, true, true, false));
+    }
+
+    @Test
+    public void editableSettingUpdate_preservesTypesAndAddsNewSettings() throws JSONException {
+        JSONObject config = configWithSensors(
+                sensor("status_accelerometer", true),
+                sensorValue("frequency_accelerometer", 20000));
+
+        JSONObject changedStatus =
+                StudyUtils.withSensorSetting(config, "status_accelerometer", "false");
+        JSONObject changedFrequency =
+                StudyUtils.withSensorSetting(changedStatus, "frequency_accelerometer", "400000");
+        JSONObject added =
+                StudyUtils.withSensorSetting(changedFrequency, "frequency_light", "2.5");
+
+        JSONArray sensors = added.getJSONArray("sensors");
+        assertFalse(sensors.getJSONObject(0).getBoolean("value"));
+        assertEquals(400000, sensors.getJSONObject(1).getInt("value"));
+        assertEquals(2.5, sensors.getJSONObject(2).getDouble("value"), 0.0);
     }
 
     @Test
