@@ -75,4 +75,30 @@ public class SensorDiagnosticsTest {
         String reason = SensorDiagnostics.reasonGivenState("status_battery", true, null, false, false);
         assertTrue(reason.isEmpty());
     }
+
+    @Test
+    public void sampledSensor_reportsCollectingOnlyInsideFrequencyWindow() {
+        assertEquals("collecting", SensorDiagnostics.stateGiven(
+                "", true, false, 1_000_000L, 880_000L, 120_000L));
+        assertEquals("delayed", SensorDiagnostics.stateGiven(
+                "", true, false, 1_000_001L, 880_000L, 120_000L));
+    }
+
+    @Test
+    public void eventDrivenSensor_waitsWithoutBeingDelayed() {
+        assertEquals("waiting_for_event", SensorDiagnostics.stateGiven(
+                "", true, true, 1_000_000L, 0L, 0L));
+    }
+
+    @Test
+    public void unavailableAndDisabledHaveExplicitStates() {
+        assertEquals("unavailable", SensorDiagnostics.stateGiven(
+                "No such sensor hardware on this device", true, false,
+                1_000_000L, 0L, 120_000L));
+        assertEquals("disabled", SensorDiagnostics.stateGiven(
+                "", false, false, 1_000_000L, 999_999L, 120_000L));
+        assertEquals("disabled", SensorDiagnostics.stateGiven(
+                "Missing permission: ACCESS_FINE_LOCATION", false, false,
+                1_000_000L, 999_999L, 120_000L));
+    }
 }
