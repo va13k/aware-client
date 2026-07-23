@@ -40,18 +40,15 @@ public class Settings extends AppCompatPreferenceActivity implements OnSharedPre
      */
     public static final String ENABLE_CONFIG_UPDATE = "enable_config_update";
 
-    private static CheckBoxPreference active;
-    private static ListPreference frequency;
-    private static EditTextPreference listen, silence;
+    private CheckBoxPreference active;
+    private ListPreference frequency;
+    private EditTextPreference listen, silence;
     private static final String TAG = "ambient_noise";
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
         addPreferencesFromResource(R.xml.preferences_ambient_noise);
-
-        SharedPreferences prefs = PreferenceManager.getDefaultSharedPreferences(this);
-        prefs.registerOnSharedPreferenceChangeListener(this);
 
         if (Aware.getSetting(getApplicationContext(), ENABLE_CONFIG_UPDATE).length() == 0) {
             Aware.setSetting(getApplicationContext(), ENABLE_CONFIG_UPDATE, true);
