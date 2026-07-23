@@ -155,11 +155,18 @@ public class Aware extends Service {
      */
     public static final String ACTION_AWARE_SYNC_CONFIG = "ACTION_AWARE_SYNC_CONFIG";
     public static final String SYNC_CONFIG_EXTRA_TOAST = "SYNC_CONFIG_EXTRA_TOAST";
+    /** True only for an explicit participant "Check for study updates" action. */
+    public static final String SYNC_CONFIG_EXTRA_MANUAL = "SYNC_CONFIG_EXTRA_MANUAL";
+    /** True after the participant approved the exact pending server configuration. */
+    public static final String SYNC_CONFIG_EXTRA_APPROVED = "SYNC_CONFIG_EXTRA_APPROVED";
     /**
      * Broadcast after a study config update has been applied, so an open UI can refresh
      * (e.g. rebuild the sensor list to reflect newly enabled/disabled sensors).
      */
     public static final String ACTION_AWARE_STUDY_CONFIG_UPDATED = "ACTION_AWARE_STUDY_CONFIG_UPDATED";
+    /** Broadcast when an editable-mode server configuration is awaiting participant approval. */
+    public static final String ACTION_AWARE_STUDY_CONFIG_UPDATE_AVAILABLE =
+            "ACTION_AWARE_STUDY_CONFIG_UPDATE_AVAILABLE";
     /** String ArrayList extras on {@link #ACTION_AWARE_STUDY_CONFIG_UPDATED}: sensors newly enabled / disabled. */
     public static final String EXTRA_SENSORS_ADDED = "sensors_added";
     public static final String EXTRA_SENSORS_REMOVED = "sensors_removed";
@@ -170,6 +177,8 @@ public class Aware extends Service {
      */
     public static final String EXTRA_CONFIG_UPDATE_ALLOWED_CHANGED = "config_update_allowed_changed";
     public static final String EXTRA_CONFIG_UPDATE_ALLOWED_NEW_VALUE = "config_update_allowed_new_value";
+    /** Whether a study update was applied by the participant's explicit manual check. */
+    public static final String EXTRA_CONFIG_UPDATE_MANUAL = "config_update_manual";
 
     /**
      * Notification ID for AWARE service as foreground (to handle Doze, Android O battery optimizations)
@@ -2541,10 +2550,12 @@ public class Aware extends Service {
             }
             if (intent.getAction().equals(Aware.ACTION_AWARE_SYNC_CONFIG) && isStudy(context)) {
                 final Boolean showToast = intent.getBooleanExtra(Aware.SYNC_CONFIG_EXTRA_TOAST, false);
+                final boolean manual = intent.getBooleanExtra(Aware.SYNC_CONFIG_EXTRA_MANUAL, false);
+                final boolean approved = intent.getBooleanExtra(Aware.SYNC_CONFIG_EXTRA_APPROVED, false);
                 syncConfigExecutor.execute(new Runnable() {
                     @Override
                     public void run() {
-                        StudyUtils.syncStudyConfig(context, showToast);
+                        StudyUtils.syncStudyConfig(context, showToast, manual, approved);
                     }
                 });
             }

@@ -53,6 +53,7 @@ import com.aware.Aware_Preferences;
 import com.aware.Notes;
 import com.aware.phone.R;
 import com.aware.phone.ui.dialogs.JoinStudyDialog;
+import com.aware.phone.ui.dialogs.QuitStudyDialog;
 import com.aware.phone.ui.prefs.SensorCollection;
 import com.aware.phone.ui.prefs.StudyCard;
 import com.aware.phone.ui.prefs.TakeNotesPref;
@@ -60,6 +61,7 @@ import com.aware.phone.utils.AwareUtil;
 import com.aware.providers.Aware_Provider;
 import com.aware.ui.PermissionsHandler;
 import com.aware.utils.SensorAvailability;
+import com.aware.utils.StudyUtils;
 import com.aware.ScreenShot;
 
 import org.json.JSONArray;
@@ -142,20 +144,187 @@ public class Aware_Client extends Aware_Activity {
     private BroadcastReceiver studyConfigUpdatedReceiver = new BroadcastReceiver() {
         @Override
         public void onReceive(Context context, Intent intent) {
-            if (Aware.ACTION_AWARE_STUDY_CONFIG_UPDATED.equals(intent.getAction())) {
+            if (Aware.ACTION_AWARE_STUDY_CONFIG_UPDATE_AVAILABLE.equals(intent.getAction())) {
+                showStudyConfigUpdatePreview(
+                        intent.getStringArrayListExtra(Aware.EXTRA_SENSORS_ADDED),
+                        intent.getStringArrayListExtra(Aware.EXTRA_SENSORS_REMOVED),
+                        intent.getBooleanExtra(
+                                Aware.EXTRA_CONFIG_UPDATE_ALLOWED_CHANGED, false)
+                                ? intent.getBooleanExtra(
+                                        Aware.EXTRA_CONFIG_UPDATE_ALLOWED_NEW_VALUE, false)
+                                : null);
+            } else if (Aware.ACTION_AWARE_STUDY_CONFIG_UPDATED.equals(intent.getAction())) {
                 ArrayList<String> added = intent.getStringArrayListExtra(Aware.EXTRA_SENSORS_ADDED);
                 ArrayList<String> removed = intent.getStringArrayListExtra(Aware.EXTRA_SENSORS_REMOVED);
                 Boolean configUpdateAllowedNewValue = intent.getBooleanExtra(Aware.EXTRA_CONFIG_UPDATE_ALLOWED_CHANGED, false)
                         ? intent.getBooleanExtra(Aware.EXTRA_CONFIG_UPDATE_ALLOWED_NEW_VALUE, false) : null;
+                boolean manual = intent.getBooleanExtra(Aware.EXTRA_CONFIG_UPDATE_MANUAL, false);
                 // Don't clear the pending notice here: this receiver stays registered (and keeps
                 // receiving broadcasts) even while the Activity is merely stopped/backgrounded, not
                 // just while visible — so a dialog "shown" here may never actually be seen. Only
                 // notifyStudyConfigUpdated()'s own dismiss handler, which only fires once the
                 // participant has actually interacted with a visible dialog, clears it.
-                notifyStudyConfigUpdated(added, removed, configUpdateAllowedNewValue);
+                notifyStudyConfigUpdated(added, removed, configUpdateAllowedNewValue, manual);
             }
         }
     };
+
+    private boolean studyConfigPreviewOpen = false;
+
+    private void showStudyConfigUpdatePreview(
+            ArrayList<String> added,
+            ArrayList<String> removed,
+            Boolean configUpdateAllowedNewValue) {
+        if (studyConfigPreviewOpen || isFinishing()) return;
+        studyConfigPreviewOpen = true;
+        dismissOpenSubPrefDialogIfAny();
+
+        StringBuilder message = new StringBuilder(
+                "The server has a different sensor configuration.\n"
+                        + "Review the changes before replacing your current settings.");
+        if (added != null && !added.isEmpty()) {
+            message.append("\n\nServer sensors to activate:\n• ")
+                    .append(TextUtils.join("\n• ", added));
+        }
+        if (removed != null && !removed.isEmpty()) {
+            message.append("\n\nYour active sensors to deactivate:\n• ")
+                    .append(TextUtils.join("\n• ", removed));
+        }
+        if ((added == null || added.isEmpty()) && (removed == null || removed.isEmpty())) {
+            message.append("\n\nThe update changes sensor frequencies or other study settings.");
+        }
+        if (configUpdateAllowedNewValue != null && !configUpdateAllowedNewValue) {
+            message.append("\n\nThis update also disables editable mode.");
+        }
+        message.append("\n\nAgreeing replaces your local sensor configuration. "
+                + "If new sensors need permission, you will review consent next.");
+
+        new AlertDialog.Builder(this)
+                .setTitle("Study update available")
+                .setMessage(message.toString())
+                .setPositiveButton("Agree and update", new DialogInterface.OnClickListener() {
+                    @Override
+                    public void onClick(DialogInterface dialog, int which) {
+                        Intent approved = new Intent(Aware.ACTION_AWARE_SYNC_CONFIG);
+                        approved.putExtra(Aware.SYNC_CONFIG_EXTRA_TOAST, true);
+                        approved.putExtra(Aware.SYNC_CONFIG_EXTRA_MANUAL, true);
+                        approved.putExtra(Aware.SYNC_CONFIG_EXTRA_APPROVED, true);
+                        sendBroadcast(approved);
+                    }
+                })
+                .setNegativeButton("Keep my settings", new DialogInterface.OnClickListener() {
+                    @Override
+                    public void onClick(DialogInterface dialog, int which) {
+                        keepParticipantStudySettings();
+                    }
+                })
+                .setNeutralButton("Leave study", new DialogInterface.OnClickListener() {
+                    @Override
+                    public void onClick(DialogInterface dialog, int which) {
+                        Aware.setSetting(
+                                getApplicationContext(),
+                                Aware_Preferences.PENDING_STUDY_CONFIG_APPROVAL,
+                                "");
+                        new QuitStudyDialog(Aware_Client.this).showDialog();
+                    }
+                })
+                .setOnCancelListener(new DialogInterface.OnCancelListener() {
+                    @Override
+                    public void onCancel(DialogInterface dialog) {
+                        keepParticipantStudySettings();
+                    }
+                })
+                .setOnDismissListener(new DialogInterface.OnDismissListener() {
+                    @Override
+                    public void onDismiss(DialogInterface dialog) {
+                        studyConfigPreviewOpen = false;
+                    }
+                })
+                .show();
+    }
+
+    private void keepParticipantStudySettings() {
+        Aware.setSetting(
+                getApplicationContext(),
+                Aware_Preferences.PENDING_STUDY_CONFIG_APPROVAL,
+                "");
+        Aware.logStudyCompliance(
+                getApplicationContext(),
+                "participant declined server config update and kept local settings");
+        Toast.makeText(
+                getApplicationContext(),
+                "Your current sensor settings were kept.",
+                Toast.LENGTH_SHORT).show();
+    }
+
+    private void showPendingStudyConfigApprovalIfAny() {
+        if (!Aware.isStudy(getApplicationContext()) || isStudySettingsLocked()) return;
+        String pending = Aware.getSetting(
+                getApplicationContext(),
+                Aware_Preferences.PENDING_STUDY_CONFIG_APPROVAL);
+        if (pending == null || pending.trim().length() == 0) return;
+        try {
+            JSONObject local = Aware.getActiveStudyConfig(getApplicationContext());
+            JSONObject server = new JSONObject(pending);
+            Set<String> localSensors = activeSensorNames(local);
+            Set<String> serverSensors = activeSensorNames(server);
+
+            ArrayList<String> added = new ArrayList<>();
+            for (String sensor : serverSensors) {
+                if (!localSensors.contains(sensor)) added.add(sensor);
+            }
+            ArrayList<String> removed = new ArrayList<>();
+            for (String sensor : localSensors) {
+                if (!serverSensors.contains(sensor)) removed.add(sensor);
+            }
+            showStudyConfigUpdatePreview(
+                    added,
+                    removed,
+                    editableModeValueChanged(local, server));
+        } catch (JSONException e) {
+            Aware.setSetting(
+                    getApplicationContext(),
+                    Aware_Preferences.PENDING_STUDY_CONFIG_APPROVAL,
+                    "");
+        }
+    }
+
+    private static Set<String> activeSensorNames(JSONObject config) {
+        Set<String> active = new HashSet<>();
+        JSONArray sensors = config == null ? null : config.optJSONArray("sensors");
+        if (sensors == null) return active;
+        for (int i = 0; i < sensors.length(); i++) {
+            JSONObject sensor = sensors.optJSONObject(i);
+            if (sensor == null) continue;
+            String setting = sensor.optString("setting", "");
+            if (setting.startsWith("status_") && sensor.optBoolean("value", false)) {
+                active.add(setting.substring("status_".length()).replace('_', ' '));
+            }
+        }
+        return active;
+    }
+
+    private static Boolean editableModeValueChanged(
+            JSONObject localConfig, JSONObject serverConfig) {
+        Boolean local = sensorBooleanValue(
+                localConfig, Aware_Preferences.ENABLE_CONFIG_UPDATE);
+        Boolean server = sensorBooleanValue(
+                serverConfig, Aware_Preferences.ENABLE_CONFIG_UPDATE);
+        return server == null || server.equals(local) ? null : server;
+    }
+
+    private static Boolean sensorBooleanValue(JSONObject config, String settingName) {
+        JSONArray sensors = config == null ? null : config.optJSONArray("sensors");
+        if (sensors == null) return null;
+        for (int i = 0; i < sensors.length(); i++) {
+            JSONObject sensor = sensors.optJSONObject(i);
+            if (sensor != null
+                    && settingName.equals(sensor.optString("setting", ""))) {
+                return sensor.optBoolean("value", false);
+            }
+        }
+        return null;
+    }
 
     /**
      * If a study config update was applied while no UI was around to receive the live broadcast
@@ -179,7 +348,9 @@ public class Aware_Client extends Aware_Activity {
             }
             Boolean configUpdateAllowedNewValue = notice.optBoolean("cfgChanged", false)
                     ? notice.optBoolean("cfgNewValue", false) : null;
-            notifyStudyConfigUpdated(added, removed, configUpdateAllowedNewValue);
+            notifyStudyConfigUpdated(
+                    added, removed, configUpdateAllowedNewValue,
+                    notice.optBoolean("manual", false));
         } catch (JSONException e) {
             e.printStackTrace();
             Aware.setSetting(getApplicationContext(), Aware_Preferences.PENDING_STUDY_UPDATE_NOTICE, "");
@@ -203,7 +374,8 @@ public class Aware_Client extends Aware_Activity {
      * to show and nothing worth refreshing.
      */
     private void notifyStudyConfigUpdated(ArrayList<String> added, ArrayList<String> removed,
-                                          Boolean configUpdateAllowedNewValue) {
+                                          Boolean configUpdateAllowedNewValue,
+                                          boolean manual) {
         boolean hasChanges = (added != null && !added.isEmpty()) || (removed != null && !removed.isEmpty())
                 || configUpdateAllowedNewValue != null;
         if (!hasChanges || isFinishing()) {
@@ -219,6 +391,31 @@ public class Aware_Client extends Aware_Activity {
         JSONArray activeConfigs = new JSONArray();
         if (activeConfig != null) activeConfigs.put(activeConfig);
         final boolean hasHeld = SensorCollection.hasHeldConsents(getApplicationContext(), activeConfigs);
+
+        // An explicit check is the participant's request to adopt the server configuration now.
+        // If that introduces sensors requiring consent, continue directly into the consent screen
+        // instead of making them acknowledge one dialog merely to open the next one.
+        if (manual && hasHeld) {
+            Aware.setSetting(
+                    getApplicationContext(), Aware_Preferences.PENDING_STUDY_UPDATE_NOTICE, "");
+            refreshSensorPreferencesForCurrentMode();
+            Toast.makeText(
+                    getApplicationContext(),
+                    "Study updated. Review the permissions required by its sensors.",
+                    Toast.LENGTH_LONG).show();
+            Intent consent = new Intent(getApplicationContext(), SensorConsentActivity.class);
+            consent.putExtra(SensorConsentActivity.EXTRA_UPDATE_MODE, true);
+            startActivity(consent);
+            return;
+        }
+        if (manual) {
+            // The participant already approved these exact changes in the preview dialog.
+            // Refresh the list without asking them to acknowledge the same update a second time.
+            Aware.setSetting(
+                    getApplicationContext(), Aware_Preferences.PENDING_STUDY_UPDATE_NOTICE, "");
+            refreshSensorPreferencesForCurrentMode();
+            return;
+        }
 
         StringBuilder msg = new StringBuilder("The study was updated by the researcher.\n");
         if (added != null && !added.isEmpty()) {
@@ -446,7 +643,10 @@ public class Aware_Client extends Aware_Activity {
         registerReceiver(screenshotServiceStoppedReceiver, new IntentFilter(ScreenShot.ACTION_SCREENSHOT_SERVICE_STOPPED));
         registerReceiver(screenshotStatusReceiver, new IntentFilter(ScreenShot.ACTION_SCREENSHOT_STATUS));
         registerReceiver(noteStatusReceiver, new IntentFilter(Notes.ACTION_NOTE_STATUS));
-        registerReceiver(studyConfigUpdatedReceiver, new IntentFilter(Aware.ACTION_AWARE_STUDY_CONFIG_UPDATED));
+        IntentFilter studyConfigUpdates =
+                new IntentFilter(Aware.ACTION_AWARE_STUDY_CONFIG_UPDATED);
+        studyConfigUpdates.addAction(Aware.ACTION_AWARE_STUDY_CONFIG_UPDATE_AVAILABLE);
+        registerReceiver(studyConfigUpdatedReceiver, studyConfigUpdates);
         checkAndStartScreenshotService();
         checkAndStartPlugin();
     }
@@ -789,6 +989,15 @@ public class Aware_Client extends Aware_Activity {
 
         Aware.setSetting(getApplicationContext(), key, value);
         Preference pref = findPreference(key);
+
+        // In editable study mode, the participant's sensor choices are the effective study
+        // configuration rather than temporary drift from the server JSON. Persist the typed value
+        // into the active study row and append a compliance event so the researcher sees the config
+        // that actually produced this device's uploaded data.
+        if (isPreferenceInsideSensorScreen(pref)) {
+            StudyUtils.persistEditableSensorSetting(getApplicationContext(), key, value);
+        }
+
         if (CheckBoxPreference.class.isInstance(pref)) {
             CheckBoxPreference check = (CheckBoxPreference) findPreference(key);
             check.setChecked(Aware.getSetting(getApplicationContext(), key).equals("true"));
@@ -826,6 +1035,17 @@ public class Aware_Client extends Aware_Activity {
         }
 
 
+    }
+
+    private boolean isPreferenceInsideSensorScreen(Preference preference) {
+        Preference current = preference;
+        while (current != null) {
+            PreferenceGroup parent = getPreferenceParent(current);
+            if (parent == null) return false;
+            if (SensorCollection.isSensor(parent.getKey())) return true;
+            current = parent;
+        }
+        return false;
     }
 
     private void handleScreenshotPreferenceChange(String key, String value) {
@@ -1586,9 +1806,9 @@ private void enableAccessibilityService(final Runnable onResolved) {
     protected void onResume() {
         super.onResume();
 
-        // Reconcile to the current study config every time the app is opened, so researcher changes
-        // show up without waiting for the periodic sync or requiring a rejoin.
-        if (Aware.isStudy(getApplicationContext())) {
+        // Locked studies keep reconciling on app open. Editable studies intentionally retain the
+        // participant's local configuration until they explicitly tap "Check for study updates".
+        if (Aware.isStudy(getApplicationContext()) && isStudySettingsLocked()) {
             long now = SystemClock.elapsedRealtime();
             if (now - lastSyncConfigBroadcastAtMs >= SYNC_CONFIG_DEBOUNCE_MS) {
                 lastSyncConfigBroadcastAtMs = now;
@@ -1596,8 +1816,12 @@ private void enableAccessibilityService(final Runnable onResolved) {
             }
         }
 
-        // Catch up on any study update that was applied while this Activity wasn't alive to
-        // receive the live broadcast (the sync runs on its own schedule regardless of the app).
+        // Restore an editable-mode update proposal if the Activity was stopped/recreated while the
+        // participant was deciding. Nothing is applied until they explicitly agree.
+        showPendingStudyConfigApprovalIfAny();
+
+        // Catch up on any already-applied study update that was received while this Activity wasn't
+        // alive to receive the live broadcast.
         showPendingStudyUpdateNoticeIfAny();
 
         permissions_ok = true;

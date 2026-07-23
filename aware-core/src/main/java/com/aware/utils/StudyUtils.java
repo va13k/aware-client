@@ -970,7 +970,35 @@ public class StudyUtils extends IntentService {
      * @param toast Whether to show toast messages
      */
     public static void syncStudyConfig(Context context, Boolean toast) {
+        syncStudyConfig(context, toast, false, false);
+    }
+
+    /**
+     * Synchronizes the study configuration with the server.
+     *
+     * @param manual true only when the participant explicitly tapped "Check for study updates"
+     */
+    public static void syncStudyConfig(Context context, Boolean toast, boolean manual) {
+        syncStudyConfig(context, toast, manual, false);
+    }
+
+    /**
+     * Synchronizes or previews the study configuration.
+     *
+     * @param approved true after the participant accepted the exact pending server configuration
+     */
+    public static void syncStudyConfig(
+            Context context, Boolean toast, boolean manual, boolean approved) {
         if (!Aware.isStudy(context)) return;
+        boolean editable = Boolean.parseBoolean(Aware.getSetting(
+                context, Aware_Preferences.ENABLE_CONFIG_UPDATE));
+        if (shouldSkipAutomaticConfigSync(editable, manual)) {
+            if (Aware.DEBUG) {
+                Aware.debug(context,
+                        "Skipping automatic study-config update while participant editing is enabled");
+            }
+            return;
+        }
 
         // Aware.getActiveStudy() instead of Aware.getStudy(context, webservice_server): the latter
         // does "WHERE study_url LIKE '<webservice_server>%'", which silently finds nothing (and
@@ -1000,7 +1028,30 @@ public class StudyUtils extends IntentService {
                     }
                     return;
                 }
-                if (jsonEquals(localConfig, newConfig)) {
+
+                boolean configsEqual = jsonEquals(localConfig, newConfig);
+                boolean approvalMatches = approved
+                        && pendingApprovalMatches(context, newConfig);
+                if (shouldPreviewManualConfigUpdate(
+                        editable, manual, configsEqual, approvalMatches)) {
+                    publishConfigUpdatePreview(context, localConfig, newConfig);
+                    if (toast) {
+                        new Handler(Looper.getMainLooper()).post(new Runnable() {
+                            @Override
+                            public void run() {
+                                Toast.makeText(
+                                        context,
+                                        "Study update available for review.",
+                                        Toast.LENGTH_SHORT).show();
+                            }
+                        });
+                    }
+                    return;
+                }
+
+                if (configsEqual) {
+                    Aware.setSetting(
+                            context, Aware_Preferences.PENDING_STUDY_CONFIG_APPROVAL, "");
                     // The server config hasn't changed, but that alone doesn't guarantee the
                     // device's live settings still match it — Aware.reset() and an interrupted
                     // apply can both leave aware_settings drifted while the stored config blob
@@ -1051,6 +1102,8 @@ public class StudyUtils extends IntentService {
                 // Real config change from the server — clear any stale drift bookkeeping, since
                 // the full re-apply below re-syncs every setting from scratch anyway.
                 Aware.setSetting(context, Aware_Preferences.LAST_DRIFT_SIGNATURE, "");
+                Aware.setSetting(
+                        context, Aware_Preferences.PENDING_STUDY_CONFIG_APPROVAL, "");
 
                 // Consent gate for mid-study changes (F2): a sensor the researcher newly enabled that
                 // needs a participant grant must NOT start collecting just because the config says so —
@@ -1085,6 +1138,7 @@ public class StudyUtils extends IntentService {
                             notice.put("cfgChanged", true);
                             notice.put("cfgNewValue", configUpdateAllowedNewValue);
                         }
+                        notice.put("manual", manual);
                         Aware.setSetting(context, Aware_Preferences.PENDING_STUDY_UPDATE_NOTICE, notice.toString());
                     } catch (JSONException e) {
                         e.printStackTrace();
@@ -1098,6 +1152,7 @@ public class StudyUtils extends IntentService {
                     configUpdated.putExtra(Aware.EXTRA_CONFIG_UPDATE_ALLOWED_CHANGED, true);
                     configUpdated.putExtra(Aware.EXTRA_CONFIG_UPDATE_ALLOWED_NEW_VALUE, configUpdateAllowedNewValue);
                 }
+                configUpdated.putExtra(Aware.EXTRA_CONFIG_UPDATE_MANUAL, manual);
                 context.sendBroadcast(configUpdated);
                 if (toast) {
                     new Handler(Looper.getMainLooper()).post(new Runnable() {
@@ -1131,6 +1186,174 @@ public class StudyUtils extends IntentService {
                 e.printStackTrace();
             } finally {
                 study.close();
+            }
+        }
+    }
+
+    static boolean shouldSkipAutomaticConfigSync(boolean editable, boolean manual) {
+        return editable && !manual;
+    }
+
+    static boolean shouldPreviewManualConfigUpdate(
+            boolean editable, boolean manual, boolean configsEqual, boolean approvalMatches) {
+        return editable && manual && !configsEqual && !approvalMatches;
+    }
+
+    private static boolean pendingApprovalMatches(Context context, JSONObject serverConfig) {
+        String pending = Aware.getSetting(
+                context, Aware_Preferences.PENDING_STUDY_CONFIG_APPROVAL);
+        if (pending == null || pending.trim().length() == 0) return false;
+        try {
+            return jsonEquals(new JSONObject(pending), serverConfig);
+        } catch (JSONException e) {
+            return false;
+        }
+    }
+
+    private static void publishConfigUpdatePreview(
+            Context context, JSONObject localConfig, JSONObject serverConfig) {
+        Aware.setSetting(
+                context,
+                Aware_Preferences.PENDING_STUDY_CONFIG_APPROVAL,
+                serverConfig.toString());
+
+        ArrayList<String> added = new ArrayList<>();
+        ArrayList<String> removed = new ArrayList<>();
+        diffActiveSensors(localConfig, serverConfig, added, removed);
+        Boolean configUpdateAllowedNewValue =
+                enableConfigUpdateChanged(localConfig, serverConfig);
+
+        Intent available = new Intent(Aware.ACTION_AWARE_STUDY_CONFIG_UPDATE_AVAILABLE);
+        available.putStringArrayListExtra(Aware.EXTRA_SENSORS_ADDED, added);
+        available.putStringArrayListExtra(Aware.EXTRA_SENSORS_REMOVED, removed);
+        if (configUpdateAllowedNewValue != null) {
+            available.putExtra(Aware.EXTRA_CONFIG_UPDATE_ALLOWED_CHANGED, true);
+            available.putExtra(
+                    Aware.EXTRA_CONFIG_UPDATE_ALLOWED_NEW_VALUE,
+                    configUpdateAllowedNewValue);
+        }
+        context.sendBroadcast(available);
+    }
+
+    /**
+     * Persists a participant's editable-mode sensor change into the active study config and emits
+     * a compliance row carrying that effective config. This makes the configuration received by
+     * the researcher match the settings that actually produced the uploaded sensor data.
+     */
+    public static boolean persistEditableSensorSetting(
+            Context context, String setting, String value) {
+        if (setting == null
+                || setting.length() == 0
+                || Aware_Preferences.ENABLE_CONFIG_UPDATE.equals(setting)
+                || !Aware.isStudy(context)
+                || !Boolean.parseBoolean(Aware.getSetting(
+                        context, Aware_Preferences.ENABLE_CONFIG_UPDATE))) {
+            return false;
+        }
+
+        Cursor study = Aware.getActiveStudy(context);
+        if (study == null || !study.moveToFirst()) {
+            if (study != null) study.close();
+            return false;
+        }
+
+        boolean updated = false;
+        try {
+            int studyId = study.getInt(
+                    study.getColumnIndex(Aware_Provider.Aware_Studies._ID));
+            String stored = study.getString(
+                    study.getColumnIndex(Aware_Provider.Aware_Studies.STUDY_CONFIG));
+            JSONObject current = parseStoredStudyConfig(stored);
+            JSONObject effective = withSensorSetting(current, setting, value);
+            if (jsonEquals(current, effective)) return false;
+
+            ContentValues values = new ContentValues();
+            values.put(Aware_Provider.Aware_Studies.STUDY_CONFIG, effective.toString());
+            updated = context.getContentResolver().update(
+                    Aware_Provider.Aware_Studies.CONTENT_URI,
+                    values,
+                    Aware_Provider.Aware_Studies._ID + "=?",
+                    new String[]{String.valueOf(studyId)}) > 0;
+        } catch (JSONException e) {
+            Log.e(Aware.TAG, "Failed to persist editable sensor setting: " + e.getMessage());
+        } finally {
+            study.close();
+        }
+
+        if (updated) {
+            Aware.logStudyCompliance(
+                    context, "participant setting changed: " + setting + "=" + value);
+        }
+        return updated;
+    }
+
+    private static JSONObject parseStoredStudyConfig(String stored) throws JSONException {
+        if (stored == null || stored.trim().length() == 0) return new JSONObject();
+        String trimmed = stored.trim();
+        if (!trimmed.startsWith("[")) return new JSONObject(trimmed);
+        JSONArray configs = new JSONArray(trimmed);
+        return configs.length() == 0 ? new JSONObject() : configs.getJSONObject(0);
+    }
+
+    /**
+     * Returns a deep copy of {@code config} with one sensors[] setting replaced or appended.
+     * Existing JSON value types are retained; new values infer booleans and numbers before
+     * falling back to a string.
+     */
+    static JSONObject withSensorSetting(
+            JSONObject config, String setting, String displayedValue) throws JSONException {
+        JSONObject copy = new JSONObject(config.toString());
+        JSONArray sensors = copy.optJSONArray("sensors");
+        if (sensors == null) {
+            sensors = new JSONArray();
+            copy.put("sensors", sensors);
+        }
+
+        for (int i = 0; i < sensors.length(); i++) {
+            JSONObject sensor = sensors.optJSONObject(i);
+            if (sensor == null || !setting.equals(sensor.optString("setting", ""))) continue;
+            sensor.put("value", typedConfigValue(displayedValue, sensor.opt("value")));
+            return copy;
+        }
+
+        JSONObject sensor = new JSONObject();
+        sensor.put("setting", setting);
+        sensor.put("value", typedConfigValue(displayedValue, null));
+        sensors.put(sensor);
+        return copy;
+    }
+
+    private static Object typedConfigValue(String value, Object existingValue) {
+        if (existingValue instanceof Boolean) return Boolean.parseBoolean(value);
+        if (existingValue instanceof Float || existingValue instanceof Double) {
+            try {
+                return Double.parseDouble(value);
+            } catch (NumberFormatException ignored) {
+                return value;
+            }
+        }
+        if (existingValue instanceof Number) {
+            try {
+                long number = Long.parseLong(value);
+                return number >= Integer.MIN_VALUE && number <= Integer.MAX_VALUE
+                        ? (int) number : number;
+            } catch (NumberFormatException ignored) {
+                return value;
+            }
+        }
+
+        if ("true".equalsIgnoreCase(value) || "false".equalsIgnoreCase(value)) {
+            return Boolean.parseBoolean(value);
+        }
+        try {
+            long number = Long.parseLong(value);
+            return number >= Integer.MIN_VALUE && number <= Integer.MAX_VALUE
+                    ? (int) number : number;
+        } catch (NumberFormatException ignored) {
+            try {
+                return Double.parseDouble(value);
+            } catch (NumberFormatException alsoIgnored) {
+                return value;
             }
         }
     }

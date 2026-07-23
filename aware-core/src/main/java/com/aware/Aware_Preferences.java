@@ -634,7 +634,10 @@ public class Aware_Preferences {
     public static final String WEBSERVICE_SILENT = "webservice_silent";
 
     /**
-     * Disable the sensors config settings from being updated from the mobile app.
+     * Whether an enrolled participant may maintain a device-specific sensor configuration.
+     * When true, sensor edits made on the phone are persisted into the active study record and
+     * automatic server-config updates are skipped. An explicit "Check for study updates" applies
+     * the complete latest server configuration, including any change that disables this mode.
      */
     public static final String ENABLE_CONFIG_UPDATE = "enable_config_update";
 
@@ -645,6 +648,12 @@ public class Aware_Preferences {
      * live ACTION_AWARE_STUDY_CONFIG_UPDATED broadcast; cleared once shown.
      */
     public static final String PENDING_STUDY_UPDATE_NOTICE = "pending_study_update_notice";
+
+    /**
+     * Validated server configuration found by an editable-mode manual check but not yet accepted
+     * by the participant.
+     */
+    public static final String PENDING_STUDY_CONFIG_APPROVAL = "pending_study_config_approval";
 
     /**
      * Signature of the last detected mismatch between live sensor settings and the study config
