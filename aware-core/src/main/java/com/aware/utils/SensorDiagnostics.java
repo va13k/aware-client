@@ -252,6 +252,9 @@ public final class SensorDiagnostics {
         sampled(Aware_Preferences.STATUS_WIFI, ".provider.wifi",
                 "wifi", Aware_Preferences.FREQUENCY_WIFI,
                 60, SensorFreshness.Unit.SECONDS);
+        sampled(Aware_Preferences.STATUS_NETWORK_TRAFFIC, ".provider.traffic",
+                "network_traffic", Aware_Preferences.FREQUENCY_NETWORK_TRAFFIC,
+                30, SensorFreshness.Unit.SECONDS);
         sampled(Aware_Preferences.STATUS_LOCATION_GPS, ".provider.locations",
                 "locations", Aware_Preferences.FREQUENCY_LOCATION_GPS,
                 180, SensorFreshness.Unit.SECONDS);

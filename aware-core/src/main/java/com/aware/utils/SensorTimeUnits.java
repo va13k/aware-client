@@ -21,9 +21,9 @@ public final class SensorTimeUnits {
     }
 
     /**
-     * FREQUENCY_LOCATION_GPS, FREQUENCY_LOCATION_NETWORK, FREQUENCY_BLUETOOTH, FREQUENCY_WIFI
-     * and FREQUENCY_PROCESSOR are all stored in seconds, but the Android APIs that consume them
-     * (LocationManager.requestLocationUpdates(), AlarmManager.setRepeating(),
+     * FREQUENCY_LOCATION_GPS, FREQUENCY_LOCATION_NETWORK, FREQUENCY_BLUETOOTH, FREQUENCY_WIFI,
+     * FREQUENCY_PROCESSOR and FREQUENCY_NETWORK_TRAFFIC are all stored in seconds, but the Android
+     * APIs that consume them (LocationManager.requestLocationUpdates(), AlarmManager.setRepeating(),
      * Handler.postDelayed()) all want milliseconds.
      */
     public static long secondsToMillis(int frequencySeconds) {
