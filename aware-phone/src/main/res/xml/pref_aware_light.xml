@@ -1,5 +1,6 @@
 <?xml version="1.0" encoding="utf-8"?>
 <PreferenceScreen xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:app="http://schemas.android.com/apk/res-auto"
     android:key="pref_aware_light"
     android:title="@string/app_name">
     <PreferenceCategory
@@ -46,10 +47,12 @@
                 android:persistent="true"
                 android:title="Activate" />
 
-            <ListPreference
-                android:defaultValue="200000"
-                android:entries="@array/frequency_readable"
-                android:entryValues="@array/frequency_values"
+            <com.aware.phone.ui.prefs.EditableListPreference
+                android:defaultValue="20000"
+                app:customUnit="Hz"
+                app:customValueFormat="samplingRateHz"
+                android:entries="@array/motion_frequency_readable"
+                android:entryValues="@array/motion_frequency_values"
                 android:key="frequency_accelerometer"
                 android:persistent="true"
                 android:summary="%s"
@@ -153,10 +156,12 @@
                 android:persistent="true"
                 android:title="Activate" />
 
-            <ListPreference
-                android:defaultValue="200000"
-                android:entries="@array/low_frequency_readable"
-                android:entryValues="@array/low_frequency_values"
+            <com.aware.phone.ui.prefs.EditableListPreference
+                android:defaultValue="1000000"
+                app:customUnit="Hz"
+                app:customValueFormat="samplingRateHz"
+                android:entries="@array/barometer_frequency_readable"
+                android:entryValues="@array/barometer_frequency_values"
                 android:key="frequency_barometer"
                 android:persistent="true"
                 android:summary="%s"
@@ -204,12 +209,14 @@
                 android:persistent="true"
                 android:title="Activate" />
 
-            <EditTextPreference
+            <com.aware.phone.ui.prefs.EditableListPreference
                 android:defaultValue="60"
-                android:inputType="number"
+                app:customUnit="seconds"
+                android:entries="@array/scan_frequency_readable"
+                android:entryValues="@array/scan_frequency_values"
                 android:key="frequency_bluetooth"
                 android:persistent="true"
-                android:summary="X seconds"
+                android:summary="%s"
                 android:title="Scanning update frequency" />
         </PreferenceScreen>
         <PreferenceScreen
@@ -257,10 +264,12 @@
                 android:persistent="true"
                 android:title="Active" />
 
-            <ListPreference
-                android:defaultValue="200000"
-                android:entries="@array/frequency_readable"
-                android:entryValues="@array/frequency_values"
+            <com.aware.phone.ui.prefs.EditableListPreference
+                android:defaultValue="20000"
+                app:customUnit="Hz"
+                app:customValueFormat="samplingRateHz"
+                android:entries="@array/motion_frequency_readable"
+                android:entryValues="@array/motion_frequency_values"
                 android:key="frequency_gravity"
                 android:persistent="true"
                 android:summary="%s"
@@ -296,10 +305,12 @@
                 android:persistent="true"
                 android:title="Active" />
 
-            <ListPreference
-                android:defaultValue="200000"
-                android:entries="@array/frequency_readable"
-                android:entryValues="@array/frequency_values"
+            <com.aware.phone.ui.prefs.EditableListPreference
+                android:defaultValue="20000"
+                app:customUnit="Hz"
+                app:customValueFormat="samplingRateHz"
+                android:entries="@array/motion_frequency_readable"
+                android:entryValues="@array/motion_frequency_values"
                 android:key="frequency_gyroscope"
                 android:persistent="true"
                 android:summary="%s"
@@ -336,13 +347,15 @@
                 android:summary="GPS location tracking"
                 android:title="GPS" />
 
-            <EditTextPreference
+            <com.aware.phone.ui.prefs.EditableListPreference
                 android:defaultValue="180"
                 android:dependency="status_location_gps"
-                android:inputType="number"
+                app:customUnit="seconds"
+                android:entries="@array/location_frequency_readable"
+                android:entryValues="@array/location_frequency_values"
                 android:key="frequency_location_gps"
                 android:persistent="true"
-                android:summary="Seconds (0 = always on)"
+                android:summary="%s"
                 android:title="Minimum GPS update frequency" />
 
             <EditTextPreference
@@ -361,13 +374,15 @@
                 android:summary="Triangulation location tracking"
                 android:title="Triangulation (cell tower and Wi-Fi)" />
 
-            <EditTextPreference
-                android:defaultValue="300"
+            <com.aware.phone.ui.prefs.EditableListPreference
+                android:defaultValue="180"
                 android:dependency="status_location_network"
-                android:inputType="number"
+                app:customUnit="seconds"
+                android:entries="@array/location_frequency_readable"
+                android:entryValues="@array/location_frequency_values"
                 android:key="frequency_location_network"
                 android:persistent="true"
-                android:summary="Seconds (0 = always on)"
+                android:summary="%s"
                 android:title="Minimum triangulation update frequency" />
 
             <EditTextPreference
@@ -413,10 +428,12 @@
                 android:persistent="true"
                 android:title="Active" />
 
-            <ListPreference
+            <com.aware.phone.ui.prefs.EditableListPreference
                 android:defaultValue="200000"
-                android:entries="@array/low_frequency_readable"
-                android:entryValues="@array/low_frequency_values"
+                app:customUnit="Hz"
+                app:customValueFormat="samplingRateHz"
+                android:entries="@array/light_frequency_readable"
+                android:entryValues="@array/light_frequency_values"
                 android:key="frequency_light"
                 android:persistent="true"
                 android:summary="%s"
@@ -452,10 +469,12 @@
                 android:persistent="true"
                 android:title="Active" />
 
-            <ListPreference
-                android:defaultValue="200000"
-                android:entries="@array/frequency_readable"
-                android:entryValues="@array/frequency_values"
+            <com.aware.phone.ui.prefs.EditableListPreference
+                android:defaultValue="20000"
+                app:customUnit="Hz"
+                app:customValueFormat="samplingRateHz"
+                android:entries="@array/motion_frequency_readable"
+                android:entryValues="@array/motion_frequency_values"
                 android:key="frequency_linear_accelerometer"
                 android:persistent="true"
                 android:summary="%s"
@@ -512,10 +531,12 @@
                 android:persistent="true"
                 android:title="Active" />
 
-            <ListPreference
-                android:defaultValue="200000"
-                android:entries="@array/frequency_readable"
-                android:entryValues="@array/frequency_values"
+            <com.aware.phone.ui.prefs.EditableListPreference
+                android:defaultValue="50000"
+                app:customUnit="Hz"
+                app:customValueFormat="samplingRateHz"
+                android:entries="@array/magnetometer_frequency_readable"
+                android:entryValues="@array/magnetometer_frequency_values"
                 android:key="frequency_magnetometer"
                 android:persistent="true"
                 android:summary="%s"
@@ -551,12 +572,14 @@
                 android:persistent="true"
                 android:title="Active" />
 
-            <EditTextPreference
+            <com.aware.phone.ui.prefs.EditableListPreference
                 android:defaultValue="10"
-                android:inputType="number"
+                app:customUnit="seconds"
+                android:entries="@array/processor_frequency_readable"
+                android:entryValues="@array/processor_frequency_values"
                 android:key="frequency_processor"
                 android:persistent="true"
-                android:summary="Every X seconds"
+                android:summary="%s"
                 android:title="Update frequency" />
         </PreferenceScreen>
         <PreferenceScreen
@@ -584,10 +607,12 @@
                 android:persistent="true"
                 android:title="Active" />
 
-            <ListPreference
-                android:defaultValue="200000"
-                android:entries="@array/low_frequency_readable"
-                android:entryValues="@array/low_frequency_values"
+            <com.aware.phone.ui.prefs.EditableListPreference
+                android:defaultValue="1000000"
+                app:customUnit="Hz"
+                app:customValueFormat="samplingRateHz"
+                android:entries="@array/proximity_frequency_readable"
+                android:entryValues="@array/proximity_frequency_values"
                 android:key="frequency_proximity"
                 android:persistent="true"
                 android:summary="%s"
@@ -623,10 +648,12 @@
                 android:persistent="true"
                 android:title="Active" />
 
-            <ListPreference
-                android:defaultValue="200000"
-                android:entries="@array/frequency_readable"
-                android:entryValues="@array/frequency_values"
+            <com.aware.phone.ui.prefs.EditableListPreference
+                android:defaultValue="20000"
+                app:customUnit="Hz"
+                app:customValueFormat="samplingRateHz"
+                android:entries="@array/motion_frequency_readable"
+                android:entryValues="@array/motion_frequency_values"
                 android:key="frequency_rotation"
                 android:persistent="true"
                 android:summary="%s"
@@ -705,10 +732,12 @@
                 android:persistent="true"
                 android:title="Active" />
 
-            <ListPreference
-                android:defaultValue="200000"
-                android:entries="@array/low_frequency_readable"
-                android:entryValues="@array/low_frequency_values"
+            <com.aware.phone.ui.prefs.EditableListPreference
+                android:defaultValue="10000000"
+                app:customUnit="Hz"
+                app:customValueFormat="samplingRateHz"
+                android:entries="@array/temperature_frequency_readable"
+                android:entryValues="@array/temperature_frequency_values"
                 android:key="frequency_temperature"
                 android:persistent="true"
                 android:summary="%s"
@@ -757,12 +786,14 @@
                 android:persistent="true"
                 android:title="Active" />
 
-            <EditTextPreference
+            <com.aware.phone.ui.prefs.EditableListPreference
                 android:defaultValue="60"
-                android:inputType="number"
+                app:customUnit="seconds"
+                android:entries="@array/scan_frequency_readable"
+                android:entryValues="@array/scan_frequency_values"
                 android:key="frequency_wifi"
                 android:persistent="true"
-                android:summary="Every X seconds. Default 60 seconds (recommended)"
+                android:summary="%s"
                 android:title="Wi-Fi scanning update frequency" />
         </PreferenceScreen>
         <PreferenceScreen
