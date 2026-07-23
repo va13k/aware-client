@@ -38,6 +38,7 @@ import org.junit.Test;
  * FREQUENCY_BLUETOOTH (start)      seconds      * 1000 -> millis      SensorTimeUnits.secondsToMillis
  * FREQUENCY_BLUETOOTH (repeat)     seconds      * 2000 -> millis      SensorTimeUnits.doubleSecondsToMillis
  * FREQUENCY_WIFI                   seconds      * 1000 -> millis      SensorTimeUnits.secondsToMillis
+ * FREQUENCY_NETWORK_TRAFFIC        seconds      * 1000 -> millis      SensorTimeUnits.secondsToMillis
  * FREQUENCY_PROCESSOR              seconds      * 1000 -> millis      SensorTimeUnits.secondsToMillis
  * FREQUENCY_APPLICATIONS           minutes      none (Scheduler unit) SensorTimeUnits.minutesAsIs
  * </pre>
@@ -66,6 +67,7 @@ public class SensorFrequencyUnitsTest {
         assertEquals(300_000L, SensorTimeUnits.secondsToMillis(300)); // Locations network default
         assertEquals(60_000L, SensorTimeUnits.secondsToMillis(60)); // Bluetooth / WiFi default
         assertEquals(10_000L, SensorTimeUnits.secondsToMillis(10)); // Processor default
+        assertEquals(30_000L, SensorTimeUnits.secondsToMillis(30)); // Network traffic default
     }
 
     @Test
