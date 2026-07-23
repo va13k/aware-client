@@ -188,6 +188,10 @@ public class Aware_Client extends Aware_Activity implements SharedPreferences.On
     }
 
     private class SettingsSync extends AsyncTask<Preference, Preference, Void> {
+        // A category can contain several status_* preferences. Recalculate its icon only once per
+        // sync pass instead of rebinding the same parent row for every child.
+        private final Set<String> refreshedSensorParents = new HashSet<>();
+
         @Override
         protected Void doInBackground(Preference... params) {
             for (Preference pref : params) {
@@ -243,6 +247,7 @@ public class Aware_Client extends Aware_Activity implements SharedPreferences.On
 
             if (PreferenceScreen.class.isInstance(getPreferenceParent(pref))) {
                 PreferenceScreen parent = (PreferenceScreen) getPreferenceParent(pref);
+                if (!refreshedSensorParents.add(parent.getKey())) return;
                 ListAdapter children = parent.getRootAdapter();
                 boolean is_active = false;
                 for (int i = 0; i < children.getCount(); i++) {
@@ -266,7 +271,6 @@ public class Aware_Client extends Aware_Activity implements SharedPreferences.On
                         if (category_icon != null) {
                             category_icon.setColorFilter(new PorterDuffColorFilter(ContextCompat.getColor(getApplicationContext(), R.color.accent), PorterDuff.Mode.SRC_IN));
                             parent.setIcon(category_icon);
-                            onContentChanged();
                         }
                     } catch (NoSuchFieldException | IllegalAccessException e) {
                     }
@@ -279,7 +283,6 @@ public class Aware_Client extends Aware_Activity implements SharedPreferences.On
                         if (category_icon != null) {
                             category_icon.clearColorFilter();
                             parent.setIcon(category_icon);
-                            onContentChanged();
                         }
                     } catch (NoSuchFieldException | IllegalAccessException e) {
                     }
