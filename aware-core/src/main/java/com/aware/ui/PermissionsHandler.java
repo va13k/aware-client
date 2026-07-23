@@ -6,7 +6,9 @@ import android.content.ComponentName;
 import android.content.DialogInterface;
 import android.content.Intent;
 import android.content.pm.PackageManager;
+import android.net.Uri;
 import android.os.Bundle;
+import android.provider.Settings;
 import android.util.Log;
 import androidx.core.app.ActivityCompat;
 import androidx.core.content.ContextCompat;
@@ -49,11 +51,13 @@ public class PermissionsHandler extends Activity {
 
     private Intent redirect_activity, redirect_service;
 
-    private ArrayList<String> permissionsNeeded = new ArrayList<>();
-    private int currentIndex = 0;
-    private boolean anyDenied = false;
+    private PermissionSequence sequence;
     private boolean sequenceStarted = false;
     private AlertDialog rationaleDialog;
+
+    // Set to the permission we sent the user to app settings for; re-checked when they return so a
+    // blocked permission granted there is picked up, and one still refused is skipped rather than looped.
+    private String awaitingSettingsFor;
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
@@ -65,11 +69,29 @@ public class PermissionsHandler extends Activity {
     protected void onResume() {
         super.onResume();
 
+        // Coming back from the app-settings screen: pick up the permission if it was granted there;
+        // if it's still refused, count it denied and move past it so we don't re-offer the same one.
+        if (awaitingSettingsFor != null) {
+            String permission = awaitingSettingsFor;
+            awaitingSettingsFor = null;
+            boolean granted = ContextCompat.checkSelfPermission(this, permission) == PackageManager.PERMISSION_GRANTED;
+            Log.d(Aware.TAG, permission + (granted ? " was granted in settings" : " still not granted after settings"));
+            if (!granted) sequence.onResult(false);
+            requestNextPermission();
+            return;
+        }
+
         // Returning from a system permission dialog re-runs onResume; don't restart the sequence.
         if (sequenceStarted) return;
 
         if (getIntent() != null && getIntent().getExtras() != null && getIntent().getSerializableExtra(EXTRA_REQUIRED_PERMISSIONS) != null) {
-            permissionsNeeded = (ArrayList<String>) getIntent().getSerializableExtra(EXTRA_REQUIRED_PERMISSIONS);
+            ArrayList<String> permissionsNeeded = (ArrayList<String>) getIntent().getSerializableExtra(EXTRA_REQUIRED_PERMISSIONS);
+            sequence = new PermissionSequence(permissionsNeeded, new PermissionSequence.GrantChecker() {
+                @Override
+                public boolean isGranted(String permission) {
+                    return ContextCompat.checkSelfPermission(PermissionsHandler.this, permission) == PackageManager.PERMISSION_GRANTED;
+                }
+            });
 
             if (getIntent().hasExtra(EXTRA_REDIRECT_ACTIVITY)) {
                 redirect_activity = new Intent();
@@ -84,7 +106,6 @@ public class PermissionsHandler extends Activity {
             }
 
             sequenceStarted = true;
-            currentIndex = 0;
             requestNextPermission();
         } else {
             Intent activity = new Intent();
@@ -98,17 +119,12 @@ public class PermissionsHandler extends Activity {
      * permissions are skipped. When none remain, hands back to the caller via {@link #finishWithResult()}.
      */
     private void requestNextPermission() {
-        while (currentIndex < permissionsNeeded.size()
-                && ContextCompat.checkSelfPermission(this, permissionsNeeded.get(currentIndex)) == PackageManager.PERMISSION_GRANTED) {
-            currentIndex++;
-        }
-
-        if (currentIndex >= permissionsNeeded.size()) {
+        final String permission = sequence.nextToRequest();
+        if (permission == null) {
             finishWithResult();
             return;
         }
 
-        final String permission = permissionsNeeded.get(currentIndex);
         rationaleDialog = new AlertDialog.Builder(this)
                 .setTitle(permissionTitle(permission))
                 .setMessage(permissionRationale(permission))
@@ -122,9 +138,8 @@ public class PermissionsHandler extends Activity {
                 .setNegativeButton("Not now", new DialogInterface.OnClickListener() {
                     @Override
                     public void onClick(DialogInterface dialog, int which) {
-                        anyDenied = true;
                         Log.d(Aware.TAG, permission + " was skipped");
-                        currentIndex++;
+                        sequence.onSkipped();
                         requestNextPermission();
                     }
                 })
@@ -134,16 +149,23 @@ public class PermissionsHandler extends Activity {
     @Override
     public void onRequestPermissionsResult(int requestCode, String[] permissions, int[] grantResults) {
         if (requestCode == RC_PERMISSIONS) {
-            for (int i = 0; i < permissions.length; i++) {
-                if (grantResults[i] != PackageManager.PERMISSION_GRANTED) {
-                    anyDenied = true;
-                    Log.d(Aware.TAG, permissions[i] + " was not granted");
-                } else {
-                    Log.d(Aware.TAG, permissions[i] + " was granted");
-                }
+            // One permission is requested per prompt. An empty result (dialog cancelled) counts as not
+            // granted, so it can't be mistaken for success and restart the loop.
+            String permission = permissions.length > 0 ? permissions[0] : null;
+            boolean granted = grantResults.length > 0 && grantResults[0] == PackageManager.PERMISSION_GRANTED;
+            if (permission != null) Log.d(Aware.TAG, permission + (granted ? " was granted" : " was not granted"));
+
+            boolean rationale = permission != null
+                    && ActivityCompat.shouldShowRequestPermissionRationale(this, permission);
+            if (permission != null
+                    && PermissionSequence.actionAfterResult(granted, rationale) == PermissionSequence.ResultAction.PROMPT_SETTINGS) {
+                // Blocked: requesting again is a silent no-op (this is why the system dialog stopped
+                // appearing). Offer the app-settings route instead of leaving the tap doing nothing.
+                showBlockedDialog(permission);
+            } else {
+                sequence.onResult(granted);
+                requestNextPermission();
             }
-            currentIndex++;
-            requestNextPermission();
         } else {
             super.onRequestPermissionsResult(requestCode, permissions, grantResults);
         }
@@ -154,9 +176,42 @@ public class PermissionsHandler extends Activity {
      * to the caller (activity or service) is performed in {@link #onDestroy()}.
      */
     private void finishWithResult() {
-        int result = anyDenied ? Activity.RESULT_CANCELED : Activity.RESULT_OK;
+        int result = sequence.anyDenied() ? Activity.RESULT_CANCELED : Activity.RESULT_OK;
         setResult(result, redirect_activity != null ? redirect_activity : new Intent());
         finish();
+    }
+
+    /**
+     * Shown when a permission the user asked to allow is blocked (the OS won't prompt again). Offers to
+     * open the app's settings so they can grant it by hand, or to skip it. On return, {@link #onResume()}
+     * re-checks it via {@link #awaitingSettingsFor}.
+     */
+    private void showBlockedDialog(final String permission) {
+        rationaleDialog = new AlertDialog.Builder(this)
+                .setTitle(permissionTitle(permission))
+                .setMessage("AWARE can't ask for the " + humanLabel(permission) + " permission again because "
+                        + "it was blocked. Enable it in Settings > Permissions for the sensor to work, or "
+                        + "choose Not now to skip it.")
+                .setCancelable(false)
+                .setPositiveButton("Open settings", new DialogInterface.OnClickListener() {
+                    @Override
+                    public void onClick(DialogInterface dialog, int which) {
+                        awaitingSettingsFor = permission;
+                        Intent settings = new Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS);
+                        settings.setData(Uri.fromParts("package", getPackageName(), null));
+                        settings.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
+                        startActivity(settings);
+                    }
+                })
+                .setNegativeButton("Not now", new DialogInterface.OnClickListener() {
+                    @Override
+                    public void onClick(DialogInterface dialog, int which) {
+                        Log.d(Aware.TAG, permission + " is blocked; skipped");
+                        sequence.onResult(false);
+                        requestNextPermission();
+                    }
+                })
+                .show();
     }
 
     private static String permissionTitle(String permission) {
@@ -209,10 +264,17 @@ public class PermissionsHandler extends Activity {
     protected void onDestroy() {
         super.onDestroy();
         if (rationaleDialog != null && rationaleDialog.isShowing()) rationaleDialog.dismiss();
-        if (redirect_service != null) {
+        // Only restart the requesting service when every permission was granted. Restarting it after a
+        // denial just makes Aware_Sensor.onStartCommand find the permission still missing and relaunch
+        // this handler, which spins an unbreakable "Allow ..." dialog loop (the redirect starts the
+        // service directly, so it keeps a consent-declined sensor alive regardless of its on/off status).
+        if (redirect_service != null && sequence != null && sequence.shouldRestartService()) {
             Log.d(TAG, "Redirecting to Service: " + redirect_service.getComponent().toString());
             redirect_service.setAction(ACTION_AWARE_PERMISSIONS_CHECK);
             startService(redirect_service);
+        } else if (redirect_service != null) {
+            Log.d(TAG, "Not restarting " + redirect_service.getComponent().toString()
+                    + ": user declined a required permission, so no re-prompt loop.");
         }
         if (redirect_activity != null) {
             Log.d(TAG, "Redirecting to Activity: " + redirect_activity.getComponent().toString());
