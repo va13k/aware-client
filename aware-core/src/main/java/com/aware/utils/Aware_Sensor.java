@@ -76,7 +76,9 @@ public class Aware_Sensor extends Service {
         registerReceiver(contextBroadcaster, filter);
 
         REQUIRED_PERMISSIONS.add(Manifest.permission.WRITE_EXTERNAL_STORAGE);
-        REQUIRED_PERMISSIONS.add(Manifest.permission.GET_ACCOUNTS);
+        // GET_ACCOUNTS is only needed below API 26 -- see the comment in ui/Aware_Client.java.
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.O)
+            REQUIRED_PERMISSIONS.add(Manifest.permission.GET_ACCOUNTS);
         REQUIRED_PERMISSIONS.add(Manifest.permission.WRITE_SYNC_SETTINGS);
         REQUIRED_PERMISSIONS.add(Manifest.permission.READ_SYNC_SETTINGS);
         REQUIRED_PERMISSIONS.add(Manifest.permission.READ_SYNC_STATS);

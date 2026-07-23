@@ -40,6 +40,7 @@ import org.skyscreamer.jsonassert.JSONCompareMode;
 import java.io.FileNotFoundException;
 import java.io.IOException;
 import java.util.ArrayList;
+import java.util.Collections;
 import java.util.HashMap;
 import java.util.HashSet;
 import java.util.Set;
@@ -208,7 +209,12 @@ public class StudyUtils extends IntentService {
 
                 if (dbStudy != null && !dbStudy.isClosed()) dbStudy.close();
 
-                applySettings(getApplicationContext(), full_url, study_config, input_password_);
+                // This is a programmatic join with no consent UI, so a sensor that needs a runtime
+                // permission or the Accessibility Service must not be silently switched on. Hold
+                // every such sensor off (persisted, so a later config sync keeps honouring it);
+                // permission-free base sensors still start, and the held ones await the participant.
+                Set<String> declined = holdConsentSensorsUnlessAgreed(getApplicationContext(), study_config);
+                applySettings(getApplicationContext(), full_url, study_config, false, input_password_, declined);
 
             } catch (JSONException e) {
                 e.printStackTrace();
@@ -253,13 +259,51 @@ public class StudyUtils extends IntentService {
      * @param input_password password for database if required
      */
     public static void applySettings(Context context, String webserviceServer, JSONArray configs, Boolean insertCompliance, String input_password) {
+        applySettings(context, webserviceServer, configs, insertCompliance, input_password, Collections.<String>emptySet());
+    }
+
+    /**
+     * Sets first all the settings to the client.
+     * If there are plugins, apply the same settings to them.
+     * This allows us to add plugins to studies from the dashboard.
+     *
+     * @param context
+     * @param webserviceServer
+     * @param configs
+     * @param insertCompliance true to insert a new compliance record (i.e. when updating a study)
+     * @param input_password password for database if required
+     * @param declinedSettings status_* setting keys the participant declined consent for — these are
+     *                          forced to false regardless of what {@code configs} says, so a declined
+     *                          sensor is never flipped on even momentarily.
+     */
+    public static void applySettings(Context context, String webserviceServer, JSONArray configs, Boolean insertCompliance, String input_password, Set<String> declinedSettings) {
         boolean is_developer = Aware.getSetting(context, Aware_Preferences.DEBUG_FLAG).equals("true");
+        // Preserve across the reset below, same as DEBUG_FLAG: a config re-apply (join or background
+        // sync) is not a consent event, so it must not erase the participant's recorded agreement.
+        // Quitting a study calls Aware.reset() directly, NOT through here — that path intentionally
+        // wipes the record so the next join asks for consent again.
+        String consentRecord = Aware.getSetting(context, Aware_Preferences.STUDY_CONSENT_RECORD);
+        // Preserve across the reset below for the same reason, and additionally fold it into the
+        // declined set enforced below: a background sync passes no declined set, but the
+        // participant's persisted declines must still be honoured (not re-enabled) on every apply.
+        String persistedDeclined = Aware.getSetting(context, Aware_Preferences.STUDY_DECLINED_SENSORS);
 
         //First reset the client to default settings...
         Aware.reset(context);
 
         input_password_ = input_password;
         if (is_developer) Aware.setSetting(context, Aware_Preferences.DEBUG_FLAG, true);
+        if (consentRecord.length() > 0) Aware.setSetting(context, Aware_Preferences.STUDY_CONSENT_RECORD, consentRecord);
+        if (persistedDeclined.length() > 0) Aware.setSetting(context, Aware_Preferences.STUDY_DECLINED_SENSORS, persistedDeclined);
+
+        // Effective declined set = whatever the caller passed ∪ whatever the participant previously
+        // persisted, so both a fresh decline (consent screen) and a standing one (background sync)
+        // keep the sensor off.
+        Set<String> effectiveDeclined = new HashSet<>();
+        if (declinedSettings != null) effectiveDeclined.addAll(declinedSettings);
+        for (String key : persistedDeclined.split(",")) {
+            if (key.trim().length() > 0) effectiveDeclined.add(key.trim());
+        }
 
         //Now apply the new settings
         try {
@@ -366,7 +410,7 @@ public class StudyUtils extends IntentService {
         }
 
         // Set the sensors' settings first
-        processSensorSettings(context, sensors);
+        processSensorSettings(context, sensors, effectiveDeclined);
 
         // Set the plugins' settings and prepare for activation
         ArrayList<String> active_plugins = processPluginSettings(context, plugins);
@@ -404,8 +448,8 @@ public class StudyUtils extends IntentService {
             }
         }
 
-        // Log why any study-enabled sensor can't actually collect on this device (no hardware,
-        // missing permission, accessibility/location services off) into aware_log, which already
+        // Log the health of every study-enabled sensor (including unavailable/blocked/disabled,
+        // frequency-based delayed data, and event-driven waiting) into aware_log, which already
         // syncs to the researcher's database — covers both the join flow and every config update,
         // since this is the one place both paths funnel through.
         try {
@@ -481,8 +525,11 @@ public class StudyUtils extends IntentService {
      *
      * @param context Application context
      * @param sensors JSONArray of sensor configurations
+     * @param declinedSettings status_* keys to force to false regardless of {@code sensors}' own value
+     *                         — the participant declined consent for these, so they must never be
+     *                         written true in the first place.
      */
-    private static void processSensorSettings(Context context, JSONArray sensors) {
+    private static void processSensorSettings(Context context, JSONArray sensors, Set<String> declinedSettings) {
         if (sensors == null) {
             Log.d(Aware.TAG, "processSensorSettings: sensors array is null");
             return;
@@ -509,6 +556,15 @@ public class StudyUtils extends IntentService {
                 if (sensor_config.has("setting") && sensor_config.has("value")) {
                     String setting = sensor_config.getString("setting");
                     Object value = sensor_config.get("value");
+
+                    // Declined settings are forced false here rather than written true and unflipped
+                    // later, so a declined sensor never runs even momentarily.
+                    if (declinedSettings.contains(setting)) {
+                        Log.d(Aware.TAG, "processSensorSettings: " + setting +
+                                " declined by participant, forcing value to false");
+                        value = Boolean.FALSE;
+                    }
+
                     String valueType = value.getClass().getSimpleName();
 
                     // WEBSERVICE_SERVER doubles as the join URL that Aware.getStudy()/isStudy()
@@ -914,7 +970,35 @@ public class StudyUtils extends IntentService {
      * @param toast Whether to show toast messages
      */
     public static void syncStudyConfig(Context context, Boolean toast) {
+        syncStudyConfig(context, toast, false, false);
+    }
+
+    /**
+     * Synchronizes the study configuration with the server.
+     *
+     * @param manual true only when the participant explicitly tapped "Check for study updates"
+     */
+    public static void syncStudyConfig(Context context, Boolean toast, boolean manual) {
+        syncStudyConfig(context, toast, manual, false);
+    }
+
+    /**
+     * Synchronizes or previews the study configuration.
+     *
+     * @param approved true after the participant accepted the exact pending server configuration
+     */
+    public static void syncStudyConfig(
+            Context context, Boolean toast, boolean manual, boolean approved) {
         if (!Aware.isStudy(context)) return;
+        boolean editable = Boolean.parseBoolean(Aware.getSetting(
+                context, Aware_Preferences.ENABLE_CONFIG_UPDATE));
+        if (shouldSkipAutomaticConfigSync(editable, manual)) {
+            if (Aware.DEBUG) {
+                Aware.debug(context,
+                        "Skipping automatic study-config update while participant editing is enabled");
+            }
+            return;
+        }
 
         // Aware.getActiveStudy() instead of Aware.getStudy(context, webservice_server): the latter
         // does "WHERE study_url LIKE '<webservice_server>%'", which silently finds nothing (and
@@ -944,7 +1028,30 @@ public class StudyUtils extends IntentService {
                     }
                     return;
                 }
-                if (jsonEquals(localConfig, newConfig)) {
+
+                boolean configsEqual = jsonEquals(localConfig, newConfig);
+                boolean approvalMatches = approved
+                        && pendingApprovalMatches(context, newConfig);
+                if (shouldPreviewManualConfigUpdate(
+                        editable, manual, configsEqual, approvalMatches)) {
+                    publishConfigUpdatePreview(context, localConfig, newConfig);
+                    if (toast) {
+                        new Handler(Looper.getMainLooper()).post(new Runnable() {
+                            @Override
+                            public void run() {
+                                Toast.makeText(
+                                        context,
+                                        "Study update available for review.",
+                                        Toast.LENGTH_SHORT).show();
+                            }
+                        });
+                    }
+                    return;
+                }
+
+                if (configsEqual) {
+                    Aware.setSetting(
+                            context, Aware_Preferences.PENDING_STUDY_CONFIG_APPROVAL, "");
                     // The server config hasn't changed, but that alone doesn't guarantee the
                     // device's live settings still match it — Aware.reset() and an interrupted
                     // apply can both leave aware_settings drifted while the stored config blob
@@ -995,6 +1102,18 @@ public class StudyUtils extends IntentService {
                 // Real config change from the server — clear any stale drift bookkeeping, since
                 // the full re-apply below re-syncs every setting from scratch anyway.
                 Aware.setSetting(context, Aware_Preferences.LAST_DRIFT_SIGNATURE, "");
+                Aware.setSetting(
+                        context, Aware_Preferences.PENDING_STUDY_CONFIG_APPROVAL, "");
+
+                // Consent gate for mid-study changes (F2): a sensor the researcher newly enabled that
+                // needs a participant grant must NOT start collecting just because the config says so —
+                // the participant hasn't agreed to it. Hold every such sensor off by adding it to the
+                // persisted declined set before applying; the "study updated" prompt then lets the
+                // participant agree (which un-declines + enables it). Base sensors that need no grant
+                // are not held. Sensors dropped from the config are cleared from the declined set so
+                // stale entries don't accumulate across edits.
+                holdNewlyAddedConsentSensors(context, localConfig, newConfig);
+
                 applySettings(context, studyUrl, new JSONArray().put(newConfig), true, Aware.getSetting(context, Aware_Preferences.DB_PASSWORD));
                 if (Aware.DEBUG) Aware.debug(context, "Updated study config: " + newConfig);
 
@@ -1019,6 +1138,7 @@ public class StudyUtils extends IntentService {
                             notice.put("cfgChanged", true);
                             notice.put("cfgNewValue", configUpdateAllowedNewValue);
                         }
+                        notice.put("manual", manual);
                         Aware.setSetting(context, Aware_Preferences.PENDING_STUDY_UPDATE_NOTICE, notice.toString());
                     } catch (JSONException e) {
                         e.printStackTrace();
@@ -1032,6 +1152,7 @@ public class StudyUtils extends IntentService {
                     configUpdated.putExtra(Aware.EXTRA_CONFIG_UPDATE_ALLOWED_CHANGED, true);
                     configUpdated.putExtra(Aware.EXTRA_CONFIG_UPDATE_ALLOWED_NEW_VALUE, configUpdateAllowedNewValue);
                 }
+                configUpdated.putExtra(Aware.EXTRA_CONFIG_UPDATE_MANUAL, manual);
                 context.sendBroadcast(configUpdated);
                 if (toast) {
                     new Handler(Looper.getMainLooper()).post(new Runnable() {
@@ -1065,6 +1186,174 @@ public class StudyUtils extends IntentService {
                 e.printStackTrace();
             } finally {
                 study.close();
+            }
+        }
+    }
+
+    static boolean shouldSkipAutomaticConfigSync(boolean editable, boolean manual) {
+        return editable && !manual;
+    }
+
+    static boolean shouldPreviewManualConfigUpdate(
+            boolean editable, boolean manual, boolean configsEqual, boolean approvalMatches) {
+        return editable && manual && !configsEqual && !approvalMatches;
+    }
+
+    private static boolean pendingApprovalMatches(Context context, JSONObject serverConfig) {
+        String pending = Aware.getSetting(
+                context, Aware_Preferences.PENDING_STUDY_CONFIG_APPROVAL);
+        if (pending == null || pending.trim().length() == 0) return false;
+        try {
+            return jsonEquals(new JSONObject(pending), serverConfig);
+        } catch (JSONException e) {
+            return false;
+        }
+    }
+
+    private static void publishConfigUpdatePreview(
+            Context context, JSONObject localConfig, JSONObject serverConfig) {
+        Aware.setSetting(
+                context,
+                Aware_Preferences.PENDING_STUDY_CONFIG_APPROVAL,
+                serverConfig.toString());
+
+        ArrayList<String> added = new ArrayList<>();
+        ArrayList<String> removed = new ArrayList<>();
+        diffActiveSensors(localConfig, serverConfig, added, removed);
+        Boolean configUpdateAllowedNewValue =
+                enableConfigUpdateChanged(localConfig, serverConfig);
+
+        Intent available = new Intent(Aware.ACTION_AWARE_STUDY_CONFIG_UPDATE_AVAILABLE);
+        available.putStringArrayListExtra(Aware.EXTRA_SENSORS_ADDED, added);
+        available.putStringArrayListExtra(Aware.EXTRA_SENSORS_REMOVED, removed);
+        if (configUpdateAllowedNewValue != null) {
+            available.putExtra(Aware.EXTRA_CONFIG_UPDATE_ALLOWED_CHANGED, true);
+            available.putExtra(
+                    Aware.EXTRA_CONFIG_UPDATE_ALLOWED_NEW_VALUE,
+                    configUpdateAllowedNewValue);
+        }
+        context.sendBroadcast(available);
+    }
+
+    /**
+     * Persists a participant's editable-mode sensor change into the active study config and emits
+     * a compliance row carrying that effective config. This makes the configuration received by
+     * the researcher match the settings that actually produced the uploaded sensor data.
+     */
+    public static boolean persistEditableSensorSetting(
+            Context context, String setting, String value) {
+        if (setting == null
+                || setting.length() == 0
+                || Aware_Preferences.ENABLE_CONFIG_UPDATE.equals(setting)
+                || !Aware.isStudy(context)
+                || !Boolean.parseBoolean(Aware.getSetting(
+                        context, Aware_Preferences.ENABLE_CONFIG_UPDATE))) {
+            return false;
+        }
+
+        Cursor study = Aware.getActiveStudy(context);
+        if (study == null || !study.moveToFirst()) {
+            if (study != null) study.close();
+            return false;
+        }
+
+        boolean updated = false;
+        try {
+            int studyId = study.getInt(
+                    study.getColumnIndex(Aware_Provider.Aware_Studies._ID));
+            String stored = study.getString(
+                    study.getColumnIndex(Aware_Provider.Aware_Studies.STUDY_CONFIG));
+            JSONObject current = parseStoredStudyConfig(stored);
+            JSONObject effective = withSensorSetting(current, setting, value);
+            if (jsonEquals(current, effective)) return false;
+
+            ContentValues values = new ContentValues();
+            values.put(Aware_Provider.Aware_Studies.STUDY_CONFIG, effective.toString());
+            updated = context.getContentResolver().update(
+                    Aware_Provider.Aware_Studies.CONTENT_URI,
+                    values,
+                    Aware_Provider.Aware_Studies._ID + "=?",
+                    new String[]{String.valueOf(studyId)}) > 0;
+        } catch (JSONException e) {
+            Log.e(Aware.TAG, "Failed to persist editable sensor setting: " + e.getMessage());
+        } finally {
+            study.close();
+        }
+
+        if (updated) {
+            Aware.logStudyCompliance(
+                    context, "participant setting changed: " + setting + "=" + value);
+        }
+        return updated;
+    }
+
+    private static JSONObject parseStoredStudyConfig(String stored) throws JSONException {
+        if (stored == null || stored.trim().length() == 0) return new JSONObject();
+        String trimmed = stored.trim();
+        if (!trimmed.startsWith("[")) return new JSONObject(trimmed);
+        JSONArray configs = new JSONArray(trimmed);
+        return configs.length() == 0 ? new JSONObject() : configs.getJSONObject(0);
+    }
+
+    /**
+     * Returns a deep copy of {@code config} with one sensors[] setting replaced or appended.
+     * Existing JSON value types are retained; new values infer booleans and numbers before
+     * falling back to a string.
+     */
+    static JSONObject withSensorSetting(
+            JSONObject config, String setting, String displayedValue) throws JSONException {
+        JSONObject copy = new JSONObject(config.toString());
+        JSONArray sensors = copy.optJSONArray("sensors");
+        if (sensors == null) {
+            sensors = new JSONArray();
+            copy.put("sensors", sensors);
+        }
+
+        for (int i = 0; i < sensors.length(); i++) {
+            JSONObject sensor = sensors.optJSONObject(i);
+            if (sensor == null || !setting.equals(sensor.optString("setting", ""))) continue;
+            sensor.put("value", typedConfigValue(displayedValue, sensor.opt("value")));
+            return copy;
+        }
+
+        JSONObject sensor = new JSONObject();
+        sensor.put("setting", setting);
+        sensor.put("value", typedConfigValue(displayedValue, null));
+        sensors.put(sensor);
+        return copy;
+    }
+
+    private static Object typedConfigValue(String value, Object existingValue) {
+        if (existingValue instanceof Boolean) return Boolean.parseBoolean(value);
+        if (existingValue instanceof Float || existingValue instanceof Double) {
+            try {
+                return Double.parseDouble(value);
+            } catch (NumberFormatException ignored) {
+                return value;
+            }
+        }
+        if (existingValue instanceof Number) {
+            try {
+                long number = Long.parseLong(value);
+                return number >= Integer.MIN_VALUE && number <= Integer.MAX_VALUE
+                        ? (int) number : number;
+            } catch (NumberFormatException ignored) {
+                return value;
+            }
+        }
+
+        if ("true".equalsIgnoreCase(value) || "false".equalsIgnoreCase(value)) {
+            return Boolean.parseBoolean(value);
+        }
+        try {
+            long number = Long.parseLong(value);
+            return number >= Integer.MIN_VALUE && number <= Integer.MAX_VALUE
+                    ? (int) number : number;
+        } catch (NumberFormatException ignored) {
+            try {
+                return Double.parseDouble(value);
+            } catch (NumberFormatException alsoIgnored) {
+                return value;
             }
         }
     }
@@ -1206,7 +1495,7 @@ public class StudyUtils extends IntentService {
         // makes it directly unit-testable without Robolectric, same reasoning as
         // Aware.parseLongOrDefault being split out from Aware.getSettingAsLong().
         Map<String, String> liveValues = new HashMap<>();
-        Set<String> hardwareUnavailable = new HashSet<>();
+        Set<String> excluded = new HashSet<>();
         for (int i = 0; i < sensors.length(); i++) {
             JSONObject sensor = sensors.optJSONObject(i);
             if (sensor == null) continue;
@@ -1214,10 +1503,17 @@ public class StudyUtils extends IntentService {
             if (!setting.startsWith("status_") || !sensor.has("value")) continue;
             liveValues.put(setting, Aware.getSetting(context, setting));
             if (!SensorAvailability.isHardwareAvailable(context, setting)) {
-                hardwareUnavailable.add(setting);
+                excluded.add(setting);
             }
         }
-        return driftSignature(config, liveValues, hardwareUnavailable);
+        // Also exclude sensors the participant declined: like a missing-hardware sensor, a decline is
+        // a deliberate, known reason the live value differs from the config — not drift to self-heal.
+        // Without this the ~1-minute sync would re-enable every declined sensor, undoing the decline.
+        String persistedDeclined = Aware.getSetting(context, Aware_Preferences.STUDY_DECLINED_SENSORS);
+        for (String key : persistedDeclined.split(",")) {
+            if (key.trim().length() > 0) excluded.add(key.trim());
+        }
+        return driftSignature(config, liveValues, excluded);
     }
 
     /**
@@ -1235,7 +1531,7 @@ public class StudyUtils extends IntentService {
      * mode this exists to catch — and checking them would make the signature (and the reapply
      * cadence below) noisier without covering a materially worse bug.
      */
-    static String driftSignature(JSONObject config, Map<String, String> liveValues, Set<String> hardwareUnavailable) {
+    static String driftSignature(JSONObject config, Map<String, String> liveValues, Set<String> excludedSettings) {
         JSONArray sensors = config.optJSONArray("sensors");
         if (sensors == null) return "";
 
@@ -1246,7 +1542,7 @@ public class StudyUtils extends IntentService {
 
             String setting = sensor.optString("setting", "");
             if (!setting.startsWith("status_") || !sensor.has("value")) continue;
-            if (hardwareUnavailable.contains(setting)) continue;
+            if (excludedSettings.contains(setting)) continue;
 
             String expected = String.valueOf(sensor.opt("value"));
             String live = liveValues.containsKey(setting) ? liveValues.get(setting) : "";
@@ -1289,6 +1585,99 @@ public class StudyUtils extends IntentService {
             }
         }
         return active;
+    }
+
+    /** The raw status_* setting keys enabled (value true) in a config. */
+    private static Set<String> enabledStatusSettings(JSONObject config) {
+        Set<String> out = new HashSet<>();
+        if (config == null) return out;
+        JSONArray sensors = config.optJSONArray("sensors");
+        if (sensors == null) return out;
+        for (int i = 0; i < sensors.length(); i++) {
+            JSONObject sensor = sensors.optJSONObject(i);
+            if (sensor == null) continue;
+            String setting = sensor.optString("setting", "");
+            if (setting.startsWith("status_") && sensor.optBoolean("value", false)) out.add(setting);
+        }
+        return out;
+    }
+
+    /**
+     * After a server-side config change, hold every newly-enabled sensor that needs a participant
+     * grant OFF until they agree, by adding it to the persisted declined set (F2). "Newly enabled" =
+     * enabled in {@code newConfig} but not in {@code oldConfig}; "needs a grant" per
+     * {@link SensorDiagnostics#requiresConsent}. Also drops from the declined set any setting the new
+     * config no longer enables, so stale entries don't accumulate across successive edits.
+     */
+    private static void holdNewlyAddedConsentSensors(Context context, JSONObject oldConfig, JSONObject newConfig) {
+        Set<String> oldEnabled = enabledStatusSettings(oldConfig);
+        Set<String> newEnabled = enabledStatusSettings(newConfig);
+
+        Set<String> declined = new HashSet<>();
+        for (String key : Aware.getSetting(context, Aware_Preferences.STUDY_DECLINED_SENSORS).split(",")) {
+            if (key.trim().length() > 0) declined.add(key.trim());
+        }
+
+        // Keep only declines for sensors the config still enables — drop the rest as stale.
+        declined.retainAll(newEnabled);
+
+        // Hold each newly-enabled, consent-requiring sensor off until the participant agrees.
+        for (String setting : newEnabled) {
+            if (!oldEnabled.contains(setting) && SensorDiagnostics.requiresConsent(setting)) {
+                declined.add(setting);
+            }
+        }
+
+        StringBuilder joined = new StringBuilder();
+        for (String setting : declined) {
+            if (joined.length() > 0) joined.append(',');
+            joined.append(setting);
+        }
+        Aware.setSetting(context, Aware_Preferences.STUDY_DECLINED_SENSORS, joined.toString());
+    }
+
+    /**
+     * The consent-requiring status_* settings enabled across {@code configs} — every sensor that
+     * gates on a runtime permission or the Accessibility Service (per
+     * {@link SensorDiagnostics#requiresConsent}). Permission-free base sensors are excluded. Pure
+     * (no Context) so it's unit-testable, mirroring {@link #driftSignature}'s split from
+     * {@link #liveDriftSignature}.
+     */
+    static Set<String> consentRequiringEnabledSettings(JSONArray configs) {
+        Set<String> out = new HashSet<>();
+        if (configs == null) return out;
+        for (int i = 0; i < configs.length(); i++) {
+            for (String setting : enabledStatusSettings(configs.optJSONObject(i))) {
+                if (SensorDiagnostics.requiresConsent(setting)) out.add(setting);
+            }
+        }
+        return out;
+    }
+
+    /**
+     * Holds every consent-requiring sensor enabled in {@code configs} OFF, by persisting it into the
+     * declined set (unioned with anything already there), and returns the resulting declined set.
+     * The programmatic join entry points ({@link Aware#joinStudy} / the {@link StudyUtils} service)
+     * have no consent UI, so a sensor needing a runtime permission or the Accessibility Service must
+     * not be silently enabled — this keeps it off, and keeps it off across later config syncs via the
+     * persisted set. Permission-free base sensors are untouched and still start; a held sensor can be
+     * enabled later once the participant consents (the consent screen, or the per-sensor Enable
+     * action).
+     */
+    public static Set<String> holdConsentSensorsUnlessAgreed(Context context, JSONArray configs) {
+        Set<String> declined = new HashSet<>();
+        for (String key : Aware.getSetting(context, Aware_Preferences.STUDY_DECLINED_SENSORS).split(",")) {
+            if (key.trim().length() > 0) declined.add(key.trim());
+        }
+        declined.addAll(consentRequiringEnabledSettings(configs));
+
+        StringBuilder joined = new StringBuilder();
+        for (String setting : declined) {
+            if (joined.length() > 0) joined.append(',');
+            joined.append(setting);
+        }
+        Aware.setSetting(context, Aware_Preferences.STUDY_DECLINED_SENSORS, joined.toString());
+        return declined;
     }
 
     /**

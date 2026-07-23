@@ -45,10 +45,10 @@ public class Settings extends AppCompatPreferenceActivity implements OnSharedPre
      */
     public static final String ENABLE_CONFIG_UPDATE = "enable_config_update";
 
-    private static CheckBoxPreference status;
-    private static ListPreference units;
-    private static ListPreference frequency;
-    private static EditTextPreference openweather_api_key;
+    private CheckBoxPreference status;
+    private ListPreference units;
+    private ListPreference frequency;
+    private EditTextPreference openweather_api_key;
     private static final String TAG = "openweather";
 
     /**
@@ -69,9 +69,6 @@ public class Settings extends AppCompatPreferenceActivity implements OnSharedPre
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
         addPreferencesFromResource(R.xml.preferences_openweather);
-
-        SharedPreferences prefs = PreferenceManager.getDefaultSharedPreferences(this);
-        prefs.registerOnSharedPreferenceChangeListener(this);
 
         if (Aware.getSetting(getApplicationContext(), ENABLE_CONFIG_UPDATE).length() == 0) {
             Aware.setSetting(getApplicationContext(), ENABLE_CONFIG_UPDATE, true);

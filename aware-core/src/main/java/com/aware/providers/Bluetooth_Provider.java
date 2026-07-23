@@ -28,7 +28,7 @@ import java.util.HashMap;
  */
 public class Bluetooth_Provider extends ContentProvider {
 
-    private static final int DATABASE_VERSION = 3;
+    private static final int DATABASE_VERSION = 4;
 
     /**
      * Authority of Bluetooth content provider
@@ -82,6 +82,7 @@ public class Bluetooth_Provider extends ContentProvider {
         public static final String BT_ADDRESS = "bt_address";
         public static final String BT_NAME = "bt_name";
         public static final String BT_RSSI = "bt_rssi";
+        public static final String BT_STATUS = "bt_status";
         public static final String BT_LABEL = "label";
     }
 
@@ -103,6 +104,7 @@ public class Bluetooth_Provider extends ContentProvider {
                     + Bluetooth_Data.BT_ADDRESS + " text default '',"
                     + Bluetooth_Data.BT_NAME + " text default '',"
                     + Bluetooth_Data.BT_RSSI + " integer default 0,"
+                    + Bluetooth_Data.BT_STATUS + " integer default 0,"
                     + Bluetooth_Data.BT_LABEL + " text default ''"
     };
 
@@ -259,6 +261,7 @@ public class Bluetooth_Provider extends ContentProvider {
                 Bluetooth_Data.BT_ADDRESS);
         bluetoothDataMap.put(Bluetooth_Data.BT_NAME, Bluetooth_Data.BT_NAME);
         bluetoothDataMap.put(Bluetooth_Data.BT_RSSI, Bluetooth_Data.BT_RSSI);
+        bluetoothDataMap.put(Bluetooth_Data.BT_STATUS, Bluetooth_Data.BT_STATUS);
         bluetoothDataMap.put(Bluetooth_Data.BT_LABEL, Bluetooth_Data.BT_LABEL);
 
         return true;

@@ -33,10 +33,72 @@ public class StudyUtilsTest {
     }
 
     private static JSONObject sensor(String setting, boolean value) throws JSONException {
+        return sensorValue(setting, value);
+    }
+
+    private static JSONObject sensorValue(String setting, Object value) throws JSONException {
         JSONObject sensor = new JSONObject();
         sensor.put("setting", setting);
         sensor.put("value", value);
         return sensor;
+    }
+
+    @Test
+    public void editableSync_skipsAutomaticUpdates() {
+        assertTrue(StudyUtils.shouldSkipAutomaticConfigSync(true, false));
+    }
+
+    @Test
+    public void editableSync_manualCheckAppliesServerUpdate() {
+        assertFalse(StudyUtils.shouldSkipAutomaticConfigSync(true, true));
+    }
+
+    @Test
+    public void lockedSync_keepsAutomaticUpdates() {
+        assertFalse(StudyUtils.shouldSkipAutomaticConfigSync(false, false));
+    }
+
+    @Test
+    public void editableManualUpdate_requiresPreviewBeforeApplying() {
+        assertTrue(StudyUtils.shouldPreviewManualConfigUpdate(
+                true, true, false, false));
+    }
+
+    @Test
+    public void editableManualUpdate_matchingApprovalCanApply() {
+        assertFalse(StudyUtils.shouldPreviewManualConfigUpdate(
+                true, true, false, true));
+    }
+
+    @Test
+    public void lockedManualUpdateDoesNotRequireParticipantApproval() {
+        assertFalse(StudyUtils.shouldPreviewManualConfigUpdate(
+                false, true, false, false));
+    }
+
+    @Test
+    public void unchangedManualUpdateNeedsNoApproval() {
+        assertFalse(StudyUtils.shouldPreviewManualConfigUpdate(
+                true, true, true, false));
+    }
+
+    @Test
+    public void editableSettingUpdate_preservesTypesAndAddsNewSettings() throws JSONException {
+        JSONObject config = configWithSensors(
+                sensor("status_accelerometer", true),
+                sensorValue("frequency_accelerometer", 20000));
+
+        JSONObject changedStatus =
+                StudyUtils.withSensorSetting(config, "status_accelerometer", "false");
+        JSONObject changedFrequency =
+                StudyUtils.withSensorSetting(changedStatus, "frequency_accelerometer", "400000");
+        JSONObject added =
+                StudyUtils.withSensorSetting(changedFrequency, "frequency_light", "2.5");
+
+        JSONArray sensors = added.getJSONArray("sensors");
+        assertFalse(sensors.getJSONObject(0).getBoolean("value"));
+        assertEquals(400000, sensors.getJSONObject(1).getInt("value"));
+        assertEquals(2.5, sensors.getJSONObject(2).getDouble("value"), 0.0);
     }
 
     @Test
@@ -168,5 +230,38 @@ public class StudyUtilsTest {
         assertFalse(signature.isEmpty());
         assertTrue(signature.contains("status_wifi"));
         assertFalse(signature.contains("status_temperature"));
+    }
+
+    @Test
+    public void consentRequiring_picksEnabledPermissionAndAccessibilitySensors() throws JSONException {
+        JSONObject config = configWithSensors(
+                sensor("status_location_gps", true),   // runtime permission
+                sensor("status_applications", true),   // accessibility service
+                sensor("status_battery", true));       // no gate
+
+        Set<String> result = StudyUtils.consentRequiringEnabledSettings(new JSONArray().put(config));
+
+        assertTrue(result.contains("status_location_gps"));
+        assertTrue(result.contains("status_applications"));
+        assertFalse(result.contains("status_battery"));
+    }
+
+    @Test
+    public void consentRequiring_ignoresDisabledSensors() throws JSONException {
+        JSONObject config = configWithSensors(
+                sensor("status_location_gps", false),
+                sensor("status_battery", true));
+
+        assertTrue(StudyUtils.consentRequiringEnabledSettings(new JSONArray().put(config)).isEmpty());
+    }
+
+    @Test
+    public void consentRequiring_baseOnlyConfig_isEmpty() throws JSONException {
+        JSONObject config = configWithSensors(
+                sensor("status_battery", true),
+                sensor("status_screen", true),
+                sensor("status_accelerometer", true));
+
+        assertTrue(StudyUtils.consentRequiringEnabledSettings(new JSONArray().put(config)).isEmpty());
     }
 }

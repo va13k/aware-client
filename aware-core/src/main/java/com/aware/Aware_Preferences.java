@@ -634,7 +634,10 @@ public class Aware_Preferences {
     public static final String WEBSERVICE_SILENT = "webservice_silent";
 
     /**
-     * Disable the sensors config settings from being updated from the mobile app.
+     * Whether an enrolled participant may maintain a device-specific sensor configuration.
+     * When true, sensor edits made on the phone are persisted into the active study record and
+     * automatic server-config updates are skipped. An explicit "Check for study updates" applies
+     * the complete latest server configuration, including any change that disables this mode.
      */
     public static final String ENABLE_CONFIG_UPDATE = "enable_config_update";
 
@@ -645,6 +648,12 @@ public class Aware_Preferences {
      * live ACTION_AWARE_STUDY_CONFIG_UPDATED broadcast; cleared once shown.
      */
     public static final String PENDING_STUDY_UPDATE_NOTICE = "pending_study_update_notice";
+
+    /**
+     * Validated server configuration found by an editable-mode manual check but not yet accepted
+     * by the participant.
+     */
+    public static final String PENDING_STUDY_CONFIG_APPROVAL = "pending_study_config_approval";
 
     /**
      * Signature of the last detected mismatch between live sensor settings and the study config
@@ -660,6 +669,28 @@ public class Aware_Preferences {
      * doesn't restart every sensor service on every ~1 minute sync poll forever.
      */
     public static final String LAST_DRIFT_RECONCILE_TS = "last_drift_reconcile_ts";
+
+    /**
+     * Record of the study consent the participant last gave: the study URL plus a fingerprint of
+     * the promptable-sensor set they agreed to (see SensorCollection.consentFingerprint in
+     * aware-phone). Written when the consent screen's Continue completes; compared at join time so
+     * a re-join with an unchanged sensor set can skip the screen. Deliberately NOT preserved across
+     * Aware.reset(): quitting a study wipes it, so the next join always asks for consent again —
+     * OS permissions surviving the quit must not stand in for renewed agreement. Config-sync's
+     * internal reset (StudyUtils.applySettings) snapshots and restores it, since a background sync
+     * is not a consent event in either direction.
+     */
+    public static final String STUDY_CONSENT_RECORD = "study_consent_record";
+
+    /**
+     * Comma-joined status_* keys the participant explicitly declined consent for. Source of truth
+     * for "off by participant choice" (as opposed to "off because the config says so"): applySettings
+     * forces these to false regardless of the config, and syncStudyConfig's drift self-heal excludes
+     * them so a decline isn't re-enabled on the next ~1-minute poll. Preserved across the reset()
+     * inside applySettings, but — like STUDY_CONSENT_RECORD — wiped by the Aware.reset() every quit
+     * path calls, so declines are scoped to the current enrolment.
+     */
+    public static final String STUDY_DECLINED_SENSORS = "study_declined_sensors";
 
     /**
      * Key management strategy.

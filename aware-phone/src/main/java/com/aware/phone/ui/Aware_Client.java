@@ -53,12 +53,15 @@ import com.aware.Aware_Preferences;
 import com.aware.Notes;
 import com.aware.phone.R;
 import com.aware.phone.ui.dialogs.JoinStudyDialog;
+import com.aware.phone.ui.dialogs.QuitStudyDialog;
 import com.aware.phone.ui.prefs.SensorCollection;
 import com.aware.phone.ui.prefs.StudyCard;
 import com.aware.phone.ui.prefs.TakeNotesPref;
 import com.aware.phone.utils.AwareUtil;
 import com.aware.providers.Aware_Provider;
 import com.aware.ui.PermissionsHandler;
+import com.aware.utils.SensorAvailability;
+import com.aware.utils.StudyUtils;
 import com.aware.ScreenShot;
 
 import org.json.JSONArray;
@@ -68,14 +71,18 @@ import org.json.JSONObject;
 import java.lang.reflect.Field;
 import java.text.DateFormat;
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.Date;
+import java.util.HashSet;
 import java.util.Hashtable;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
 import java.util.UUID;
 
 import androidx.appcompat.widget.Toolbar;
+import androidx.core.app.ActivityCompat;
 import androidx.core.app.NotificationCompat;
 import androidx.core.content.ContextCompat;
 import androidx.core.content.PermissionChecker;
@@ -110,6 +117,9 @@ public class Aware_Client extends Aware_Activity {
     private TakeNotesPref originalTakeNotesPref = null;
     // Generated "previously joined studies" rows (device mode); tracked so we can refresh them.
     private final ArrayList<Preference> studyHistoryPrefs = new ArrayList<>();
+    // Keep the originally inflated sensor screens even when locked mode temporarily removes them.
+    // This lets a study-config update add/remove only affected rows without recreating the Activity.
+    private final Map<String, PreferenceScreen> sensorPreferenceScreens = new LinkedHashMap<>();
 
     private BroadcastReceiver screenshotServiceStoppedReceiver = new BroadcastReceiver() {
         @Override
@@ -134,20 +144,187 @@ public class Aware_Client extends Aware_Activity {
     private BroadcastReceiver studyConfigUpdatedReceiver = new BroadcastReceiver() {
         @Override
         public void onReceive(Context context, Intent intent) {
-            if (Aware.ACTION_AWARE_STUDY_CONFIG_UPDATED.equals(intent.getAction())) {
+            if (Aware.ACTION_AWARE_STUDY_CONFIG_UPDATE_AVAILABLE.equals(intent.getAction())) {
+                showStudyConfigUpdatePreview(
+                        intent.getStringArrayListExtra(Aware.EXTRA_SENSORS_ADDED),
+                        intent.getStringArrayListExtra(Aware.EXTRA_SENSORS_REMOVED),
+                        intent.getBooleanExtra(
+                                Aware.EXTRA_CONFIG_UPDATE_ALLOWED_CHANGED, false)
+                                ? intent.getBooleanExtra(
+                                        Aware.EXTRA_CONFIG_UPDATE_ALLOWED_NEW_VALUE, false)
+                                : null);
+            } else if (Aware.ACTION_AWARE_STUDY_CONFIG_UPDATED.equals(intent.getAction())) {
                 ArrayList<String> added = intent.getStringArrayListExtra(Aware.EXTRA_SENSORS_ADDED);
                 ArrayList<String> removed = intent.getStringArrayListExtra(Aware.EXTRA_SENSORS_REMOVED);
                 Boolean configUpdateAllowedNewValue = intent.getBooleanExtra(Aware.EXTRA_CONFIG_UPDATE_ALLOWED_CHANGED, false)
                         ? intent.getBooleanExtra(Aware.EXTRA_CONFIG_UPDATE_ALLOWED_NEW_VALUE, false) : null;
+                boolean manual = intent.getBooleanExtra(Aware.EXTRA_CONFIG_UPDATE_MANUAL, false);
                 // Don't clear the pending notice here: this receiver stays registered (and keeps
                 // receiving broadcasts) even while the Activity is merely stopped/backgrounded, not
                 // just while visible — so a dialog "shown" here may never actually be seen. Only
                 // notifyStudyConfigUpdated()'s own dismiss handler, which only fires once the
                 // participant has actually interacted with a visible dialog, clears it.
-                notifyStudyConfigUpdated(added, removed, configUpdateAllowedNewValue);
+                notifyStudyConfigUpdated(added, removed, configUpdateAllowedNewValue, manual);
             }
         }
     };
+
+    private boolean studyConfigPreviewOpen = false;
+
+    private void showStudyConfigUpdatePreview(
+            ArrayList<String> added,
+            ArrayList<String> removed,
+            Boolean configUpdateAllowedNewValue) {
+        if (studyConfigPreviewOpen || isFinishing()) return;
+        studyConfigPreviewOpen = true;
+        dismissOpenSubPrefDialogIfAny();
+
+        StringBuilder message = new StringBuilder(
+                "The server has a different sensor configuration.\n"
+                        + "Review the changes before replacing your current settings.");
+        if (added != null && !added.isEmpty()) {
+            message.append("\n\nServer sensors to activate:\n• ")
+                    .append(TextUtils.join("\n• ", added));
+        }
+        if (removed != null && !removed.isEmpty()) {
+            message.append("\n\nYour active sensors to deactivate:\n• ")
+                    .append(TextUtils.join("\n• ", removed));
+        }
+        if ((added == null || added.isEmpty()) && (removed == null || removed.isEmpty())) {
+            message.append("\n\nThe update changes sensor frequencies or other study settings.");
+        }
+        if (configUpdateAllowedNewValue != null && !configUpdateAllowedNewValue) {
+            message.append("\n\nThis update also disables editable mode.");
+        }
+        message.append("\n\nAgreeing replaces your local sensor configuration. "
+                + "If new sensors need permission, you will review consent next.");
+
+        new AlertDialog.Builder(this)
+                .setTitle("Study update available")
+                .setMessage(message.toString())
+                .setPositiveButton("Agree and update", new DialogInterface.OnClickListener() {
+                    @Override
+                    public void onClick(DialogInterface dialog, int which) {
+                        Intent approved = new Intent(Aware.ACTION_AWARE_SYNC_CONFIG);
+                        approved.putExtra(Aware.SYNC_CONFIG_EXTRA_TOAST, true);
+                        approved.putExtra(Aware.SYNC_CONFIG_EXTRA_MANUAL, true);
+                        approved.putExtra(Aware.SYNC_CONFIG_EXTRA_APPROVED, true);
+                        sendBroadcast(approved);
+                    }
+                })
+                .setNegativeButton("Keep my settings", new DialogInterface.OnClickListener() {
+                    @Override
+                    public void onClick(DialogInterface dialog, int which) {
+                        keepParticipantStudySettings();
+                    }
+                })
+                .setNeutralButton("Leave study", new DialogInterface.OnClickListener() {
+                    @Override
+                    public void onClick(DialogInterface dialog, int which) {
+                        Aware.setSetting(
+                                getApplicationContext(),
+                                Aware_Preferences.PENDING_STUDY_CONFIG_APPROVAL,
+                                "");
+                        new QuitStudyDialog(Aware_Client.this).showDialog();
+                    }
+                })
+                .setOnCancelListener(new DialogInterface.OnCancelListener() {
+                    @Override
+                    public void onCancel(DialogInterface dialog) {
+                        keepParticipantStudySettings();
+                    }
+                })
+                .setOnDismissListener(new DialogInterface.OnDismissListener() {
+                    @Override
+                    public void onDismiss(DialogInterface dialog) {
+                        studyConfigPreviewOpen = false;
+                    }
+                })
+                .show();
+    }
+
+    private void keepParticipantStudySettings() {
+        Aware.setSetting(
+                getApplicationContext(),
+                Aware_Preferences.PENDING_STUDY_CONFIG_APPROVAL,
+                "");
+        Aware.logStudyCompliance(
+                getApplicationContext(),
+                "participant declined server config update and kept local settings");
+        Toast.makeText(
+                getApplicationContext(),
+                "Your current sensor settings were kept.",
+                Toast.LENGTH_SHORT).show();
+    }
+
+    private void showPendingStudyConfigApprovalIfAny() {
+        if (!Aware.isStudy(getApplicationContext()) || isStudySettingsLocked()) return;
+        String pending = Aware.getSetting(
+                getApplicationContext(),
+                Aware_Preferences.PENDING_STUDY_CONFIG_APPROVAL);
+        if (pending == null || pending.trim().length() == 0) return;
+        try {
+            JSONObject local = Aware.getActiveStudyConfig(getApplicationContext());
+            JSONObject server = new JSONObject(pending);
+            Set<String> localSensors = activeSensorNames(local);
+            Set<String> serverSensors = activeSensorNames(server);
+
+            ArrayList<String> added = new ArrayList<>();
+            for (String sensor : serverSensors) {
+                if (!localSensors.contains(sensor)) added.add(sensor);
+            }
+            ArrayList<String> removed = new ArrayList<>();
+            for (String sensor : localSensors) {
+                if (!serverSensors.contains(sensor)) removed.add(sensor);
+            }
+            showStudyConfigUpdatePreview(
+                    added,
+                    removed,
+                    editableModeValueChanged(local, server));
+        } catch (JSONException e) {
+            Aware.setSetting(
+                    getApplicationContext(),
+                    Aware_Preferences.PENDING_STUDY_CONFIG_APPROVAL,
+                    "");
+        }
+    }
+
+    private static Set<String> activeSensorNames(JSONObject config) {
+        Set<String> active = new HashSet<>();
+        JSONArray sensors = config == null ? null : config.optJSONArray("sensors");
+        if (sensors == null) return active;
+        for (int i = 0; i < sensors.length(); i++) {
+            JSONObject sensor = sensors.optJSONObject(i);
+            if (sensor == null) continue;
+            String setting = sensor.optString("setting", "");
+            if (setting.startsWith("status_") && sensor.optBoolean("value", false)) {
+                active.add(setting.substring("status_".length()).replace('_', ' '));
+            }
+        }
+        return active;
+    }
+
+    private static Boolean editableModeValueChanged(
+            JSONObject localConfig, JSONObject serverConfig) {
+        Boolean local = sensorBooleanValue(
+                localConfig, Aware_Preferences.ENABLE_CONFIG_UPDATE);
+        Boolean server = sensorBooleanValue(
+                serverConfig, Aware_Preferences.ENABLE_CONFIG_UPDATE);
+        return server == null || server.equals(local) ? null : server;
+    }
+
+    private static Boolean sensorBooleanValue(JSONObject config, String settingName) {
+        JSONArray sensors = config == null ? null : config.optJSONArray("sensors");
+        if (sensors == null) return null;
+        for (int i = 0; i < sensors.length(); i++) {
+            JSONObject sensor = sensors.optJSONObject(i);
+            if (sensor != null
+                    && settingName.equals(sensor.optString("setting", ""))) {
+                return sensor.optBoolean("value", false);
+            }
+        }
+        return null;
+    }
 
     /**
      * If a study config update was applied while no UI was around to receive the live broadcast
@@ -171,20 +348,16 @@ public class Aware_Client extends Aware_Activity {
             }
             Boolean configUpdateAllowedNewValue = notice.optBoolean("cfgChanged", false)
                     ? notice.optBoolean("cfgNewValue", false) : null;
-            notifyStudyConfigUpdated(added, removed, configUpdateAllowedNewValue);
+            notifyStudyConfigUpdated(
+                    added, removed, configUpdateAllowedNewValue,
+                    notice.optBoolean("manual", false));
         } catch (JSONException e) {
             e.printStackTrace();
             Aware.setSetting(getApplicationContext(), Aware_Preferences.PENDING_STUDY_UPDATE_NOTICE, "");
         }
     }
 
-    /**
-     * Tracks the currently-open nested PreferenceScreen dialog (e.g. "AWARE Study"), set in
-     * onPreferenceTreeClick. recreate() destroys this Activity's window; if a dialog anchored to
-     * it is still showing at that point, Android throws a fatal WindowLeaked crash — which is
-     * exactly what "the app closes" turned out to be, since the sync-now button that triggers a
-     * config update notification lives inside one of these nested screens. Dismiss it first.
-     */
+    /** Tracks the currently-open nested PreferenceScreen dialog (e.g. "AWARE Study"). */
     private Dialog openSubPrefDialog = null;
 
     private void dismissOpenSubPrefDialogIfAny() {
@@ -196,12 +369,13 @@ public class Aware_Client extends Aware_Activity {
 
     /**
      * Tells the participant the study changed — sensors added/removed, and/or whether they can now
-     * edit their own settings — then rebuilds the screen so the new state is shown. If nothing
-     * curated changed (e.g. a threshold/frequency tweak the participant doesn't need to know about),
-     * there's nothing to show and nothing worth rebuilding the screen for.
+     * edit their own settings — then applies a targeted sensor-list diff. If nothing curated changed
+     * (e.g. a threshold/frequency tweak the participant doesn't need to know about), there's nothing
+     * to show and nothing worth refreshing.
      */
     private void notifyStudyConfigUpdated(ArrayList<String> added, ArrayList<String> removed,
-                                          Boolean configUpdateAllowedNewValue) {
+                                          Boolean configUpdateAllowedNewValue,
+                                          boolean manual) {
         boolean hasChanges = (added != null && !added.isEmpty()) || (removed != null && !removed.isEmpty())
                 || configUpdateAllowedNewValue != null;
         if (!hasChanges || isFinishing()) {
@@ -210,9 +384,42 @@ public class Aware_Client extends Aware_Activity {
 
         dismissOpenSubPrefDialogIfAny();
 
+        // Some newly-added sensors need the participant's permission before they can collect and were
+        // held off until agreed. Offer a "Review" action when any are pending, and word the "added"
+        // line so it doesn't claim those are already collecting.
+        JSONObject activeConfig = Aware.getActiveStudyConfig(getApplicationContext());
+        JSONArray activeConfigs = new JSONArray();
+        if (activeConfig != null) activeConfigs.put(activeConfig);
+        final boolean hasHeld = SensorCollection.hasHeldConsents(getApplicationContext(), activeConfigs);
+
+        // An explicit check is the participant's request to adopt the server configuration now.
+        // If that introduces sensors requiring consent, continue directly into the consent screen
+        // instead of making them acknowledge one dialog merely to open the next one.
+        if (manual && hasHeld) {
+            Aware.setSetting(
+                    getApplicationContext(), Aware_Preferences.PENDING_STUDY_UPDATE_NOTICE, "");
+            refreshSensorPreferencesForCurrentMode();
+            Toast.makeText(
+                    getApplicationContext(),
+                    "Study updated. Review the permissions required by its sensors.",
+                    Toast.LENGTH_LONG).show();
+            Intent consent = new Intent(getApplicationContext(), SensorConsentActivity.class);
+            consent.putExtra(SensorConsentActivity.EXTRA_UPDATE_MODE, true);
+            startActivity(consent);
+            return;
+        }
+        if (manual) {
+            // The participant already approved these exact changes in the preview dialog.
+            // Refresh the list without asking them to acknowledge the same update a second time.
+            Aware.setSetting(
+                    getApplicationContext(), Aware_Preferences.PENDING_STUDY_UPDATE_NOTICE, "");
+            refreshSensorPreferencesForCurrentMode();
+            return;
+        }
+
         StringBuilder msg = new StringBuilder("The study was updated by the researcher.\n");
         if (added != null && !added.isEmpty()) {
-            msg.append("\nNow collecting:\n• ").append(TextUtils.join("\n• ", added));
+            msg.append("\nAdded to the study:\n• ").append(TextUtils.join("\n• ", added));
         }
         if (removed != null && !removed.isEmpty()) {
             msg.append("\n\nNo longer collecting:\n• ").append(TextUtils.join("\n• ", removed));
@@ -222,11 +429,13 @@ public class Aware_Client extends Aware_Activity {
                     ? "You can now change your own settings for this study."
                     : "Your settings are locked to the researcher's configuration again.");
         }
+        if (hasHeld) {
+            msg.append("\n\nSome added sensors need your permission before they can collect. Review them now?");
+        }
 
-        new AlertDialog.Builder(this)
+        AlertDialog.Builder builder = new AlertDialog.Builder(this)
                 .setTitle("Study updated")
                 .setMessage(msg.toString())
-                .setPositiveButton("OK", null)
                 .setOnDismissListener(new DialogInterface.OnDismissListener() {
                     @Override
                     public void onDismiss(DialogInterface dialog) {
@@ -234,11 +443,104 @@ public class Aware_Client extends Aware_Activity {
                         // visible dialog — not eagerly when merely attempting to show one (see the
                         // comment on studyConfigUpdatedReceiver for why that was unsafe).
                         Aware.setSetting(getApplicationContext(), Aware_Preferences.PENDING_STUDY_UPDATE_NOTICE, "");
-                        // rebuild the sensor list after the participant has seen the changes
-                        if (!isFinishing()) recreate();
+                        // Add/remove only affected sensor rows; keep the Activity and surrounding UI.
+                        if (!isFinishing()) refreshSensorPreferencesForCurrentMode();
                     }
-                })
-                .show();
+                });
+        if (hasHeld) {
+            builder.setPositiveButton("Review", new DialogInterface.OnClickListener() {
+                @Override
+                public void onClick(DialogInterface dialog, int which) {
+                    Intent consent = new Intent(getApplicationContext(), SensorConsentActivity.class);
+                    consent.putExtra(SensorConsentActivity.EXTRA_UPDATE_MODE, true);
+                    consent.setFlags(Intent.FLAG_ACTIVITY_NEW_TASK | Intent.FLAG_ACTIVITY_CLEAR_TASK);
+                    startActivity(consent);
+                }
+            });
+            builder.setNegativeButton("Not now", null);
+        } else {
+            builder.setPositiveButton("OK", null);
+        }
+        builder.show();
+    }
+
+    /** Saves the full XML-defined sensor list before locked-mode filtering removes any rows. */
+    private void cacheSensorPreferenceScreens() {
+        sensorPreferenceScreens.clear();
+        Preference sensors = findPreference("sensors");
+        if (!(sensors instanceof PreferenceCategory)) return;
+        PreferenceCategory category = (PreferenceCategory) sensors;
+        for (int i = 0; i < category.getPreferenceCount(); i++) {
+            Preference child = category.getPreference(i);
+            if (child instanceof PreferenceScreen && SensorCollection.isSensor(child.getKey())) {
+                sensorPreferenceScreens.put(child.getKey(), (PreferenceScreen) child);
+            }
+        }
+    }
+
+    /**
+     * Reconciles cached sensor screens with the current mode/config, relying on PreferenceGroup's
+     * own hierarchy notifications. Then refreshes only status preferences in rows that are visible.
+     */
+    private void refreshSensorPreferencesForCurrentMode() {
+        Preference sensors = findPreference("sensors");
+        if (!(sensors instanceof PreferenceCategory)) return;
+        PreferenceCategory category = (PreferenceCategory) sensors;
+        JSONObject config = Aware.getActiveStudyConfig(getApplicationContext());
+        boolean showAll = !isStudySettingsLocked();
+        ArrayList<Preference> visibleStatuses = new ArrayList<>();
+
+        for (PreferenceScreen screen : sensorPreferenceScreens.values()) {
+            boolean shouldShow = showAll || isSensorActiveInConfig(screen, config);
+            boolean attached = getPreferenceParent(screen) == category;
+            if (shouldShow && !attached) {
+                category.addPreference(screen);
+            } else if (!shouldShow && attached) {
+                category.removePreference(screen);
+            }
+            if (shouldShow) {
+                collectStatusPreferences(screen, visibleStatuses);
+            }
+        }
+
+        if (!visibleStatuses.isEmpty()) {
+            new SettingsSync().executeOnExecutor(
+                    AsyncTask.THREAD_POOL_EXECUTOR,
+                    visibleStatuses.toArray(new Preference[visibleStatuses.size()]));
+        }
+    }
+
+    private static void collectStatusPreferences(
+            PreferenceGroup group, ArrayList<Preference> destination) {
+        for (int i = 0; i < group.getPreferenceCount(); i++) {
+            Preference child = group.getPreference(i);
+            if (child.getKey() != null && child.getKey().startsWith("status_")) {
+                destination.add(child);
+            }
+            if (child instanceof PreferenceGroup) {
+                collectStatusPreferences((PreferenceGroup) child, destination);
+            }
+        }
+    }
+
+    private static boolean isSensorActiveInConfig(PreferenceScreen screen, JSONObject config) {
+        if (config == null) return false;
+        HashSet<String> statusKeys = new HashSet<>();
+        ArrayList<Preference> statuses = new ArrayList<>();
+        collectStatusPreferences(screen, statuses);
+        for (Preference status : statuses) statusKeys.add(status.getKey());
+
+        JSONArray sensors = config.optJSONArray("sensors");
+        if (sensors == null) return false;
+        for (int i = 0; i < sensors.length(); i++) {
+            JSONObject sensor = sensors.optJSONObject(i);
+            if (sensor != null
+                    && sensor.optBoolean("value", false)
+                    && statusKeys.contains(sensor.optString("setting"))) {
+                return true;
+            }
+        }
+        return false;
     }
 
     @Override
@@ -255,6 +557,7 @@ public class Aware_Client extends Aware_Activity {
         if (Aware.isStudy(getApplicationContext())) {
             setContentView(R.layout.activity_aware_study);
             addPreferencesFromResource(R.xml.pref_aware_light);
+            cacheSensorPreferenceScreens();
 
             // Initialize plugin navigation
             setupPluginNavigation();
@@ -290,8 +593,13 @@ public class Aware_Client extends Aware_Activity {
         // Only permissions the AWARE core itself needs to start are requested up front.
         // Sensor-specific permissions (location, phone state, bluetooth scanning, etc.) are requested on demand by each sensor's Service (see Aware_Sensor.onStartCommand)
 
-        // Core sync framework (account creation + SyncAdapters)
-        REQUIRED_PERMISSIONS.add(Manifest.permission.GET_ACCOUNTS);
+        // Core sync framework (account creation + SyncAdapters). GET_ACCOUNTS is only
+        // needed below API 26: from Android 8.0 onward, Account Visibility lets an app
+        // see/manage an account it created itself (ours, via Aware_Accounts' own
+        // AbstractAccountAuthenticator) without this permission -- requesting it anyway
+        // is what put a Contacts-labelled prompt in front of participants for no reason.
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.O)
+            REQUIRED_PERMISSIONS.add(Manifest.permission.GET_ACCOUNTS);
         REQUIRED_PERMISSIONS.add(Manifest.permission.WRITE_SYNC_SETTINGS);
         REQUIRED_PERMISSIONS.add(Manifest.permission.READ_SYNC_SETTINGS);
         REQUIRED_PERMISSIONS.add(Manifest.permission.READ_SYNC_STATS);
@@ -323,15 +631,22 @@ public class Aware_Client extends Aware_Activity {
         awarePackages.addDataScheme("package");
         registerReceiver(packageMonitor, awarePackages);
 
-        Intent whitelisting = new Intent(Settings.ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS);
-        whitelisting.setData(Uri.parse("package:" + getPackageName()));
-        startActivity(whitelisting);
+        PowerManager powerManager = (PowerManager) getSystemService(Context.POWER_SERVICE);
+        if (Build.VERSION.SDK_INT <= Build.VERSION_CODES.LOLLIPOP_MR1
+                || !powerManager.isIgnoringBatteryOptimizations(getPackageName())) {
+            Intent whitelisting = new Intent(Settings.ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS);
+            whitelisting.setData(Uri.parse("package:" + getPackageName()));
+            startActivity(whitelisting);
+        }
 
         // Register the broadcast receiver
         registerReceiver(screenshotServiceStoppedReceiver, new IntentFilter(ScreenShot.ACTION_SCREENSHOT_SERVICE_STOPPED));
         registerReceiver(screenshotStatusReceiver, new IntentFilter(ScreenShot.ACTION_SCREENSHOT_STATUS));
         registerReceiver(noteStatusReceiver, new IntentFilter(Notes.ACTION_NOTE_STATUS));
-        registerReceiver(studyConfigUpdatedReceiver, new IntentFilter(Aware.ACTION_AWARE_STUDY_CONFIG_UPDATED));
+        IntentFilter studyConfigUpdates =
+                new IntentFilter(Aware.ACTION_AWARE_STUDY_CONFIG_UPDATED);
+        studyConfigUpdates.addAction(Aware.ACTION_AWARE_STUDY_CONFIG_UPDATE_AVAILABLE);
+        registerReceiver(studyConfigUpdatedReceiver, studyConfigUpdates);
         checkAndStartScreenshotService();
         checkAndStartPlugin();
     }
@@ -373,6 +688,11 @@ public class Aware_Client extends Aware_Activity {
             return true;
         }
         if (preference instanceof PreferenceScreen) {
+            // Editable mode opens the sensor's settings screen; surface the same collection status the
+            // locked view shows in a dialog as a row at the top of that screen.
+            if (SensorCollection.isSensor(preference.getKey())) {
+                showSensorStatusRow((PreferenceScreen) preference);
+            }
             Dialog subpref = ((PreferenceScreen) preference).getDialog();
             ViewGroup root = (ViewGroup) subpref.findViewById(android.R.id.content).getParent();
             Toolbar toolbar = new Toolbar(this);
@@ -399,30 +719,204 @@ public class Aware_Client extends Aware_Activity {
         SensorCollection.Status status =
                 SensorCollection.getStatus(getApplicationContext(), sensor.getKey(), accessibilityOn);
 
-        StringBuilder msg = new StringBuilder();
-        msg.append(status.collecting ? "●  Collecting data" : "○  Not collecting");
-        msg.append("\n\n").append(status.reason);
-        if (status.lastDataMs > 0) {
-            msg.append("\n\nLast data: ")
-               .append(DateUtils.getRelativeTimeSpanString(status.lastDataMs, System.currentTimeMillis(),
-                       DateUtils.MINUTE_IN_MILLIS));
+        JSONObject activeConfig = Aware.getActiveStudyConfig(getApplicationContext());
+        final JSONArray activeConfigs = new JSONArray();
+        if (activeConfig != null) activeConfigs.put(activeConfig);
+        final List<SensorCollection.ConsentItem> heldForCategory =
+                SensorCollection.heldConsentsForCategory(
+                        getApplicationContext(), activeConfigs, sensor.getKey());
+
+        CharSequence lastData = status.lastDataMs > 0
+                ? DateUtils.getRelativeTimeSpanString(status.lastDataMs, System.currentTimeMillis(),
+                        DateUtils.MINUTE_IN_MILLIS)
+                : "never";
+        StringBuilder msg = new StringBuilder(
+                SensorCollection.statusSummary(status, lastData));
+
+        AlertDialog.Builder builder = new AlertDialog.Builder(this)
+                .setTitle(sensor.getTitle())
+                .setMessage(msg.toString());
+
+        // A category can already be collecting while one of its other consent choices is still off
+        // (Applications contains both app usage and masked keyboard text). Keep re-consent reachable
+        // in that case instead of hiding it merely because the category has recent application data.
+        final SensorCollection.ConsentItem consent = SensorCollection.consentItemForCategory(sensor.getKey());
+        if (!heldForCategory.isEmpty()) {
+            msg.append("\n\nWaiting for your consent: ");
+            List<String> heldLabels = new ArrayList<>();
+            for (SensorCollection.ConsentItem held : heldForCategory) heldLabels.add(held.label);
+            msg.append(TextUtils.join(", ", heldLabels));
+            builder.setMessage(msg.toString());
+            builder.setPositiveButton("Review consent", new DialogInterface.OnClickListener() {
+                @Override
+                public void onClick(DialogInterface dialog, int which) {
+                    Intent review = new Intent(getApplicationContext(), SensorConsentActivity.class);
+                    review.putExtra(SensorConsentActivity.EXTRA_UPDATE_MODE, true);
+                    startActivity(review);
+                }
+            });
+            builder.setNegativeButton("Close", null);
+        } else if (!status.collecting && consent != null) {
+            builder.setPositiveButton("Enable", new DialogInterface.OnClickListener() {
+                @Override
+                public void onClick(DialogInterface dialog, int which) {
+                    enableConsentSensor(consent);
+                }
+            });
+            builder.setNegativeButton("Close", null);
         } else {
-            msg.append("\n\nLast data: never");
+            builder.setPositiveButton("OK", null);
         }
-        if (status.fixHint != null) {
-            msg.append("\n\nWhat to do: ").append(status.fixHint);
+        builder.show();
+    }
+
+    /**
+     * Inserts (or refreshes) a non-selectable row at the top of a sensor's settings screen showing the
+     * same collecting / why / last-data information the locked view presents in a dialog, so the
+     * participant sees a sensor's live status while editing it.
+     */
+    private void showSensorStatusRow(PreferenceScreen screen) {
+        String rowKey = screen.getKey() + "_collection_status";
+        Preference row = screen.findPreference(rowKey);
+        if (row == null) {
+            row = new Preference(this);
+            row.setKey(rowKey);
+            row.setSelectable(false);
+            row.setOrder(-1); // above the sensor's own settings
+            screen.addPreference(row);
         }
 
+        boolean accessibilityOn = isAccessibilityServiceEnabled(this, Applications.class);
+        SensorCollection.Status status =
+                SensorCollection.getStatus(getApplicationContext(), screen.getKey(), accessibilityOn);
+        CharSequence lastData = status.lastDataMs > 0
+                ? DateUtils.getRelativeTimeSpanString(status.lastDataMs, System.currentTimeMillis(),
+                        DateUtils.MINUTE_IN_MILLIS)
+                : "never";
+        row.setTitle(SensorCollection.statusHeadline(status));
+        row.setSummary(SensorCollection.statusDetail(status.reason, lastData, status.fixHint));
+
+        // A physical sensor that does not exist can never collect, so its Activate checkbox must not
+        // imply otherwise. Keep the screen open for the explanatory status row and other information,
+        // but disable only its activation control and clear any stale enabled value.
+        if (!SensorCollection.isHardwareAvailable(getApplicationContext(), screen.getKey())) {
+            Preference activation = screen.findPreference("status_" + screen.getKey());
+            if (activation instanceof CheckBoxPreference) {
+                CheckBoxPreference checkbox = (CheckBoxPreference) activation;
+                checkbox.setEnabled(false);
+                checkbox.setSummary("Unavailable on this device");
+                if (checkbox.isChecked()) {
+                    revertingUnavailablePreference = true;
+                    try {
+                        Aware.setSetting(getApplicationContext(), activation.getKey(), false);
+                        checkbox.setChecked(false);
+                    } finally {
+                        revertingUnavailablePreference = false;
+                    }
+                    Aware.startAWARE(getApplicationContext());
+                }
+            }
+        }
+    }
+
+    private static final int RC_ENABLE_SENSOR = 47001;
+
+    // The consent group whose permission request is in flight from enableConsentSensor(), so the
+    // result callback can follow up (e.g. nudge for background location once Location is granted).
+    private String pendingEnableConsentKey;
+
+    /**
+     * Participant-initiated enable of a study sensor they hadn't consented to: undo the decline, turn
+     * on the sub-settings the study actually wants, start collection, and route to whatever grant is
+     * still missing (runtime permission dialog, or the accessibility / Location-services screens).
+     */
+    private void enableConsentSensor(SensorCollection.ConsentItem consent) {
+        // Un-decline this consent group so the config sync won't force it back off.
+        Set<String> declined = new HashSet<>(Arrays.asList(
+                Aware.getSetting(getApplicationContext(), Aware_Preferences.STUDY_DECLINED_SENSORS).split(",")));
+        declined.removeAll(Arrays.asList(consent.statusSettings));
+        declined.remove("");
+        Aware.setSetting(getApplicationContext(), Aware_Preferences.STUDY_DECLINED_SENSORS,
+                TextUtils.join(",", declined));
+
+        // Turn on only the sub-settings the study config enables (fall back to the whole group if the
+        // config can't be read), so enabling "Calls & messages" doesn't switch on more than the study wants.
+        List<String> toEnable = SensorCollection.configEnabledSettings(
+                Aware.getActiveStudyConfig(getApplicationContext()), consent.statusSettings);
+        if (toEnable.isEmpty()) toEnable = Arrays.asList(consent.statusSettings);
+        for (String setting : toEnable) {
+            Aware.setSetting(getApplicationContext(), setting, true);
+        }
+
+        JSONArray configs = new JSONArray();
+        JSONObject activeConfig = Aware.getActiveStudyConfig(getApplicationContext());
+        if (activeConfig != null) configs.put(activeConfig);
+        Aware.logStudyCompliance(getApplicationContext(),
+                "consent updated: " + SensorCollection.consentStateSummary(configs, declined));
+
+        Aware.startAWARE(getApplicationContext());
+
+        promptGrantsFor(consent);
+    }
+
+    /**
+     * Route the participant to whatever grant a just-enabled sensor still needs — the accessibility
+     * service for app/keyboard/screen sensors, or its runtime permissions — skipping anything already
+     * in place. Shared by the study "Enable" path and by a direct checkbox toggle in editable mode, so
+     * enabling a sensor always surfaces the same consent prompts. No-op for sensors that need neither.
+     */
+    private void promptGrantsFor(SensorCollection.ConsentItem consent) {
+        if (consent == null) return;
+        if (consent.needsAccessibility) {
+            // The accessibility service is a single shared toggle, so if it's already on (enabled for
+            // another accessibility sensor) there's nothing to send them to.
+            if (!SensorCollection.isAccessibilityServiceEnabled(getApplicationContext())) {
+                enableAccessibilityService();
+            }
+        } else if (consent.permissions.length > 0) {
+            pendingEnableConsentKey = consent.key;
+            ActivityCompat.requestPermissions(this, consent.permissions, RC_ENABLE_SENSOR);
+        }
+    }
+
+    @Override
+    public void onRequestPermissionsResult(int requestCode, String[] permissions, int[] grantResults) {
+        super.onRequestPermissionsResult(requestCode, permissions, grantResults);
+        if (requestCode == RC_ENABLE_SENSOR) {
+            // Whatever was granted, (re)start AWARE so the just-enabled sensor comes up now.
+            Aware.startAWARE(getApplicationContext());
+            // Foreground location alone stops logging when AWARE isn't open — nudge for "Allow all
+            // the time" so location collected from here is complete, just like the consent screen does.
+            if ("locations".equals(pendingEnableConsentKey)
+                    && !SensorCollection.hasBackgroundLocation(getApplicationContext())) {
+                promptAlwaysLocation();
+            }
+            pendingEnableConsentKey = null;
+        }
+    }
+
+    private void promptAlwaysLocation() {
         new AlertDialog.Builder(this)
-                .setTitle(sensor.getTitle())
-                .setMessage(msg.toString())
-                .setPositiveButton("OK", null)
+                .setTitle("Set location to \"Allow all the time\"")
+                .setMessage("To record the places you visit continuously — even when AWARE isn't open — " +
+                        "set this app's Location permission to \"Allow all the time\". With only " +
+                        "\"While using the app\", location is recorded just while AWARE is open, so the data " +
+                        "will be incomplete.")
+                .setPositiveButton("Open settings", new DialogInterface.OnClickListener() {
+                    @Override
+                    public void onClick(DialogInterface dialog, int which) {
+                        startActivity(new Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS,
+                                Uri.parse("package:" + getPackageName())));
+                    }
+                })
+                .setNegativeButton("Not now", null)
                 .show();
     }
 
     // Guards the revert below from re-triggering itself: reverting a preference re-persists it,
     // which fires this listener again for the same key.
     private boolean revertingStudyPreference = false;
+    private boolean revertingUnavailablePreference = false;
 
     /**
      * Settings stay researcher-controlled while enrolled in a study, unless the researcher opted
@@ -436,6 +930,8 @@ public class Aware_Client extends Aware_Activity {
 
     @Override
     public void onSharedPreferenceChanged(SharedPreferences sharedPreferences, String key) {
+        if (revertingUnavailablePreference) return;
+
         // onPreferenceTreeClick only stops navigating INTO a sensor's screen — it doesn't stop a
         // change from taking effect once a checkbox is visible and tapped. Enforce it here too, at
         // the point the value actually gets written, so a participant can never actually flip a
@@ -470,8 +966,38 @@ public class Aware_Client extends Aware_Activity {
                 value = String.valueOf(sharedPreferences.getInt(key, 0));
         }
 
+        // Defense in depth for unavailable physical sensors. The editable screen disables the
+        // checkbox, but reject the write as well in case another preference/UI path attempts it.
+        if ("true".equals(value)
+                && key.startsWith("status_")
+                && !SensorAvailability.isHardwareAvailable(getApplicationContext(), key)) {
+            revertingUnavailablePreference = true;
+            try {
+                Aware.setSetting(getApplicationContext(), key, false);
+                Preference unavailable = findPreference(key);
+                if (unavailable instanceof CheckBoxPreference) {
+                    ((CheckBoxPreference) unavailable).setChecked(false);
+                }
+            } finally {
+                revertingUnavailablePreference = false;
+            }
+            Aware.startAWARE(getApplicationContext());
+            Toast.makeText(getApplicationContext(),
+                    "This sensor is unavailable on this device", Toast.LENGTH_SHORT).show();
+            return;
+        }
+
         Aware.setSetting(getApplicationContext(), key, value);
         Preference pref = findPreference(key);
+
+        // In editable study mode, the participant's sensor choices are the effective study
+        // configuration rather than temporary drift from the server JSON. Persist the typed value
+        // into the active study row and append a compliance event so the researcher sees the config
+        // that actually produced this device's uploaded data.
+        if (isPreferenceInsideSensorScreen(pref)) {
+            StudyUtils.persistEditableSensorSetting(getApplicationContext(), key, value);
+        }
+
         if (CheckBoxPreference.class.isInstance(pref)) {
             CheckBoxPreference check = (CheckBoxPreference) findPreference(key);
             check.setChecked(Aware.getSetting(getApplicationContext(), key).equals("true"));
@@ -481,6 +1007,13 @@ public class Aware_Client extends Aware_Activity {
 
             //Start/Stop sensor
             Aware.startAWARE(getApplicationContext());
+
+            // Turning a sensor on directly (editable mode) still needs its grants: the accessibility
+            // service for app/keyboard/screen sensors, or runtime permissions. Prompt the same way the
+            // study "Enable" path does, so the consent dialogs show up here too.
+            if (value.equals("true")) {
+                promptGrantsFor(SensorCollection.consentItemForSetting(key));
+            }
         }
         if (EditTextPreference.class.isInstance(pref)) {
             EditTextPreference text = (EditTextPreference) findPreference(key);
@@ -504,6 +1037,17 @@ public class Aware_Client extends Aware_Activity {
 
     }
 
+    private boolean isPreferenceInsideSensorScreen(Preference preference) {
+        Preference current = preference;
+        while (current != null) {
+            PreferenceGroup parent = getPreferenceParent(current);
+            if (parent == null) return false;
+            if (SensorCollection.isSensor(parent.getKey())) return true;
+            current = parent;
+        }
+        return false;
+    }
+
     private void handleScreenshotPreferenceChange(String key, String value) {
         if (key.equals(Aware_Preferences.STATUS_SCREENSHOT)) {
             if (value.equals("true")) {
@@ -521,6 +1065,10 @@ public class Aware_Client extends Aware_Activity {
     }
 
     private class SettingsSync extends AsyncTask<Preference, Preference, Void> {
+        // Several status_* preferences can belong to the same sensor screen. Refresh that parent
+        // only once per sync pass; each individual checkbox/value is still reconciled above.
+        private final Set<String> refreshedSensorParents = new HashSet<>();
+
         @Override
         protected Void doInBackground(Preference... params) {
             for (Preference pref : params) {
@@ -576,6 +1124,7 @@ public class Aware_Client extends Aware_Activity {
 
             if (PreferenceScreen.class.isInstance(getPreferenceParent(pref))) {
                 PreferenceScreen parent = (PreferenceScreen) getPreferenceParent(pref);
+                if (!refreshedSensorParents.add(parent.getKey())) return;
 
                 boolean inStudy = Aware.isStudy(getApplicationContext());
                 boolean prefEnabled = Boolean.valueOf(Aware.getSetting(Aware_Client.this, Aware_Preferences.ENABLE_CONFIG_UPDATE));
@@ -583,7 +1132,10 @@ public class Aware_Client extends Aware_Activity {
                 // the participant can open the data-collection status dialog (click is intercepted
                 // in onPreferenceTreeClick, so the editable sub-screen never opens).
                 parent.setEnabled(inStudy || prefEnabled);
-                parent.setShouldDisableView(!inStudy);
+                boolean shouldDisableView = !inStudy;
+                if (parent.getShouldDisableView() != shouldDisableView) {
+                    parent.setShouldDisableView(shouldDisableView);
+                }
 
                 ListAdapter children = parent.getRootAdapter();
                 ArrayList sensorStatuses = new ArrayList<String>();
@@ -619,9 +1171,12 @@ public class Aware_Client extends Aware_Activity {
                     e.printStackTrace();
                 }
 
-                // Only show sensor if it is active in the study config
-                if (isActiveInConfig) {
-                    if (pref != null) Log.i(TAG, "Pref with key: " + pref.getKey() + " is active!");
+                // Locked study view lists only the sensors the study actually collects. In editable
+                // mode (not in a study, or the study allowed edits via enable_config_update) show every
+                // sensor so the participant can enable/disable any of them, not just the study's set.
+                boolean showAllSensors = !isStudySettingsLocked();
+                if (isActiveInConfig || showAllSensors) {
+                    if (pref != null) Log.i(TAG, "Pref with key: " + pref.getKey() + " is shown");
                     try {
                         Class res = R.drawable.class;
                         Field field = res.getField("ic_action_" + parent.getKey());
@@ -636,7 +1191,15 @@ public class Aware_Client extends Aware_Activity {
                             int colorId = collectionStatus.collecting ? R.color.accent : R.color.lightGray;
                             category_icon.setColorFilter(new PorterDuffColorFilter(ContextCompat.getColor(getApplicationContext(), colorId), PorterDuff.Mode.SRC_IN));
                             parent.setIcon(category_icon);
-                            onContentChanged();
+                            // Editable mode deliberately lists hardware-backed sensors even when this
+                            // phone cannot provide them. Make that permanent limitation explicit in
+                            // the list itself; opening the row shows the fuller status and last-data
+                            // detail added by showSensorStatusRow().
+                            if (showAllSensors
+                                    && !SensorCollection.isHardwareAvailable(
+                                            getApplicationContext(), parent.getKey())) {
+                                parent.setSummary(collectionStatus.reason);
+                            }
                         }
                     } catch (NoSuchFieldException | IllegalAccessException e) {
                         e.printStackTrace();
@@ -714,10 +1277,24 @@ public class Aware_Client extends Aware_Activity {
 
 private AlertDialog accessibilityDialog;
 
+// Whether each prompt has already been shown this session (this Activity's lifetime), so neither
+// is re-shown on every subsequent onResume once the participant has dismissed it.
+private boolean accessibilityPromptedThisSession = false;
+private boolean locationServicesPromptedThisSession = false;
+
 private void enableAccessibilityService() {
+    enableAccessibilityService(null);
+}
+
+/**
+ * @param onResolved run when the dialog is dismissed, whichever button the participant chose;
+ *                   pass null for no follow-up action.
+ */
+private void enableAccessibilityService(final Runnable onResolved) {
     if (accessibilityDialog != null && accessibilityDialog.isShowing()) {
         return; // already prompting; don't stack dialogs on repeated onResume
     }
+    accessibilityPromptedThisSession = true;
     final ComponentName service = new ComponentName(this, Applications.class);
 
     accessibilityDialog = new AlertDialog.Builder(this)
@@ -749,6 +1326,12 @@ private void enableAccessibilityService() {
         })
         .setNegativeButton("Not now", null)
         .setCancelable(false)
+        .setOnDismissListener(new DialogInterface.OnDismissListener() {
+            @Override
+            public void onDismiss(DialogInterface dialog) {
+                if (onResolved != null) onResolved.run();
+            }
+        })
         .show();
     }
 
@@ -763,6 +1346,7 @@ private void enableAccessibilityService() {
         if (locationServicesDialog != null && locationServicesDialog.isShowing()) {
             return; // already prompting; don't stack dialogs on repeated onResume
         }
+        locationServicesPromptedThisSession = true;
         locationServicesDialog = new AlertDialog.Builder(this)
             .setTitle("Enable Location services")
             .setMessage("This study collects WiFi data, which requires Location services to be turned on for the whole phone (Android requires this even though AWARE doesn't use your location for WiFi scanning). On the next screen, turn Location ON.")
@@ -782,6 +1366,42 @@ private void enableAccessibilityService() {
             .setNegativeButton("Not now", null)
             .setCancelable(false)
             .show();
+    }
+
+    /**
+     * Prompts for the accessibility service and the OS-level Location toggle the joined study needs,
+     * one dialog at a time. When both are needed the accessibility prompt is shown first and the
+     * Location prompt follows only once it is dismissed, so the two non-cancelable dialogs are never
+     * shown together. Each prompt is shown at most once per session.
+     */
+    private void promptForRequiredServices() {
+        if (Aware.is_watch(this) || !Aware.isStudy(this)) return;
+
+        boolean needsAccessibility = studyNeedsAccessibility()
+                && !isAccessibilityServiceEnabled(this, Applications.class);
+
+        if (needsAccessibility && !accessibilityPromptedThisSession) {
+            enableAccessibilityService(new Runnable() {
+                @Override
+                public void run() {
+                    promptForLocationServicesIfNeeded();
+                }
+            });
+        } else if (accessibilityDialog == null || !accessibilityDialog.isShowing()) {
+            promptForLocationServicesIfNeeded();
+        }
+    }
+
+    /**
+     * Shows the Location-services prompt when the joined study needs WiFi, the OS Location toggle is
+     * off, and it hasn't already been shown this session.
+     */
+    private void promptForLocationServicesIfNeeded() {
+        if (Aware.is_watch(this) || !Aware.isStudy(this)) return;
+        if (locationServicesPromptedThisSession) return;
+        if (studyNeedsWifi() && !SensorCollection.isLocationServicesEnabled(this)) {
+            enableLocationServices();
+        }
     }
 
     /**
@@ -1173,8 +1793,7 @@ private void enableAccessibilityService() {
 
 
 
-    // Debounces the onResume() sync trigger below: rapid app-switching or a rotation-triggered
-    // recreate() (this Activity calls its own recreate() after showing a study-update dialog) can
+    // Debounces the onResume() sync trigger below: rapid app-switching or configuration changes can
     // fire onResume() several times in quick succession. Each one spawns its own background thread
     // in Aware's receiver (syncStudyConfig -> a network fetch + a DB-credential check that can
     // block), so without this, those can stack up concurrently for no benefit — the config can't
@@ -1187,9 +1806,9 @@ private void enableAccessibilityService() {
     protected void onResume() {
         super.onResume();
 
-        // Reconcile to the current study config every time the app is opened, so researcher changes
-        // show up without waiting for the periodic sync or requiring a rejoin.
-        if (Aware.isStudy(getApplicationContext())) {
+        // Locked studies keep reconciling on app open. Editable studies intentionally retain the
+        // participant's local configuration until they explicitly tap "Check for study updates".
+        if (Aware.isStudy(getApplicationContext()) && isStudySettingsLocked()) {
             long now = SystemClock.elapsedRealtime();
             if (now - lastSyncConfigBroadcastAtMs >= SYNC_CONFIG_DEBOUNCE_MS) {
                 lastSyncConfigBroadcastAtMs = now;
@@ -1197,8 +1816,12 @@ private void enableAccessibilityService() {
             }
         }
 
-        // Catch up on any study update that was applied while this Activity wasn't alive to
-        // receive the live broadcast (the sync runs on its own schedule regardless of the app).
+        // Restore an editable-mode update proposal if the Activity was stopped/recreated while the
+        // participant was deciding. Nothing is applied until they explicitly agree.
+        showPendingStudyConfigApprovalIfAny();
+
+        // Catch up on any already-applied study update that was received while this Activity wasn't
+        // alive to receive the live broadcast.
         showPendingStudyUpdateNoticeIfAny();
 
         permissions_ok = true;
@@ -1268,23 +1891,10 @@ private void enableAccessibilityService() {
                 e.printStackTrace();
             }
 
-            // Prompt for the accessibility service only when the joined study actually uses an
-            // accessibility-backed sensor and the service is currently off. Shown as an in-app
-            // dialog (no tray notification) so the request is contextual and actionable.
-            if (!Aware.is_watch(this)
-                    && Aware.isStudy(this)
-                    && studyNeedsAccessibility()
-                    && !isAccessibilityServiceEnabled(this, Applications.class)) {
-                enableAccessibilityService();
-            }
-
-            // Same contextual prompt pattern, for WiFi's OS-level Location-toggle requirement.
-            if (!Aware.is_watch(this)
-                    && Aware.isStudy(this)
-                    && studyNeedsWifi()
-                    && !SensorCollection.isLocationServicesEnabled(this)) {
-                enableLocationServices();
-            }
+            // Prompt for the accessibility service and the OS-level Location toggle the joined study
+            // needs. Shown as in-app dialogs (no tray notification) so the request is contextual and
+            // actionable, one at a time and at most once per session — see the helper below.
+            promptForRequiredServices();
 
             //Check if AWARE is allowed to run on Doze
             //Aware.isBatteryOptimizationIgnored(this, getPackageName());

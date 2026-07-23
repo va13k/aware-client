@@ -155,11 +155,18 @@ public class Aware extends Service {
      */
     public static final String ACTION_AWARE_SYNC_CONFIG = "ACTION_AWARE_SYNC_CONFIG";
     public static final String SYNC_CONFIG_EXTRA_TOAST = "SYNC_CONFIG_EXTRA_TOAST";
+    /** True only for an explicit participant "Check for study updates" action. */
+    public static final String SYNC_CONFIG_EXTRA_MANUAL = "SYNC_CONFIG_EXTRA_MANUAL";
+    /** True after the participant approved the exact pending server configuration. */
+    public static final String SYNC_CONFIG_EXTRA_APPROVED = "SYNC_CONFIG_EXTRA_APPROVED";
     /**
      * Broadcast after a study config update has been applied, so an open UI can refresh
      * (e.g. rebuild the sensor list to reflect newly enabled/disabled sensors).
      */
     public static final String ACTION_AWARE_STUDY_CONFIG_UPDATED = "ACTION_AWARE_STUDY_CONFIG_UPDATED";
+    /** Broadcast when an editable-mode server configuration is awaiting participant approval. */
+    public static final String ACTION_AWARE_STUDY_CONFIG_UPDATE_AVAILABLE =
+            "ACTION_AWARE_STUDY_CONFIG_UPDATE_AVAILABLE";
     /** String ArrayList extras on {@link #ACTION_AWARE_STUDY_CONFIG_UPDATED}: sensors newly enabled / disabled. */
     public static final String EXTRA_SENSORS_ADDED = "sensors_added";
     public static final String EXTRA_SENSORS_REMOVED = "sensors_removed";
@@ -170,6 +177,8 @@ public class Aware extends Service {
      */
     public static final String EXTRA_CONFIG_UPDATE_ALLOWED_CHANGED = "config_update_allowed_changed";
     public static final String EXTRA_CONFIG_UPDATE_ALLOWED_NEW_VALUE = "config_update_allowed_new_value";
+    /** Whether a study update was applied by the participant's explicit manual check. */
+    public static final String EXTRA_CONFIG_UPDATE_MANUAL = "config_update_manual";
 
     /**
      * Notification ID for AWARE service as foreground (to handle Doze, Android O battery optimizations)
@@ -698,6 +707,33 @@ public class Aware extends Service {
             null,
             Aware_Provider.Aware_Studies.STUDY_TIMESTAMP + " DESC LIMIT 1"
         );
+    }
+
+    /**
+     * Append a compliance row to aware_studies for the currently active study, carrying a free-text
+     * {@code message}. This is the server-visible audit trail the researcher reads (same mechanism as
+     * "quit study"/"updated study" events) — used here to record consent decisions (given, declined,
+     * per-sensor enables). No-op if not currently enrolled. Caller need not hold a study cursor.
+     */
+    public static void logStudyCompliance(Context c, String message) {
+        Cursor study = getActiveStudy(c);
+        if (study != null && study.moveToFirst()) {
+            ContentValues entry = new ContentValues();
+            entry.put(Aware_Provider.Aware_Studies.STUDY_TIMESTAMP, System.currentTimeMillis());
+            entry.put(Aware_Provider.Aware_Studies.STUDY_DEVICE_ID, getSetting(c, Aware_Preferences.DEVICE_ID));
+            entry.put(Aware_Provider.Aware_Studies.STUDY_KEY, study.getInt(study.getColumnIndex(Aware_Provider.Aware_Studies.STUDY_KEY)));
+            entry.put(Aware_Provider.Aware_Studies.STUDY_API, study.getString(study.getColumnIndex(Aware_Provider.Aware_Studies.STUDY_API)));
+            entry.put(Aware_Provider.Aware_Studies.STUDY_URL, study.getString(study.getColumnIndex(Aware_Provider.Aware_Studies.STUDY_URL)));
+            entry.put(Aware_Provider.Aware_Studies.STUDY_PI, study.getString(study.getColumnIndex(Aware_Provider.Aware_Studies.STUDY_PI)));
+            entry.put(Aware_Provider.Aware_Studies.STUDY_CONFIG, study.getString(study.getColumnIndex(Aware_Provider.Aware_Studies.STUDY_CONFIG)));
+            entry.put(Aware_Provider.Aware_Studies.STUDY_JOINED, study.getLong(study.getColumnIndex(Aware_Provider.Aware_Studies.STUDY_JOINED)));
+            entry.put(Aware_Provider.Aware_Studies.STUDY_EXIT, study.getLong(study.getColumnIndex(Aware_Provider.Aware_Studies.STUDY_EXIT)));
+            entry.put(Aware_Provider.Aware_Studies.STUDY_TITLE, study.getString(study.getColumnIndex(Aware_Provider.Aware_Studies.STUDY_TITLE)));
+            entry.put(Aware_Provider.Aware_Studies.STUDY_DESCRIPTION, study.getString(study.getColumnIndex(Aware_Provider.Aware_Studies.STUDY_DESCRIPTION)));
+            entry.put(Aware_Provider.Aware_Studies.STUDY_COMPLIANCE, message);
+            c.getContentResolver().insert(Aware_Provider.Aware_Studies.CONTENT_URI, entry);
+        }
+        if (study != null && !study.isClosed()) study.close();
     }
 
     /**
@@ -2048,13 +2084,21 @@ public class Aware extends Service {
                             }
                         }
 
+                        // Programmatic join with no consent UI: hold every consent-requiring sensor
+                        // off and persist it to the declined set, so a sensor needing a runtime
+                        // permission or the Accessibility Service isn't silently enabled. Base
+                        // (permission-free) sensors apply as the config specifies.
+                        Set<String> declined = StudyUtils.holdConsentSensorsUnlessAgreed(getApplicationContext(), study_config);
+
                         //Set the sensors' settings first
                         for (int i = 0; i < sensors.length(); i++) {
                             try {
                                 JSONObject sensor_config = sensors.getJSONObject(i);
+                                String setting = sensor_config.getString("setting");
                                 String package_name = "com.aware.phone";
                                 if (getApplicationContext().getResources().getBoolean(R.bool.standalone)) package_name = getApplicationContext().getPackageName();
-                                Aware.setSetting(getApplicationContext(), sensor_config.getString("setting"), sensor_config.get("value"), package_name);
+                                Object value = declined.contains(setting) ? Boolean.FALSE : sensor_config.get("value");
+                                Aware.setSetting(getApplicationContext(), setting, value, package_name);
                             } catch (JSONException e) {
                                 e.printStackTrace();
                             }
@@ -2506,10 +2550,12 @@ public class Aware extends Service {
             }
             if (intent.getAction().equals(Aware.ACTION_AWARE_SYNC_CONFIG) && isStudy(context)) {
                 final Boolean showToast = intent.getBooleanExtra(Aware.SYNC_CONFIG_EXTRA_TOAST, false);
+                final boolean manual = intent.getBooleanExtra(Aware.SYNC_CONFIG_EXTRA_MANUAL, false);
+                final boolean approved = intent.getBooleanExtra(Aware.SYNC_CONFIG_EXTRA_APPROVED, false);
                 syncConfigExecutor.execute(new Runnable() {
                     @Override
                     public void run() {
-                        StudyUtils.syncStudyConfig(context, showToast);
+                        StudyUtils.syncStudyConfig(context, showToast, manual, approved);
                     }
                 });
             }

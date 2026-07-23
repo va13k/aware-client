@@ -64,7 +64,6 @@ public class Aware_Provider extends ContentProvider {
         public static final String CONTENT_TYPE = "vnd.android.cursor.dir/vnd.aware.device";
         public static final String CONTENT_ITEM_TYPE = "vnd.android.cursor.item/vnd.aware.device";
 
-        public static final String _ID = "_id";
         public static final String TIMESTAMP = "timestamp";
         public static final String DEVICE_ID = "device_id";
         public static final String BOARD = "board";

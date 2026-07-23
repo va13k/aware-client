@@ -18,11 +18,17 @@ import com.aware.Applications;
 import com.aware.Aware;
 import com.aware.Aware_Preferences;
 import com.aware.utils.SensorAvailability;
+import com.aware.utils.SensorFreshness;
+
+import org.json.JSONArray;
+import org.json.JSONObject;
 
 import java.util.ArrayList;
 import java.util.HashMap;
+import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 
 /**
  * Determines, per sensor, whether AWARE is actually collecting data on this device, and — when it
@@ -37,18 +43,21 @@ public final class SensorCollection {
 
     private SensorCollection() {}
 
-    /** A sensor counts as "collecting" if its provider has a row within this window. */
-    private static final long RECENT_WINDOW_MS = 30 * 60 * 1000L; // 30 minutes
-
     /** Result of a collection check for one sensor. */
     public static final class Status {
         public final boolean collecting;
+        public final boolean waitingForEvent;
         public final long lastDataMs;  // 0 = never any data
         public final String reason;    // short human-readable status
         public final String fixHint;   // actionable hint, or null
 
         Status(boolean collecting, long lastDataMs, String reason, String fixHint) {
+            this(collecting, false, lastDataMs, reason, fixHint);
+        }
+
+        Status(boolean collecting, boolean waitingForEvent, long lastDataMs, String reason, String fixHint) {
             this.collecting = collecting;
+            this.waitingForEvent = waitingForEvent;
             this.lastDataMs = lastDataMs;
             this.reason = reason;
             this.fixHint = fixHint;
@@ -80,6 +89,20 @@ public final class SensorCollection {
 
     private static final String[] NONE = new String[0];
     private static final Map<String, Def> REGISTRY = new HashMap<>();
+    private static final Map<String, String[]> STATUS_SETTINGS = new HashMap<>();
+    private static final Map<String, SampleDef> SAMPLED = new HashMap<>();
+
+    private static final class SampleDef {
+        final String frequencySetting;
+        final long defaultValue;
+        final SensorFreshness.Unit unit;
+
+        SampleDef(String frequencySetting, long defaultValue, SensorFreshness.Unit unit) {
+            this.frequencySetting = frequencySetting;
+            this.defaultValue = defaultValue;
+            this.unit = unit;
+        }
+    }
 
     static {
         REGISTRY.put("accelerometer", new Def(".provider.accelerometer", "sensor_accelerometer", Sensor.TYPE_ACCELEROMETER, NONE, false));
@@ -113,11 +136,100 @@ public final class SensorCollection {
         // Accessibility-backed sensors
         REGISTRY.put("applications", new Def(".provider.applications", "applications_foreground", -1, NONE, true));
         REGISTRY.put("screenshot", new Def(".provider.screenshot", "screenshot", -1, NONE, true));
+
+        status("accelerometer", Aware_Preferences.STATUS_ACCELEROMETER);
+        status("linear_accelerometer", Aware_Preferences.STATUS_LINEAR_ACCELEROMETER);
+        status("significant_motion", Aware_Preferences.STATUS_SIGNIFICANT_MOTION);
+        status("barometer", Aware_Preferences.STATUS_BAROMETER);
+        status("gravity", Aware_Preferences.STATUS_GRAVITY);
+        status("gyroscope", Aware_Preferences.STATUS_GYROSCOPE);
+        status("light", Aware_Preferences.STATUS_LIGHT);
+        status("magnetometer", Aware_Preferences.STATUS_MAGNETOMETER);
+        status("proximity", Aware_Preferences.STATUS_PROXIMITY);
+        status("rotation", Aware_Preferences.STATUS_ROTATION);
+        status("temperature", Aware_Preferences.STATUS_TEMPERATURE);
+        status("battery", Aware_Preferences.STATUS_BATTERY);
+        status("screen", Aware_Preferences.STATUS_SCREEN);
+        status("network", Aware_Preferences.STATUS_NETWORK_EVENTS, Aware_Preferences.STATUS_NETWORK_TRAFFIC);
+        status("processor", Aware_Preferences.STATUS_PROCESSOR);
+        status("timezone", Aware_Preferences.STATUS_TIMEZONE);
+        status("esm", Aware_Preferences.STATUS_ESM);
+        status("locations", Aware_Preferences.STATUS_LOCATION_GPS,
+                Aware_Preferences.STATUS_LOCATION_NETWORK, Aware_Preferences.STATUS_LOCATION_PASSIVE);
+        status("wifi", Aware_Preferences.STATUS_WIFI);
+        status("bluetooth", Aware_Preferences.STATUS_BLUETOOTH);
+        status("communication", Aware_Preferences.STATUS_COMMUNICATION_EVENTS,
+                Aware_Preferences.STATUS_CALLS, Aware_Preferences.STATUS_MESSAGES);
+        status("telephony", Aware_Preferences.STATUS_TELEPHONY);
+        status("applications", Aware_Preferences.STATUS_APPLICATIONS,
+                Aware_Preferences.STATUS_INSTALLATIONS, Aware_Preferences.STATUS_NOTIFICATIONS,
+                Aware_Preferences.STATUS_CRASHES, Aware_Preferences.STATUS_KEYBOARD,
+                Aware_Preferences.STATUS_SCREENTEXT);
+        status("screenshot", Aware_Preferences.STATUS_SCREENSHOT);
+
+        sampled("accelerometer", Aware_Preferences.FREQUENCY_ACCELEROMETER, 200000, SensorFreshness.Unit.MICROSECONDS);
+        sampled("linear_accelerometer", Aware_Preferences.FREQUENCY_LINEAR_ACCELEROMETER, 200000, SensorFreshness.Unit.MICROSECONDS);
+        sampled("barometer", Aware_Preferences.FREQUENCY_BAROMETER, 200000, SensorFreshness.Unit.MICROSECONDS);
+        sampled("gravity", Aware_Preferences.FREQUENCY_GRAVITY, 200000, SensorFreshness.Unit.MICROSECONDS);
+        sampled("gyroscope", Aware_Preferences.FREQUENCY_GYROSCOPE, 200000, SensorFreshness.Unit.MICROSECONDS);
+        sampled("light", Aware_Preferences.FREQUENCY_LIGHT, 200000, SensorFreshness.Unit.MICROSECONDS);
+        sampled("magnetometer", Aware_Preferences.FREQUENCY_MAGNETOMETER, 200000, SensorFreshness.Unit.MICROSECONDS);
+        sampled("proximity", Aware_Preferences.FREQUENCY_PROXIMITY, 200000, SensorFreshness.Unit.MICROSECONDS);
+        sampled("rotation", Aware_Preferences.FREQUENCY_ROTATION, 200000, SensorFreshness.Unit.MICROSECONDS);
+        sampled("temperature", Aware_Preferences.FREQUENCY_TEMPERATURE, 200000, SensorFreshness.Unit.MICROSECONDS);
+        sampled("bluetooth", Aware_Preferences.FREQUENCY_BLUETOOTH, 60, SensorFreshness.Unit.SECONDS);
+        sampled("processor", Aware_Preferences.FREQUENCY_PROCESSOR, 10, SensorFreshness.Unit.SECONDS);
+        sampled("wifi", Aware_Preferences.FREQUENCY_WIFI, 60, SensorFreshness.Unit.SECONDS);
+        sampled("screenshot", Aware_Preferences.CAPTURE_TIME_INTERVAL, 60000, SensorFreshness.Unit.MILLISECONDS);
+    }
+
+    private static void status(String category, String... settings) {
+        STATUS_SETTINGS.put(category, settings);
+    }
+
+    private static void sampled(
+            String category, String frequencySetting, long defaultValue, SensorFreshness.Unit unit) {
+        SAMPLED.put(category, new SampleDef(frequencySetting, defaultValue, unit));
     }
 
     /** True if the given preference key is a known sensor category. */
     public static boolean isSensor(String categoryKey) {
         return REGISTRY.containsKey(categoryKey);
+    }
+
+    // --- Status text (pure; shared by the locked-mode status dialog and the editable-mode status row) ---
+
+    /** The one-line collecting / not-collecting headline. */
+    public static String statusHeadline(boolean collecting) {
+        return collecting ? "●  Collecting data" : "○  Not collecting";
+    }
+
+    public static String statusHeadline(Status status) {
+        return status.waitingForEvent ? "●  Enabled — waiting for an event"
+                : statusHeadline(status.collecting);
+    }
+
+    /**
+     * The detail block: why, last data, and what to do. {@code lastData} is the pre-formatted relative
+     * time (or "never"), passed in so this stays free of Android time formatting; {@code fixHint} may
+     * be null.
+     */
+    public static String statusDetail(String reason, CharSequence lastData, String fixHint) {
+        StringBuilder msg = new StringBuilder();
+        msg.append(reason);
+        msg.append("\n\nLast data: ").append(lastData);
+        if (fixHint != null) msg.append("\n\nWhat to do: ").append(fixHint);
+        return msg.toString();
+    }
+
+    /** Full multi-line status text (headline + detail), as shown in the sensor status dialog. */
+    public static String statusSummary(boolean collecting, String reason, CharSequence lastData, String fixHint) {
+        return statusHeadline(collecting) + "\n\n" + statusDetail(reason, lastData, fixHint);
+    }
+
+    public static String statusSummary(Status status, CharSequence lastData) {
+        return statusHeadline(status) + "\n\n"
+                + statusDetail(status.reason, lastData, status.fixHint);
     }
 
     /**
@@ -139,23 +251,18 @@ public final class SensorCollection {
         }
 
         long lastData = latestTimestamp(context, def);
-        boolean recent = lastData > 0 && (System.currentTimeMillis() - lastData) <= RECENT_WINDOW_MS;
-        if (recent) {
-            return new Status(
-                true,
-                lastData,
-                "Collecting data",
-                null
-            );
-        }
 
-        // Not collecting — find the most likely reason.
-        if (def.hardwareType != -1 && !hasHardware(context, def.hardwareType)) {
+        // Resolve permanent/permission blockers before freshness. A stale row from before a setting
+        // or permission change must not make a currently blocked sensor look healthy.
+        if (!isHardwareAvailable(context, categoryKey)) {
             return new Status(
                 false,
                 lastData,
                 "This device has no " + prettyName(categoryKey) + " sensor",
                 null);
+        }
+        if (!isCategoryEnabled(context, categoryKey)) {
+            return new Status(false, lastData, "Sensor is disabled", "Turn on Activate to collect data");
         }
         if (def.needsAccessibility && !accessibilityEnabled) {
             return new Status(
@@ -183,20 +290,76 @@ public final class SensorCollection {
                 "Grant the " + p + " permission in app settings"
             );
         }
+
+        long freshnessWindow = freshnessWindowMs(context, categoryKey);
+        if (freshnessWindow < 0) {
+            return new Status(
+                    true,
+                    true,
+                    lastData,
+                    "This sensor records data when an event occurs",
+                    null);
+        }
+
+        if (SensorFreshness.isFresh(System.currentTimeMillis(), lastData, freshnessWindow)) {
+            return new Status(true, lastData, "Collecting data", null);
+        }
         if (lastData == 0) {
             return new Status(
                 false,
                 0,
-                "No data collected yet",
-                "Data may take a moment to appear after joining"
+                "Waiting for the first sample",
+                "Expected within " + formatDuration(freshnessWindow)
             );
         }
         return new Status(
             false,
             lastData,
-            "No recent data",
-            null
+            "Data is delayed",
+            "Expected at least one sample every " + formatDuration(freshnessWindow)
         );
+    }
+
+    private static boolean isCategoryEnabled(Context context, String categoryKey) {
+        String[] settings = STATUS_SETTINGS.get(categoryKey);
+        if (settings == null) return true;
+        for (String setting : settings) {
+            if ("true".equals(Aware.getSetting(context, setting))) return true;
+        }
+        return false;
+    }
+
+    /**
+     * Returns the recency window for sampled categories, or -1 for event-driven categories.
+     * Location shares one provider table, so use the shortest enabled GPS/network interval.
+     */
+    private static long freshnessWindowMs(Context context, String categoryKey) {
+        if ("locations".equals(categoryKey)) {
+            long window = Long.MAX_VALUE;
+            if ("true".equals(Aware.getSetting(context, Aware_Preferences.STATUS_LOCATION_GPS))) {
+                window = Math.min(window, SensorFreshness.windowMs(
+                        Aware.getSetting(context, Aware_Preferences.FREQUENCY_LOCATION_GPS),
+                        180, SensorFreshness.Unit.SECONDS));
+            }
+            if ("true".equals(Aware.getSetting(context, Aware_Preferences.STATUS_LOCATION_NETWORK))) {
+                window = Math.min(window, SensorFreshness.windowMs(
+                        Aware.getSetting(context, Aware_Preferences.FREQUENCY_LOCATION_NETWORK),
+                        300, SensorFreshness.Unit.SECONDS));
+            }
+            return window == Long.MAX_VALUE ? -1 : window;
+        }
+
+        SampleDef sample = SAMPLED.get(categoryKey);
+        if (sample == null) return -1;
+        return SensorFreshness.windowMs(
+                Aware.getSetting(context, sample.frequencySetting), sample.defaultValue, sample.unit);
+    }
+
+    private static String formatDuration(long durationMs) {
+        long minutes = Math.max(1, durationMs / (60L * 1000L));
+        if (minutes < 60) return minutes + (minutes == 1 ? " minute" : " minutes");
+        long hours = minutes / 60;
+        return hours + (hours == 1 ? " hour" : " hours");
     }
 
     private static long latestTimestamp(Context context, Def def) {
@@ -223,6 +386,15 @@ public final class SensorCollection {
     // status check can't drift apart on what "this device has no <sensor>" means.
     private static boolean hasHardware(Context context, int sensorType) {
         return SensorAvailability.hasHardware(context, sensorType);
+    }
+
+    /**
+     * Whether this category can exist on the current device. Categories that do not depend on a
+     * physical Android sensor are available by definition.
+     */
+    public static boolean isHardwareAvailable(Context context, String categoryKey) {
+        Def def = REGISTRY.get(categoryKey);
+        return def == null || def.hardwareType == -1 || hasHardware(context, def.hardwareType);
     }
 
     /** The OS-level Location toggle (Settings › Location) — distinct from the location permission. */
@@ -287,6 +459,39 @@ public final class SensorCollection {
         }
     }
 
+    // Referenced by string (not Manifest.permission.*) because they were added in API 31 and this
+    // module compiles against an older SDK. Requesting them still works at runtime on API 31+.
+    private static final String PERMISSION_BLUETOOTH_SCAN = "android.permission.BLUETOOTH_SCAN";
+    private static final String PERMISSION_BLUETOOTH_CONNECT = "android.permission.BLUETOOTH_CONNECT";
+
+    /**
+     * Runtime permissions the Bluetooth sensor needs to scan and read the local adapter. On Android
+     * 12 (API 31) and up that's BLUETOOTH_SCAN + BLUETOOTH_CONNECT; below it, scanning is gated on
+     * location instead. Without the API-31 pair the sensor throws SecurityException on modern devices.
+     */
+    private static String[] bluetoothPermissions() {
+        if (Build.VERSION.SDK_INT >= 31) {
+            return new String[]{ PERMISSION_BLUETOOTH_SCAN, PERMISSION_BLUETOOTH_CONNECT };
+        }
+        return new String[]{ Manifest.permission.ACCESS_COARSE_LOCATION };
+    }
+
+    // Added in API 29; referenced by string because this module compiles against an older SDK.
+    private static final String PERMISSION_BACKGROUND_LOCATION = "android.permission.ACCESS_BACKGROUND_LOCATION";
+
+    /**
+     * True if AWARE can read location in the background ("Allow all the time"). Before Android 10
+     * (API 29) there's no separate background-location permission, so it's always true. On API 29+ it
+     * requires ACCESS_BACKGROUND_LOCATION, which the participant grants as "Allow all the time" — the
+     * foreground ("while using the app") grant does NOT include it, and without it location logging
+     * stops whenever AWARE isn't in the foreground.
+     */
+    public static boolean hasBackgroundLocation(Context context) {
+        if (Build.VERSION.SDK_INT < 29) return true;
+        return ContextCompat.checkSelfPermission(context, PERMISSION_BACKGROUND_LOCATION)
+                == PackageManager.PERMISSION_GRANTED;
+    }
+
     private static final ConsentItem[] CONSENTS = new ConsentItem[]{
             new ConsentItem(
                 "locations",
@@ -319,9 +524,7 @@ public final class SensorCollection {
                 new String[]{
                     Aware_Preferences.STATUS_BLUETOOTH
                 },
-                new String[]{
-                    Manifest.permission.ACCESS_COARSE_LOCATION
-                }
+                bluetoothPermissions()
             ),
             new ConsentItem(
                 "telephony",
@@ -346,7 +549,6 @@ public final class SensorCollection {
                 },
                 new String[]{
                     Manifest.permission.READ_CALL_LOG,
-                    Manifest.permission.READ_CONTACTS,
                     Manifest.permission.READ_PHONE_STATE,
                     Manifest.permission.READ_SMS
                 }
@@ -372,47 +574,258 @@ public final class SensorCollection {
                 },
                 NONE,
                 true
+            ),
+            new ConsentItem(
+                "screenshot",
+                "Screenshots",
+                "Periodic screenshots of what's on screen.",
+                new String[]{
+                    Aware_Preferences.STATUS_SCREENSHOT
+                },
+                NONE,
+                true
             )
     };
 
     /**
-     * The consent items the current study still needs the participant to grant: the sensor is enabled
-     * by the study AND at least one of its runtime permissions is not yet granted. Sensors with no
-     * runtime permissions, disabled sensors, and fully-granted sensors are omitted.
+     * The consent item covering a sensor-list category key (as used by the study sensor list and
+     * {@link #getStatus}), or null if that category needs no participant grant. Handles the one key
+     * that differs between the two vocabularies ("applications" category ↔ "application" consent).
      */
-    public static List<ConsentItem> neededConsents(Context context) {
-        List<ConsentItem> needed = new ArrayList<>();
+    public static ConsentItem consentItemForCategory(String categoryKey) {
+        String consentKey = "applications".equals(categoryKey) ? "application" : categoryKey;
         for (ConsentItem item : CONSENTS) {
-            if (item.permissions.length == 0 && !item.needsAccessibility) continue;
-            if (!isSensorEnabled(context, item.statusSettings)) continue;
-            if (isGranted(context, item)) continue;
-            needed.add(item);
+            if (item.key.equals(consentKey)) return item;
         }
-        return needed;
+        return null;
     }
 
     /**
-     * All promptable sensors the study has enabled, regardless of whether their permissions are
-     * granted yet. Used by the consent screen to show every relevant sensor (granted ones as ✓).
+     * The consent item whose status settings include this exact setting key, or null if the setting
+     * needs no participant grant. Lets a directly-toggled sensor checkbox (e.g. status_applications,
+     * status_keyboard) find the accessibility / permission grant it still requires.
      */
-    public static List<ConsentItem> enabledConsents(Context context) {
+    public static ConsentItem consentItemForSetting(String statusSetting) {
+        if (statusSetting == null) return null;
+        for (ConsentItem item : CONSENTS) {
+            for (String setting : item.statusSettings) {
+                if (setting.equals(statusSetting)) return item;
+            }
+        }
+        return null;
+    }
+
+    /**
+     * Consent items represented by a top-level sensor category. Applications is special: its
+     * preference screen contains both application-usage and keyboard collection, even though they
+     * are independent consent choices backed by the same Accessibility Service toggle.
+     */
+    public static List<ConsentItem> consentItemsForCategory(String categoryKey) {
+        List<ConsentItem> matches = new ArrayList<>();
+        for (ConsentItem item : CONSENTS) {
+            if (item.key.equals(categoryKey)
+                    || ("applications".equals(categoryKey)
+                    && ("application".equals(item.key) || "keyboard".equals(item.key)))) {
+                matches.add(item);
+            }
+        }
+        return matches;
+    }
+
+    /**
+     * Which of {@code candidates} the active study config actually enables (value == true). Used when
+     * a participant enables a consent group from a sensor's details, so only the sub-settings the
+     * study wants are turned on, not the whole group.
+     */
+    public static List<String> configEnabledSettings(JSONObject config, String[] candidates) {
+        List<String> out = new ArrayList<>();
+        JSONArray sensors = config == null ? null : config.optJSONArray("sensors");
+        if (sensors == null) return out;
+        for (int i = 0; i < sensors.length(); i++) {
+            JSONObject sensor = sensors.optJSONObject(i);
+            if (sensor == null || !sensor.optBoolean("value", false)) continue;
+            String setting = sensor.optString("setting", "");
+            for (String candidate : candidates) {
+                if (candidate.equals(setting)) out.add(candidate);
+            }
+        }
+        return out;
+    }
+
+    /**
+     * The consent items a study's config would enable, regardless of whether their permissions are
+     * granted yet. Reads sensor enablement directly from the not-yet-applied config JSON, so this can
+     * run before {@code StudyUtils.applySettings} has flipped any status_* setting — consent must gate
+     * enabling, not just follow it.
+     */
+    public static List<ConsentItem> enabledConsentsForConfig(JSONArray configs) {
         List<ConsentItem> enabled = new ArrayList<>();
         for (ConsentItem item : CONSENTS) {
             if (item.permissions.length == 0 && !item.needsAccessibility) continue;
-            if (isSensorEnabled(context, item.statusSettings)) enabled.add(item);
+            if (isSensorEnabledInConfig(configs, item.statusSettings)) enabled.add(item);
         }
         return enabled;
     }
 
     /**
-     * True if a consent item is already granted: for accessibility-backed sensors that means the
-     * Accessibility Service is on; for everything else, that all its runtime permissions are granted.
+     * True if the study config enables at least one sensor that still needs a permission grant or
+     * Accessibility Service enable the participant hasn't already given — i.e. there's actually
+     * something new to ask about. False when every promptable sensor the config enables is already
+     * satisfied, so the consent screen would have nothing left to show.
      */
-    public static boolean isGranted(Context context, ConsentItem item) {
+    public static boolean hasPendingConsents(Context context, JSONArray configs) {
+        for (ConsentItem item : enabledConsentsForConfig(configs)) {
+            if (!isAlreadyGranted(context, item)) return true;
+        }
+        return false;
+    }
+
+    /**
+     * Fingerprint of what a consent for this study would cover: the study URL plus the sorted keys
+     * of every promptable sensor its config enables (e.g. "https://…|bluetooth,locations,wifi").
+     * Stored as {@link com.aware.Aware_Preferences#STUDY_CONSENT_RECORD} when the participant
+     * completes the consent screen; a mismatch (different study, or a changed sensor set) means
+     * their recorded agreement doesn't cover this join.
+     */
+    public static String consentFingerprint(String studyUrl, JSONArray configs) {
+        List<String> keys = new ArrayList<>();
+        for (ConsentItem item : enabledConsentsForConfig(configs)) {
+            keys.add(item.key);
+        }
+        java.util.Collections.sort(keys);
+        return (studyUrl == null ? "" : studyUrl) + "|" + TextUtils.join(",", keys);
+    }
+
+    /**
+     * True if the participant's recorded consent (if any) covers exactly this study and its current
+     * promptable-sensor set. False when there is no record — never consented, or the record was
+     * wiped by quitting the study — or when the set changed since they agreed.
+     */
+    public static boolean hasMatchingConsentRecord(Context context, String studyUrl, JSONArray configs) {
+        String recorded = Aware.getSetting(context, Aware_Preferences.STUDY_CONSENT_RECORD);
+        return recorded.length() > 0 && recorded.equals(consentFingerprint(studyUrl, configs));
+    }
+
+    /** The set of status_* keys the participant has declined (persisted, comma-joined). */
+    private static Set<String> declinedSet(Context context) {
+        Set<String> out = new HashSet<>();
+        for (String key : Aware.getSetting(context, Aware_Preferences.STUDY_DECLINED_SENSORS).split(",")) {
+            if (key.trim().length() > 0) out.add(key.trim());
+        }
+        return out;
+    }
+
+    /**
+     * Promptable sensors the study config enables that are currently declined (held off) — i.e. the
+     * study wants them but the participant hasn't agreed. Used by the "study updated" re-consent
+     * prompt to show exactly what's waiting on agreement after a config change.
+     */
+    public static List<ConsentItem> heldConsentsForConfig(Context context, JSONArray configs) {
+        Set<String> declined = declinedSet(context);
+        List<ConsentItem> held = new ArrayList<>();
+        for (ConsentItem item : enabledConsentsForConfig(configs)) {
+            for (String setting : item.statusSettings) {
+                if (declined.contains(setting)) {
+                    held.add(item);
+                    break;
+                }
+            }
+        }
+        return held;
+    }
+
+    /** Held consent choices belonging to one top-level sensor category. */
+    public static List<ConsentItem> heldConsentsForCategory(Context context, JSONArray configs,
+                                                            String categoryKey) {
+        List<ConsentItem> categoryItems = consentItemsForCategory(categoryKey);
+        List<ConsentItem> held = new ArrayList<>();
+        for (ConsentItem item : heldConsentsForConfig(context, configs)) {
+            if (categoryItems.contains(item)) held.add(item);
+        }
+        return held;
+    }
+
+    /**
+     * Researcher-visible snapshot of the current consent state for every promptable sensor enabled
+     * by the study config. Unlike an isolated "sensor enabled" event, this supersedes ambiguity in
+     * an earlier consent row after the participant changes their choice during the study.
+     */
+    public static String consentStateSummary(JSONArray configs, Set<String> declinedSettings) {
+        List<String> enabled = new ArrayList<>();
+        List<String> declined = new ArrayList<>();
+        Set<String> declinedKeys = declinedSettings == null
+                ? new HashSet<String>() : declinedSettings;
+        for (ConsentItem item : enabledConsentsForConfig(configs)) {
+            boolean itemDeclined = false;
+            for (String setting : item.statusSettings) {
+                if (declinedKeys.contains(setting)) {
+                    itemDeclined = true;
+                    break;
+                }
+            }
+            (itemDeclined ? declined : enabled).add(item.label);
+        }
+        return "enabled=" + enabled + " declined=" + declined;
+    }
+
+    /** True if the study config enables at least one promptable sensor currently declined/held off. */
+    public static boolean hasHeldConsents(Context context, JSONArray configs) {
+        return !heldConsentsForConfig(context, configs).isEmpty();
+    }
+
+    /**
+     * READ_SMS and READ_CALL_LOG are Android "hard-restricted" permissions: the platform refuses to
+     * grant them to an app that isn't the device's default SMS/Dialer app (and isn't whitelisted by
+     * its installer), so the runtime dialog is effectively a no-op. Treating them as required would
+     * trap the Communication row on "Enable" forever, since checkSelfPermission can never return
+     * granted. They're best-effort instead — the sensor collects call/message metadata only if the
+     * platform does grant them, but consent doesn't hinge on it.
+     */
+    private static boolean isBestEffortPermission(String permission) {
+        return Manifest.permission.READ_SMS.equals(permission)
+                || Manifest.permission.READ_CALL_LOG.equals(permission);
+    }
+
+    /**
+     * True if a consent item's requirement is already satisfied — the Accessibility Service is on
+     * (for accessibility-backed items) or every one of its required runtime permissions is granted.
+     * Hard-restricted permissions (see {@link #isBestEffortPermission}) don't count against this, so a
+     * row isn't trapped waiting on a grant the platform will never give. Judged from the live
+     * permission state so it reflects reality regardless of the request callback's result array. Used
+     * both to decide whether the consent screen needs to appear ({@link #hasPendingConsents}) and, once
+     * shown, which rows are satisfied.
+     */
+    public static boolean isAlreadyGranted(Context context, ConsentItem item) {
         if (item.needsAccessibility) {
             return isAccessibilityServiceEnabled(context);
         }
-        return firstMissingPermission(context, item.permissions) == null;
+        for (String permission : item.permissions) {
+            if (isBestEffortPermission(permission)) continue;
+            if (ContextCompat.checkSelfPermission(context, permission) != PackageManager.PERMISSION_GRANTED) {
+                return false;
+            }
+        }
+        return true;
+    }
+
+    /** True if any of the given status settings is "value": true for some sensor entry in the config. */
+    private static boolean isSensorEnabledInConfig(JSONArray configs, String[] statusSettings) {
+        for (int i = 0; i < configs.length(); i++) {
+            JSONObject element = configs.optJSONObject(i);
+            if (element == null) continue;
+            JSONArray sensors = element.optJSONArray("sensors");
+            if (sensors == null) continue;
+            for (int j = 0; j < sensors.length(); j++) {
+                JSONObject sensor = sensors.optJSONObject(j);
+                if (sensor == null) continue;
+                String setting = sensor.optString("setting", "");
+                if (!sensor.optBoolean("value", false)) continue;
+                for (String s : statusSettings) {
+                    if (s.equals(setting)) return true;
+                }
+            }
+        }
+        return false;
     }
 
     /**
@@ -436,13 +849,4 @@ public final class SensorCollection {
         return false;
     }
 
-    /** True if any of the given status settings is currently "true". */
-    private static boolean isSensorEnabled(Context context, String[] statusSettings) {
-        for (String setting : statusSettings) {
-            if ("true".equalsIgnoreCase(Aware.getSetting(context, setting))) {
-                return true;
-            }
-        }
-        return false;
-    }
 }

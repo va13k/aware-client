@@ -1,5 +1,21 @@
 Change log for AWARE
-4.2.1.light.bundle
+4.8.1.beta
+- Sensor sampling-rate settings (accelerometer, barometer, gravity, gyroscope, light, magnetometer, proximity, rotation, temperature, location, Wi-Fi/Bluetooth scanning, processor, Ambient Noise, OpenWeather) changed from raw numeric entry to descriptive dropdown presets, with more sensible default frequencies per sensor
+- New sensor diagnostic logging: when a sensor isn't collecting data, the reason (missing hardware, permission, or accessibility) is now recorded so researchers can see it in the synced data
+- Sensors without supported hardware are now excluded from study config sync instead of silently failing to apply
+- Fixed study config sync not always saving and applying updated settings correctly
+- Added missing consent requests for some sensors; consent checks are now consistent across all sensors
+- New per-sensor consent screen shown after joining a study
+- Fixed crash loops in the Ambient Noise and OpenWeather plugins
+- Wi-Fi scanning now correctly enforces the device's Location services toggle
+- Redesigned study info/history view with a shared study card; improved join/quit/rejoin tracking and sync
+- Fixed a crash when enabling or updating the accessibility service
+- Security: stopped exposing the API key in the UI and source
+
+4.7.2.beta
+- Fix ESM settings parsing crashes and improve error handling
+
+4.7.1.beta
 - New feature: Allow participants to add notes and save them to the remote database
 - Adjust function to count installation, change the official website url used for receive device info
 - New feature to new plugin: Ambient Noise and OpenWeather

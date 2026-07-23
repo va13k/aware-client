@@ -1,0 +1,13 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <declare-styleable name="EditableListPreference">
+        <!-- Unit shown as the hint and summary suffix for a user-entered custom value. -->
+        <attr name="customUnit" format="string" />
+        <!-- Determines whether the entered value is stored directly or converted to an
+             Android SensorManager sampling period in microseconds. -->
+        <attr name="customValueFormat">
+            <enum name="storedValue" value="0" />
+            <enum name="samplingRateHz" value="1" />
+        </attr>
+    </declare-styleable>
+</resources>

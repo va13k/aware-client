@@ -5,8 +5,8 @@ buildscript {
         // module's dependencies block actually uses them anymore (verified via repo-wide search) —
         // removed rather than left as dead config that looks load-bearing but isn't.
         mqtt_libs = '1.2.1'
-        version_code = 1
-        version_readable = "4.2." + version_code + ".light.bundle"
+        version_code = (System.getenv("VERSION_CODE") ?: "1").toInteger()
+        version_readable = System.getenv("VERSION_NAME") ?: ("4.8." + version_code + ".beta")
         compile_sdk = 28
         target_sdk = 28
         minimum_sdk = 24

@@ -1,0 +1,123 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - '[0-9]+.[0-9]+.[0-9]+'        # 4.7.1 -> stable
+      - '[0-9]+.[0-9]+.[0-9]+.beta'   # 4.7.1.beta -> prerelease
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'Version to build, e.g. 4.7.1 or 4.7.1.beta (build-only, no release)'
+        required: true
+        type: string
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Parse and validate version
+        id: ver
+        env:
+          RAW_VERSION: ${{ github.event_name == 'push' && github.ref_name || inputs.version }}
+        run: |
+          if [[ "$RAW_VERSION" =~ ^([0-9]+)\.([0-9]+)\.([0-9]+)(\.beta)?$ ]]; then
+            MAJOR="${BASH_REMATCH[1]}"; MINOR="${BASH_REMATCH[2]}"; PATCH="${BASH_REMATCH[3]}"
+            [[ -n "${BASH_REMATCH[4]}" ]] && PRERELEASE=true || PRERELEASE=false
+          else
+            echo "::error::Version '$RAW_VERSION' must match X.Y.Z or X.Y.Z.beta (e.g. 4.7.1, 4.7.1.beta)"
+            exit 1
+          fi
+          if (( MINOR > 99 || PATCH > 99 )); then
+            echo "::error::minor/patch must be <= 99 to keep versionCode monotonic"
+            exit 1
+          fi
+          # beta-offset scheme: 4.7.1.beta=407010 < 4.7.1=407011
+          if $PRERELEASE; then STABLE=0; else STABLE=1; fi
+          VERSION_CODE=$(( MAJOR*100000 + MINOR*1000 + PATCH*10 + STABLE ))
+          {
+            echo "version_name=$RAW_VERSION"
+            echo "version_code=$VERSION_CODE"
+            echo "prerelease=$PRERELEASE"
+          } >> "$GITHUB_OUTPUT"
+          echo "Building $RAW_VERSION (versionCode=$VERSION_CODE, prerelease=$PRERELEASE)"
+
+      # sdkmanager (cmdline-tools >= 12) requires JDK 17 -> install it first, SDK setup only
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      # Runner images dropped SDK < 34 and no longer expose sdkmanager on PATH
+      # -> this action installs cmdline-tools, accepts licenses, installs packages
+      - name: Setup Android SDK
+        uses: android-actions/setup-android@v3
+        with:
+          packages: 'platforms;android-28 build-tools;28.0.3'
+
+      # Gradle 6.5 only runs on JDK 8-14 -> switch JAVA_HOME to 11 for the build
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '11'
+
+      - uses: gradle/actions/setup-gradle@v4
+        with:
+          # committed wrapper jars (same file copied into all 8 modules) predate
+          # gradle's official checksum list; skip validation, keep caching
+          validate-wrappers: false
+
+      - name: Decode release keystore
+        env:
+          KEYSTORE_BASE64: ${{ secrets.KEYSTORE_BASE64 }}
+        run: |
+          if [[ -z "$KEYSTORE_BASE64" ]]; then
+            echo "::error::KEYSTORE_BASE64 secret is not set"
+            exit 1
+          fi
+          printf '%s' "$KEYSTORE_BASE64" | base64 -d > "$RUNNER_TEMP/release.keystore"
+
+      - name: Build signed release APKs
+        env:
+          VERSION_NAME: ${{ steps.ver.outputs.version_name }}
+          VERSION_CODE: ${{ steps.ver.outputs.version_code }}
+          # lowercase names below are the signing contract in aware-phone/build.gradle
+          storeFile: ${{ runner.temp }}/release.keystore
+          storePassword: ${{ secrets.KEYSTORE_PASSWORD }}
+          keyAlias: ${{ secrets.KEY_ALIAS }}
+          keyPassword: ${{ secrets.KEY_PASSWORD }}
+        run: ./gradlew :aware-phone:assembleRelease --no-daemon --stacktrace
+
+      - name: Verify 5 signed APKs
+        run: |
+          ls -l aware-phone/build/outputs/apk/release/
+          if ls aware-phone/build/outputs/apk/release/*unsigned* >/dev/null 2>&1; then
+            echo "::error::Unsigned APKs produced - signing env vars were not picked up"
+            exit 1
+          fi
+          count=$(ls aware-phone/build/outputs/apk/release/*.apk | wc -l)
+          if [[ "$count" -ne 5 ]]; then
+            echo "::error::Expected 5 ABI-split APKs, found $count"
+            exit 1
+          fi
+
+      - name: Upload workflow artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: aware-light-${{ steps.ver.outputs.version_name }}
+          path: aware-phone/build/outputs/apk/release/*.apk
+
+      - name: Create GitHub Release
+        if: github.event_name == 'push'
+        uses: softprops/action-gh-release@v2
+        with:
+          name: ${{ steps.ver.outputs.version_name }}
+          prerelease: ${{ steps.ver.outputs.prerelease == 'true' }}
+          files: aware-phone/build/outputs/apk/release/*.apk
+          fail_on_unmatched_files: true
+          generate_release_notes: true

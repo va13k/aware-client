@@ -5,6 +5,7 @@ import android.content.ComponentName;
 import android.content.Context;
 import android.content.pm.PackageManager;
 import android.location.LocationManager;
+import android.net.Uri;
 import android.os.Build;
 import android.text.TextUtils;
 import android.provider.Settings;
@@ -40,13 +41,11 @@ import java.util.Map;
  * hardware", even though there are still two places that decide "does this sensor need a runtime
  * permission" (this class, and SensorCollection's own registry, for its participant-facing UI).
  *
- * Scope note: "excluded" here is derived from known prerequisites (hardware / permission /
- * accessibility / location services), not from querying each sensor's provider table for recent
- * rows — unlike aware-phone's SensorCollection.getStatus(), which also checks actual data recency.
- * That keeps this class free of a second copy of the ~20-sensor provider/table registry, at the
- * cost of not catching a sensor that's fully permitted but silently stuck for some other reason
- * (e.g. a crashed service). Good enough for "the participant can never satisfy this" visibility,
- * which is what motivated this class; the data-recency signal already exists once, in the UI.
+ * For regularly sampled sensors this also queries the latest local provider timestamp and applies
+ * the same frequency-derived freshness policy as the participant UI. Event-driven sensors are kept
+ * separate: a quiet period is normal for them, so they report waiting_for_event rather than delayed.
+ * Each periodic record therefore gives the researcher both prerequisite failures and silent/stale
+ * collection failures without requiring a new server-side table.
  */
 public final class SensorDiagnostics {
 
@@ -67,6 +66,28 @@ public final class SensorDiagnostics {
 
     private static final String[] NONE = new String[0];
     private static final Map<String, Gate> GATES = new HashMap<>();
+    private static final Map<String, Source> SAMPLED = new HashMap<>();
+
+    private static final class Source {
+        final String authoritySuffix;
+        final String table;
+        final String frequencySetting;
+        final long defaultFrequency;
+        final SensorFreshness.Unit unit;
+
+        Source(
+                String authoritySuffix,
+                String table,
+                String frequencySetting,
+                long defaultFrequency,
+                SensorFreshness.Unit unit) {
+            this.authoritySuffix = authoritySuffix;
+            this.table = table;
+            this.frequencySetting = frequencySetting;
+            this.defaultFrequency = defaultFrequency;
+            this.unit = unit;
+        }
+    }
 
     static {
         GATES.put(
@@ -98,7 +119,11 @@ public final class SensorDiagnostics {
         GATES.put(
             Aware_Preferences.STATUS_BLUETOOTH,
             new Gate(
-                new String[]{Manifest.permission.ACCESS_COARSE_LOCATION},
+                // API 31+ needs BLUETOOTH_SCAN/CONNECT (referenced by string — added after this
+                // module's compile SDK); older versions gate Bluetooth scanning on location.
+                Build.VERSION.SDK_INT >= 31
+                    ? new String[]{"android.permission.BLUETOOTH_SCAN", "android.permission.BLUETOOTH_CONNECT"}
+                    : new String[]{Manifest.permission.ACCESS_COARSE_LOCATION},
                 false,
                 false
             )
@@ -119,7 +144,6 @@ public final class SensorDiagnostics {
             new Gate(
                 new String[]{
                     Manifest.permission.READ_CALL_LOG,
-                    Manifest.permission.READ_CONTACTS,
                     Manifest.permission.READ_PHONE_STATE,
                     Manifest.permission.READ_SMS
                 },
@@ -188,6 +212,81 @@ public final class SensorDiagnostics {
                 false
             )
         );
+
+        sampled(Aware_Preferences.STATUS_ACCELEROMETER, ".provider.accelerometer",
+                "sensor_accelerometer", Aware_Preferences.FREQUENCY_ACCELEROMETER,
+                200000, SensorFreshness.Unit.MICROSECONDS);
+        sampled(Aware_Preferences.STATUS_LINEAR_ACCELEROMETER, ".provider.accelerometer.linear",
+                "sensor_accelerometer_linear", Aware_Preferences.FREQUENCY_LINEAR_ACCELEROMETER,
+                200000, SensorFreshness.Unit.MICROSECONDS);
+        sampled(Aware_Preferences.STATUS_BAROMETER, ".provider.barometer",
+                "sensor_barometer", Aware_Preferences.FREQUENCY_BAROMETER,
+                200000, SensorFreshness.Unit.MICROSECONDS);
+        sampled(Aware_Preferences.STATUS_GRAVITY, ".provider.gravity",
+                "sensor_gravity", Aware_Preferences.FREQUENCY_GRAVITY,
+                200000, SensorFreshness.Unit.MICROSECONDS);
+        sampled(Aware_Preferences.STATUS_GYROSCOPE, ".provider.gyroscope",
+                "sensor_gyroscope", Aware_Preferences.FREQUENCY_GYROSCOPE,
+                200000, SensorFreshness.Unit.MICROSECONDS);
+        sampled(Aware_Preferences.STATUS_LIGHT, ".provider.light",
+                "sensor_light", Aware_Preferences.FREQUENCY_LIGHT,
+                200000, SensorFreshness.Unit.MICROSECONDS);
+        sampled(Aware_Preferences.STATUS_MAGNETOMETER, ".provider.magnetometer",
+                "sensor_magnetometer", Aware_Preferences.FREQUENCY_MAGNETOMETER,
+                200000, SensorFreshness.Unit.MICROSECONDS);
+        sampled(Aware_Preferences.STATUS_PROXIMITY, ".provider.proximity",
+                "sensor_proximity", Aware_Preferences.FREQUENCY_PROXIMITY,
+                200000, SensorFreshness.Unit.MICROSECONDS);
+        sampled(Aware_Preferences.STATUS_ROTATION, ".provider.rotation",
+                "sensor_rotation", Aware_Preferences.FREQUENCY_ROTATION,
+                200000, SensorFreshness.Unit.MICROSECONDS);
+        sampled(Aware_Preferences.STATUS_TEMPERATURE, ".provider.temperature",
+                "sensor_temperature", Aware_Preferences.FREQUENCY_TEMPERATURE,
+                200000, SensorFreshness.Unit.MICROSECONDS);
+        sampled(Aware_Preferences.STATUS_BLUETOOTH, ".provider.bluetooth",
+                "sensor_bluetooth", Aware_Preferences.FREQUENCY_BLUETOOTH,
+                60, SensorFreshness.Unit.SECONDS);
+        sampled(Aware_Preferences.STATUS_PROCESSOR, ".provider.processor",
+                "processor", Aware_Preferences.FREQUENCY_PROCESSOR,
+                10, SensorFreshness.Unit.SECONDS);
+        sampled(Aware_Preferences.STATUS_WIFI, ".provider.wifi",
+                "wifi", Aware_Preferences.FREQUENCY_WIFI,
+                60, SensorFreshness.Unit.SECONDS);
+        sampled(Aware_Preferences.STATUS_NETWORK_TRAFFIC, ".provider.traffic",
+                "network_traffic", Aware_Preferences.FREQUENCY_NETWORK_TRAFFIC,
+                30, SensorFreshness.Unit.SECONDS);
+        sampled(Aware_Preferences.STATUS_LOCATION_GPS, ".provider.locations",
+                "locations", Aware_Preferences.FREQUENCY_LOCATION_GPS,
+                180, SensorFreshness.Unit.SECONDS);
+        sampled(Aware_Preferences.STATUS_LOCATION_NETWORK, ".provider.locations",
+                "locations", Aware_Preferences.FREQUENCY_LOCATION_NETWORK,
+                300, SensorFreshness.Unit.SECONDS);
+        sampled(Aware_Preferences.STATUS_SCREENSHOT, ".provider.screenshot",
+                "screenshot", Aware_Preferences.CAPTURE_TIME_INTERVAL,
+                60000, SensorFreshness.Unit.MILLISECONDS);
+    }
+
+    private static void sampled(
+            String statusSetting,
+            String authoritySuffix,
+            String table,
+            String frequencySetting,
+            long defaultFrequency,
+            SensorFreshness.Unit unit) {
+        SAMPLED.put(statusSetting, new Source(
+                authoritySuffix, table, frequencySetting, defaultFrequency, unit));
+    }
+
+    /**
+     * True if a status_* setting needs an explicit participant grant — a runtime permission or the
+     * Accessibility Service — i.e. it's a sensor consent must cover before it may collect. Base
+     * sensors (no gate, or a gate needing only the Location-services toggle) return false: they need
+     * no per-sensor agreement. Lets aware-core (e.g. the config sync) decide which newly-added
+     * sensors to hold off until consent, without depending on aware-phone's SensorCollection.
+     */
+    public static boolean requiresConsent(String statusSetting) {
+        Gate gate = GATES.get(statusSetting);
+        return gate != null && (gate.permissions.length > 0 || gate.needsAccessibility);
     }
 
     /**
@@ -235,9 +334,12 @@ public final class SensorDiagnostics {
 
     /**
      * Writes one "sensor_status" line to aware_log for every status_* setting in {@code sensors}
-     * that the study enabled (value == true). Format is a fixed, parseable key=value line so a
+     * that the study enabled (value == true). Sampled sensors are evaluated against three configured
+     * intervals (with a two-minute floor and one-day cap); event-driven sensors report
+     * waiting_for_event and are not treated as delayed. Format is a fixed, parseable key=value line so a
      * researcher can filter aware_log with e.g. "WHERE log_message LIKE 'sensor_status%'":
-     * <pre>sensor_status ts=&lt;ms&gt; sensor=&lt;key&gt; enabled=true excluded=&lt;true|false&gt; reason="&lt;text&gt;"</pre>
+     * <pre>sensor_status ts=&lt;ms&gt; sensor=&lt;key&gt; state=&lt;state&gt; device_enabled=&lt;bool&gt;
+     * last_data_ms=&lt;ms&gt; expected_within_ms=&lt;ms&gt; excluded=&lt;bool&gt; reason="&lt;text&gt;"</pre>
      */
     public static void logSensorStatus(Context context, JSONArray sensors) {
         if (sensors == null) return;
@@ -251,17 +353,72 @@ public final class SensorDiagnostics {
             String setting = sensor.optString("setting", "");
             if (!setting.startsWith("status_") || !sensor.optBoolean("value", false)) continue;
 
-            String reason = computeReason(context, setting, accessibilityEnabled);
-            boolean excluded = !reason.isEmpty();
+            String blocker = computeReason(context, setting, accessibilityEnabled);
+            boolean deviceEnabled = "true".equals(Aware.getSetting(context, setting));
+            Source source = SAMPLED.get(setting);
+            long lastData = source == null ? 0 : latestTimestamp(context, source);
+            long freshnessWindow = source == null ? 0 : SensorFreshness.windowMs(
+                    Aware.getSetting(context, source.frequencySetting),
+                    source.defaultFrequency,
+                    source.unit);
+            String state = stateGiven(
+                    blocker, deviceEnabled, source == null, now, lastData, freshnessWindow);
+            boolean excluded = !state.equals("collecting") && !state.equals("waiting_for_event");
+            String reason = stateReason(state, blocker);
             String key = setting.substring("status_".length());
 
             String line = "sensor_status ts=" + now
                     + " sensor=" + key
                     + " enabled=true"
+                    + " configured_enabled=true"
+                    + " device_enabled=" + deviceEnabled
+                    + " state=" + state
+                    + " last_data_ms=" + lastData
+                    + " expected_within_ms=" + freshnessWindow
                     + " excluded=" + excluded
-                    + " reason=\"" + reason + "\"";
+                    + " reason=\"" + reason.replace("\"", "'") + "\"";
             Aware.debug(context, line);
         }
+    }
+
+    static String stateGiven(
+            String blocker,
+            boolean deviceEnabled,
+            boolean eventDriven,
+            long now,
+            long lastData,
+            long freshnessWindow) {
+        if (blocker != null && blocker.startsWith("No such sensor hardware")) return "unavailable";
+        if (!deviceEnabled) return "disabled";
+        if (blocker != null && !blocker.isEmpty()) return "blocked";
+        if (eventDriven) return "waiting_for_event";
+        if (lastData == 0) return "waiting_first_sample";
+        return SensorFreshness.isFresh(now, lastData, freshnessWindow) ? "collecting" : "delayed";
+    }
+
+    private static String stateReason(String state, String blocker) {
+        if ("unavailable".equals(state) || "blocked".equals(state)) return blocker;
+        if ("disabled".equals(state)) return "Sensor is disabled on the device";
+        if ("waiting_for_event".equals(state)) return "Enabled; records data when an event occurs";
+        if ("waiting_first_sample".equals(state)) return "Waiting for the first sample";
+        if ("delayed".equals(state)) return "Latest sample is older than the expected window";
+        return "";
+    }
+
+    private static long latestTimestamp(Context context, Source source) {
+        Uri uri = Uri.parse("content://" + context.getPackageName()
+                + source.authoritySuffix + "/" + source.table);
+        Cursor cursor = null;
+        try {
+            cursor = context.getContentResolver().query(
+                    uri, new String[]{"timestamp"}, null, null, "_id DESC LIMIT 1");
+            if (cursor != null && cursor.moveToFirst()) return (long) cursor.getDouble(0);
+        } catch (Exception ignored) {
+            // Missing/unreadable provider is represented as no sample yet.
+        } finally {
+            if (cursor != null) cursor.close();
+        }
+        return 0;
     }
 
     /**
