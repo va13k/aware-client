@@ -78,6 +78,7 @@ public class ScreenShot extends Aware_Sensor {
     private String foregroundApp;
     private String application_name;
     private final Object imageReaderLock = new Object();
+    private boolean resourcesCleaned = true;
 
     private final BroadcastReceiver screenStateReceiver = new BroadcastReceiver() {
         @Override
@@ -128,6 +129,7 @@ public class ScreenShot extends Aware_Sensor {
             stopSelf();
             return START_NOT_STICKY;
         }
+        if (!PERMISSIONS_OK) return START_NOT_STICKY;
 
         if (PERMISSIONS_OK) {
             DEBUG = Aware.getSetting(this, Aware_Preferences.DEBUG_FLAG).equals("true");
@@ -146,22 +148,33 @@ public class ScreenShot extends Aware_Sensor {
             }
         }
 
-        int resultCode = intent.getIntExtra(MEDIA_PROJECTION_RESULT_CODE, Activity.RESULT_CANCELED);
-        Intent data = intent.getParcelableExtra(MEDIA_PROJECTION_RESULT_DATA);
+        int resultCode = intent == null
+                ? Activity.RESULT_CANCELED
+                : intent.getIntExtra(MEDIA_PROJECTION_RESULT_CODE, Activity.RESULT_CANCELED);
+        Intent data = intent == null ? null : intent.getParcelableExtra(MEDIA_PROJECTION_RESULT_DATA);
 
         if (resultCode != Activity.RESULT_CANCELED && data != null) {
             mediaProjectionResultCode = resultCode;
             mediaProjectionResultData = data;
         }
 
-        capture_delay = intent.getIntExtra(CAPTURE_TIME_INTERVAL, capture_delay);
-        compressionRate = intent.getIntExtra(COMPRESS_RATE, compressionRate);
-        saveToLocalStorage = intent.getBooleanExtra(STATUS_SCREENSHOT_LOCAL_STORAGE, saveToLocalStorage);
+        if (intent != null) {
+            capture_delay = Math.max(1000, intent.getIntExtra(CAPTURE_TIME_INTERVAL, capture_delay));
+            compressionRate = Math.max(0, Math.min(100,
+                    intent.getIntExtra(COMPRESS_RATE, compressionRate)));
+            saveToLocalStorage = intent.getBooleanExtra(
+                    STATUS_SCREENSHOT_LOCAL_STORAGE, saveToLocalStorage);
+        }
 
         if (mediaProjectionResultCode != 0 && mediaProjectionResultData != null) {
-            startForegroundService(mediaProjectionResultCode, mediaProjectionResultData);
+            // Repeated starts are normal during keep-alive and config reconciliation. Reusing the
+            // active projection prevents a new HandlerThread/Runnable chain on every start.
+            if (mediaProjection == null || virtualDisplay == null) {
+                startForegroundService(mediaProjectionResultCode, mediaProjectionResultData);
+            }
         } else {
             stopSelf();
+            return START_NOT_STICKY;
         }
 
         return START_STICKY;
@@ -206,6 +219,7 @@ public class ScreenShot extends Aware_Sensor {
      * @param data The intent data from the media projection permission request.
      */
     private void startForegroundService(int resultCode, Intent data) {
+        resourcesCleaned = false;
         Intent stopSelf = new Intent(this, ScreenShot.class);
         stopSelf.setAction(ACTION_STOP_CAPTURE);
         PendingIntent pStopSelf = PendingIntent.getService(this, 0, stopSelf, PendingIntent.FLAG_CANCEL_CURRENT);
@@ -284,6 +298,7 @@ public class ScreenShot extends Aware_Sensor {
                         retryCount++;
                         if (retryCount > MAX_RETRY_COUNT) {
                             sendRetryExceededBroadcast();
+                            stopSelf();
                             return;
                         }
                         int retryDelay = Math.min(capture_delay, retryCount * 100);
@@ -478,19 +493,22 @@ public class ScreenShot extends Aware_Sensor {
      * Cleans up resources used by the screen capturing process.
      */
     private void cleanupResources() {
+        if (resourcesCleaned) return;
+        resourcesCleaned = true;
         Log.d(TAG, "Cleaning up resources");
         stopCapturing();
         if (handlerThread != null) {
             handlerThread.quitSafely();
-        }
-        if (imageReader != null) {
-            imageReader.close();
+            handlerThread = null;
         }
         if (virtualDisplay != null) {
             virtualDisplay.release();
+            virtualDisplay = null;
         }
-        if (mediaProjection != null) {
-            mediaProjection.stop();
+        MediaProjection projection = mediaProjection;
+        mediaProjection = null;
+        if (projection != null) {
+            projection.stop();
         }
 
         synchronized (imageReaderLock) {
@@ -499,6 +517,7 @@ public class ScreenShot extends Aware_Sensor {
                 imageReader = null;
             }
         }
+        handler = null;
 
         // Broadcast that the service has stopped
         Intent intent = new Intent(ACTION_SCREENSHOT_SERVICE_STOPPED);

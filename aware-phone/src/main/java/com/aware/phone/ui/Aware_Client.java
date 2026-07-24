@@ -125,7 +125,9 @@ public class Aware_Client extends Aware_Activity {
         @Override
         public void onReceive(Context context, Intent intent) {
             if (ScreenShot.ACTION_SCREENSHOT_SERVICE_STOPPED.equals(intent.getAction())) {
-                checkAndStartScreenshotService();
+                // A stopped/invalid MediaProjection cannot safely be restarted with the old token.
+                // Re-entering here created a stop -> broadcast -> restart loop.
+                Log.w(TAG, "Screenshot capture stopped; waiting for a visible user-initiated restart");
             }
         }
     };
@@ -1218,23 +1220,11 @@ public class Aware_Client extends Aware_Activity {
             if (ScreenShot.ACTION_SCREENSHOT_STATUS.equals(intent.getAction())) {
                 String status = intent.getStringExtra(ScreenShot.EXTRA_SCREENSHOT_STATUS);
                 if (ScreenShot.STATUS_RETRY_COUNT_EXCEEDED.equals(status)) {
-                    Log.d(TAG, "Screenshot service retry count exceeded. Restarting service...");
-                    restartScreenshotService();
+                    Log.w(TAG, "Screenshot capture retry limit reached; not auto-restarting");
                 }
             }
         }
     };
-
-    private void restartScreenshotService() {
-        stopScreenshotService();
-        // Optionally wait for a few seconds before restarting the service to avoid rapid restarts
-        new Handler().postDelayed(new Runnable() {
-            @Override
-            public void run() {
-                checkAndStartScreenshotService();
-            }
-        }, 2000); // Wait for 2 seconds before restarting
-    }
 
     private void checkAndStartScreenshotService() {
         // Only act when the active study actually enabled screenshot. Outside a study, or in a
