@@ -33,6 +33,8 @@ import java.util.concurrent.Executors;
 public class Aware_Provider extends ContentProvider {
 
     public static final int DATABASE_VERSION = 18;
+    private static final ExecutorService INSTALLATION_COUNTER_EXECUTOR =
+            Executors.newSingleThreadExecutor();
 
     /**
      * AWARE framework content authority
@@ -322,27 +324,28 @@ public class Aware_Provider extends ContentProvider {
         switch (sUriMatcher.match(uri)) {
             case DEVICE_INFO:
                 long dev_id = database.insertWithOnConflict(DATABASE_TABLES[0], Aware_Device.DEVICE_ID, values, SQLiteDatabase.CONFLICT_IGNORE);
-                try{
-
-                    ExecutorService executorService = Executors.newSingleThreadExecutor();
-                    executorService.execute(new Runnable() {
+                if (dev_id > 0) {
+                    // Only count an actual new row. The previous code launched this request even
+                    // for conflict/no-op inserts and created a fresh executor each time, leaking a
+                    // thread on repeated core starts.
+                    INSTALLATION_COUNTER_EXECUTOR.execute(new Runnable() {
                         @Override
                         public void run() {
-                            try{
+                            HttpURLConnection connection = null;
+                            try {
                                 URL url = new URL("https://awareframework.com/aware_installation_counter.php?data=" + values.toString());
-                                HttpURLConnection connection = (HttpURLConnection) url.openConnection();
+                                connection = (HttpURLConnection) url.openConnection();
+                                connection.setConnectTimeout(10_000);
+                                connection.setReadTimeout(10_000);
                                 connection.setRequestMethod("GET");
-                                int responseCode = connection.getResponseCode();
-                                connection.disconnect();}
-                            catch (Exception e){
-                                Log.e("Aware", Log.getStackTraceString(e));
+                                connection.getResponseCode();
+                            } catch (Exception e) {
+                                Log.e("Aware", "Installation counter request failed", e);
+                            } finally {
+                                if (connection != null) connection.disconnect();
                             }
                         }
                     });
-                }   catch (Exception e){
-                    Log.e("Aware", e.toString());
-                }
-                if (dev_id > 0) {
                     Uri devUri = ContentUris.withAppendedId(
                             Aware_Device.CONTENT_URI, dev_id);
                     getContext().getContentResolver().notifyChange(devUri, null, false);

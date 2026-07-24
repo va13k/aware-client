@@ -1114,44 +1114,18 @@ public class Scheduler extends Aware_Sensor {
             }
 
             if (schedule.getActionType().equals(ACTION_TYPE_ACTIVITY)) {
-                String[] activity_info = schedule.getActionClass().split("/");
-
-                Intent activity = new Intent();
-                activity.setComponent(new ComponentName(activity_info[0], activity_info[1]));
-                activity.setFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
-
-                if (schedule.getActionIntentAction().length() > 0) {
-                    activity.setAction(schedule.getActionIntentAction());
-                }
-
-                JSONArray extras = schedule.getActionExtras();
-                for (int i = 0; i < extras.length(); i++) {
-                    JSONObject extra = extras.getJSONObject(i);
-                    Object extra_obj = extra.get(ACTION_EXTRA_VALUE);
-                    if (extra_obj instanceof String) {
-                        activity.putExtra(extra.getString(ACTION_EXTRA_KEY), extra.getString(ACTION_EXTRA_VALUE));
-                    } else if (extra_obj instanceof Integer) {
-                        activity.putExtra(extra.getString(ACTION_EXTRA_KEY), extra.getInt(ACTION_EXTRA_VALUE));
-                    } else if (extra_obj instanceof Double) {
-                        activity.putExtra(extra.getString(ACTION_EXTRA_KEY), extra.getDouble(ACTION_EXTRA_VALUE));
-                    } else if (extra_obj instanceof Long) {
-                        activity.putExtra(extra.getString(ACTION_EXTRA_KEY), extra.getLong(ACTION_EXTRA_VALUE));
-                    } else if (extra_obj instanceof Boolean) {
-                        activity.putExtra(extra.getString(ACTION_EXTRA_KEY), extra.getBoolean(ACTION_EXTRA_VALUE));
-                    }
-                }
-                startActivity(activity);
-            }
-
-            if (schedule.getActionType().equals(ACTION_TYPE_SERVICE)) {
-                try {
-                    String[] service_info = schedule.getActionClass().split("/");
-
-                    Intent service = new Intent();
-                    service.setComponent(new ComponentName(service_info[0], service_info[1]));
+                ComponentName activityComponent =
+                        ComponentName.unflattenFromString(schedule.getActionClass());
+                if (activityComponent == null) {
+                    Log.e(TAG, "Ignoring malformed scheduled activity: "
+                            + schedule.getActionClass());
+                } else {
+                    Intent activity = new Intent();
+                    activity.setComponent(activityComponent);
+                    activity.setFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
 
                     if (schedule.getActionIntentAction().length() > 0) {
-                        service.setAction(schedule.getActionIntentAction());
+                        activity.setAction(schedule.getActionIntentAction());
                     }
 
                     JSONArray extras = schedule.getActionExtras();
@@ -1159,21 +1133,62 @@ public class Scheduler extends Aware_Sensor {
                         JSONObject extra = extras.getJSONObject(i);
                         Object extra_obj = extra.get(ACTION_EXTRA_VALUE);
                         if (extra_obj instanceof String) {
-                            service.putExtra(extra.getString(ACTION_EXTRA_KEY), extra.getString(ACTION_EXTRA_VALUE));
+                            activity.putExtra(extra.getString(ACTION_EXTRA_KEY), extra.getString(ACTION_EXTRA_VALUE));
                         } else if (extra_obj instanceof Integer) {
-                            service.putExtra(extra.getString(ACTION_EXTRA_KEY), extra.getInt(ACTION_EXTRA_VALUE));
+                            activity.putExtra(extra.getString(ACTION_EXTRA_KEY), extra.getInt(ACTION_EXTRA_VALUE));
                         } else if (extra_obj instanceof Double) {
-                            service.putExtra(extra.getString(ACTION_EXTRA_KEY), extra.getDouble(ACTION_EXTRA_VALUE));
+                            activity.putExtra(extra.getString(ACTION_EXTRA_KEY), extra.getDouble(ACTION_EXTRA_VALUE));
                         } else if (extra_obj instanceof Long) {
-                            service.putExtra(extra.getString(ACTION_EXTRA_KEY), extra.getLong(ACTION_EXTRA_VALUE));
+                            activity.putExtra(extra.getString(ACTION_EXTRA_KEY), extra.getLong(ACTION_EXTRA_VALUE));
                         } else if (extra_obj instanceof Boolean) {
-                            service.putExtra(extra.getString(ACTION_EXTRA_KEY), extra.getBoolean(ACTION_EXTRA_VALUE));
+                            activity.putExtra(extra.getString(ACTION_EXTRA_KEY), extra.getBoolean(ACTION_EXTRA_VALUE));
                         }
                     }
-                    startService(service);
+                    try {
+                        startActivity(activity);
+                    } catch (RuntimeException e) {
+                        Log.e(TAG, "Unable to launch scheduled activity "
+                                + schedule.getActionClass(), e);
+                    }
+                }
+            }
 
-                } catch (JSONException e) {
-                    e.printStackTrace();
+            if (schedule.getActionType().equals(ACTION_TYPE_SERVICE)) {
+                try {
+                    ComponentName serviceComponent =
+                            ComponentName.unflattenFromString(schedule.getActionClass());
+                    if (serviceComponent == null) {
+                        Log.e(TAG, "Ignoring malformed scheduled service: "
+                                + schedule.getActionClass());
+                    } else {
+                        Intent service = new Intent();
+                        service.setComponent(serviceComponent);
+
+                        if (schedule.getActionIntentAction().length() > 0) {
+                            service.setAction(schedule.getActionIntentAction());
+                        }
+
+                        JSONArray extras = schedule.getActionExtras();
+                        for (int i = 0; i < extras.length(); i++) {
+                            JSONObject extra = extras.getJSONObject(i);
+                            Object extra_obj = extra.get(ACTION_EXTRA_VALUE);
+                            if (extra_obj instanceof String) {
+                                service.putExtra(extra.getString(ACTION_EXTRA_KEY), extra.getString(ACTION_EXTRA_VALUE));
+                            } else if (extra_obj instanceof Integer) {
+                                service.putExtra(extra.getString(ACTION_EXTRA_KEY), extra.getInt(ACTION_EXTRA_VALUE));
+                            } else if (extra_obj instanceof Double) {
+                                service.putExtra(extra.getString(ACTION_EXTRA_KEY), extra.getDouble(ACTION_EXTRA_VALUE));
+                            } else if (extra_obj instanceof Long) {
+                                service.putExtra(extra.getString(ACTION_EXTRA_KEY), extra.getLong(ACTION_EXTRA_VALUE));
+                            } else if (extra_obj instanceof Boolean) {
+                                service.putExtra(extra.getString(ACTION_EXTRA_KEY), extra.getBoolean(ACTION_EXTRA_VALUE));
+                            }
+                        }
+                        startService(service);
+                    }
+                } catch (JSONException | RuntimeException e) {
+                    Log.e(TAG, "Unable to launch scheduled service "
+                            + schedule.getActionClass(), e);
                 }
             }
 

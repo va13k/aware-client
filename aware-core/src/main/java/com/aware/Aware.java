@@ -427,6 +427,10 @@ public class Aware extends Service {
     }
 
     private final SchedulerTicker schedulerTicker = new SchedulerTicker();
+    private static final long DONATION_PING_INTERVAL_MS = 24L * 60L * 60L * 1000L;
+    private static final java.util.concurrent.atomic.AtomicBoolean donationPingInFlight =
+            new java.util.concurrent.atomic.AtomicBoolean(false);
+    private static volatile long lastDonationPingAt;
     public class SchedulerTicker extends BroadcastReceiver {
         long last_time = 0;
         long interval_ms = 60000; // Set in Aware class where we have context
@@ -475,6 +479,17 @@ public class Aware extends Service {
                 e.printStackTrace();
             }
             return true;
+        }
+
+        @Override
+        protected void onPostExecute(Boolean result) {
+            lastDonationPingAt = System.currentTimeMillis();
+            donationPingInFlight.set(false);
+        }
+
+        @Override
+        protected void onCancelled() {
+            donationPingInFlight.set(false);
         }
     }
 
@@ -945,7 +960,11 @@ public class Aware extends Service {
             get_device_info();
 
             if (Aware.getSetting(getApplicationContext(), Aware_Preferences.AWARE_DONATE_USAGE).equals("true")) {
-                new AsyncPing().execute();
+                long now = System.currentTimeMillis();
+                if (now - lastDonationPingAt >= DONATION_PING_INTERVAL_MS
+                        && donationPingInFlight.compareAndSet(false, true)) {
+                    new AsyncPing().execute();
+                }
             }
 
             //only the client and self-contained apps need to run the keep alive. Plugins are handled by them.
@@ -1955,8 +1974,9 @@ public class Aware extends Service {
                 if (protocol.equals("https")) {
                     SSLManager.handleUrl(getApplicationContext(), full_url, true);
 
-                    while(!SSLManager.hasCertificate(getApplicationContext(), study_uri.getHost())) {
-                        //wait until we have the certificate downloaded
+                    if (!SSLManager.hasCertificate(getApplicationContext(), study_uri.getHost())) {
+                        Log.e(TAG, "Unable to obtain an SSL certificate for " + study_uri.getHost());
+                        return;
                     }
 
                     // TODO RIO: Replace GET to webserver a GET to study config URL

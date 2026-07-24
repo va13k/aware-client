@@ -410,14 +410,20 @@ public class Mqtt extends Aware_Sensor implements MqttCallback {
         }
 
         MQTT_SERVER = server;
-        MQTT_PORT = Aware.getSetting(getApplicationContext(), Aware_Preferences.MQTT_PORT);
+        int mqttPort = Aware.getSettingAsInt(
+                getApplicationContext(), Aware_Preferences.MQTT_PORT, 8883);
+        if (mqttPort < 1 || mqttPort > 65535) mqttPort = 8883;
+        MQTT_PORT = Integer.toString(mqttPort);
         MQTT_USERNAME = Aware.getSetting(getApplicationContext(), Aware_Preferences.MQTT_USERNAME);
         MQTT_PASSWORD = Aware.getSetting(getApplicationContext(), Aware_Preferences.MQTT_PASSWORD);
-        MQTT_KEEPALIVE = (Aware.getSetting(getApplicationContext(), Aware_Preferences.MQTT_KEEP_ALIVE).length() > 0 ? Aware.getSetting(getApplicationContext(), Aware_Preferences.MQTT_KEEP_ALIVE) : "600");
-        MQTT_QoS = Aware.getSetting(getApplicationContext(), Aware_Preferences.MQTT_QOS);
+        int keepAlive = Math.max(10, Math.min(3600, Aware.getSettingAsInt(
+                getApplicationContext(), Aware_Preferences.MQTT_KEEP_ALIVE, 600)));
+        MQTT_KEEPALIVE = Integer.toString(keepAlive);
+        int qos = Math.max(0, Math.min(2, Aware.getSettingAsInt(
+                getApplicationContext(), Aware_Preferences.MQTT_QOS, 2)));
+        MQTT_QoS = Integer.toString(qos);
 
-        if (Integer.parseInt(MQTT_PORT) == 1883) MQTT_PROTOCOL = "tcp";
-        if (Integer.parseInt(MQTT_PORT) == 8883) MQTT_PROTOCOL = "ssl";
+        MQTT_PROTOCOL = mqttPort == 1883 ? "tcp" : "ssl";
 
         String MQTT_URL = MQTT_PROTOCOL + "://" + MQTT_SERVER + ":" + MQTT_PORT;
 
@@ -426,8 +432,8 @@ public class Mqtt extends Aware_Sensor implements MqttCallback {
 
         MqttConnectOptions MQTT_OPTIONS = new MqttConnectOptions();
         MQTT_OPTIONS.setCleanSession(false); //resume pending messages from server
-        MQTT_OPTIONS.setConnectionTimeout(Integer.parseInt(MQTT_KEEPALIVE) + 10); //add 10 seconds to keep alive as options timeout
-        MQTT_OPTIONS.setKeepAliveInterval(Integer.parseInt(MQTT_KEEPALIVE));
+        MQTT_OPTIONS.setConnectionTimeout(Math.min(60, keepAlive + 10));
+        MQTT_OPTIONS.setKeepAliveInterval(keepAlive);
         MQTT_OPTIONS.setMqttVersion(MqttConnectOptions.MQTT_VERSION_3_1_1);
         MQTT_OPTIONS.setAutomaticReconnect(true);
 
