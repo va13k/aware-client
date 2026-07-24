@@ -48,6 +48,7 @@ import java.util.Hashtable;
 import java.util.List;
 import java.util.Map;
 import java.util.TreeMap;
+import java.util.concurrent.TimeUnit;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
@@ -63,6 +64,12 @@ import okhttp3.Response;
 public class StudyUtils extends IntentService {
     private static final String[] REQUIRED_STUDY_CONFIG_KEYS = {"database", "questions",
             "schedules", "sensors", "study_info"};
+    private static final long MAX_STUDY_CONFIG_BYTES = 5L * 1024L * 1024L;
+    private static final OkHttpClient STUDY_CONFIG_HTTP = new OkHttpClient.Builder()
+            .connectTimeout(15, TimeUnit.SECONDS)
+            .readTimeout(30, TimeUnit.SECONDS)
+            .writeTimeout(15, TimeUnit.SECONDS)
+            .build();
 
     /**
      * Received broadcast to join a study
@@ -1413,7 +1420,6 @@ public class StudyUtils extends IntentService {
             studyUrl = studyUrl.replace("www.dropbox.com", "dl.dropboxusercontent.com");
         }
 
-        OkHttpClient client = new OkHttpClient();
         // Always fetch fresh so researcher edits are picked up. no-store rather than no-cache: the
         // latter only asks caches to revalidate before reuse, no-store tells them not to keep a
         // copy at all — a stronger guarantee against intermediary proxies serving something stale.
@@ -1422,8 +1428,18 @@ public class StudyUtils extends IntentService {
                 .header("Cache-Control", "no-store")
                 .build();
 
-        try (Response response = client.newCall(request).execute()) {
+        try (Response response = STUDY_CONFIG_HTTP.newCall(request).execute()) {
+            if (!response.isSuccessful() || response.body() == null) return null;
+            long contentLength = response.body().contentLength();
+            if (contentLength > MAX_STUDY_CONFIG_BYTES) {
+                Log.e(Aware.TAG, "Study configuration is too large: " + contentLength);
+                return null;
+            }
             String responseStr = response.body().string();
+            if (responseStr.length() > MAX_STUDY_CONFIG_BYTES) {
+                Log.e(Aware.TAG, "Study configuration exceeded size limit while reading");
+                return null;
+            }
             JSONObject responseJson = new JSONObject(responseStr);
             return responseJson;
         } catch (IOException e) {

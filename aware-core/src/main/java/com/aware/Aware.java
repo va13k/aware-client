@@ -2548,6 +2548,61 @@ public class Aware extends Service {
     // Routing every sync through one single-thread executor makes them run strictly one at a time.
     private static final java.util.concurrent.ExecutorService syncConfigExecutor =
             java.util.concurrent.Executors.newSingleThreadExecutor();
+    private static final Object syncConfigLock = new Object();
+    private static boolean syncConfigDrainScheduled;
+    private static boolean syncConfigPending;
+    private static boolean syncConfigPendingToast;
+    private static boolean syncConfigPendingManual;
+    private static boolean syncConfigPendingApproved;
+
+    /**
+     * Runs only one configuration sync at a time. If another request arrives while it is running,
+     * schedules one additional sync after the current one finishes.
+     * A single-thread executor alone still accepts an unbounded queue, which allowed alarms,
+     * UI taps and config-triggered service restarts to accumulate hundreds of stale requests.
+     */
+    private static void enqueueStudyConfigSync(
+            Context context, boolean showToast, boolean manual, boolean approved) {
+        final Context appContext = context.getApplicationContext();
+        synchronized (syncConfigLock) {
+            syncConfigPending = true;
+            syncConfigPendingToast |= showToast;
+            syncConfigPendingManual |= manual;
+            syncConfigPendingApproved |= approved;
+            if (syncConfigDrainScheduled) return;
+            syncConfigDrainScheduled = true;
+        }
+
+        syncConfigExecutor.execute(new Runnable() {
+            @Override
+            public void run() {
+                while (true) {
+                    final boolean toast;
+                    final boolean manual;
+                    final boolean approved;
+                    synchronized (syncConfigLock) {
+                        if (!syncConfigPending) {
+                            syncConfigDrainScheduled = false;
+                            return;
+                        }
+                        toast = syncConfigPendingToast;
+                        manual = syncConfigPendingManual;
+                        approved = syncConfigPendingApproved;
+                        syncConfigPending = false;
+                        syncConfigPendingToast = false;
+                        syncConfigPendingManual = false;
+                        syncConfigPendingApproved = false;
+                    }
+                    try {
+                        StudyUtils.syncStudyConfig(appContext, toast, manual, approved);
+                    } catch (RuntimeException e) {
+                        Log.e(TAG, "Study config sync failed", e);
+                    }
+                }
+            }
+        });
+    }
+
     public static class Aware_Broadcaster extends BroadcastReceiver {
         @Override
         public void onReceive(Context context, Intent intent) {
@@ -2571,15 +2626,10 @@ public class Aware extends Service {
                 ContentResolver.requestSync(Aware.getAWAREAccount(context), Aware_Provider.getAuthority(context), sync);
             }
             if (intent.getAction().equals(Aware.ACTION_AWARE_SYNC_CONFIG) && isStudy(context)) {
-                final Boolean showToast = intent.getBooleanExtra(Aware.SYNC_CONFIG_EXTRA_TOAST, false);
+                final boolean showToast = intent.getBooleanExtra(Aware.SYNC_CONFIG_EXTRA_TOAST, false);
                 final boolean manual = intent.getBooleanExtra(Aware.SYNC_CONFIG_EXTRA_MANUAL, false);
                 final boolean approved = intent.getBooleanExtra(Aware.SYNC_CONFIG_EXTRA_APPROVED, false);
-                syncConfigExecutor.execute(new Runnable() {
-                    @Override
-                    public void run() {
-                        StudyUtils.syncStudyConfig(context, showToast, manual, approved);
-                    }
-                });
+                enqueueStudyConfigSync(context, showToast, manual, approved);
             }
         }
     }
