@@ -120,7 +120,8 @@ public class Aware_Join_Study extends Aware_Activity {
         } else {
             Cursor qry = Aware.getStudy(this, study_url);
             if (qry == null || !qry.moveToFirst()) {
-                new PopulateStudy().execute(study_url, studyConfigStr);
+                new PopulateStudy().executeOnExecutor(
+                        AsyncTask.THREAD_POOL_EXECUTOR, study_url, studyConfigStr);
             } else {
                 initView(qry, studyConfigStr);
             }
@@ -207,8 +208,10 @@ public class Aware_Join_Study extends Aware_Activity {
                 boolean nothingToShow = SensorCollection.enabledConsentsForConfig(study_configs).isEmpty();
                 boolean alreadyConsented = !SensorCollection.hasPendingConsents(getApplicationContext(), study_configs)
                         && SensorCollection.hasMatchingConsentRecord(getApplicationContext(), study_url, study_configs);
-                if (nothingToShow || alreadyConsented) {
-                    new JoinStudyAsync().execute();
+                // consentDone: the participant already reviewed the sensor consent before this screen,
+                // so the grants and declined set are recorded — go straight to applying, don't re-ask.
+                if (consentDone || nothingToShow || alreadyConsented) {
+                    new JoinStudyAsync().executeOnExecutor(AsyncTask.THREAD_POOL_EXECUTOR);
                 } else {
                     Intent consent = new Intent(getApplicationContext(), SensorConsentActivity.class);
                     consent.putExtra(EXTRA_STUDY_URL, study_url);
@@ -282,7 +285,7 @@ public class Aware_Join_Study extends Aware_Activity {
 
                                 dialogInterface.dismiss();
 
-                                new QuitStudyAsync().execute();
+                                new QuitStudyAsync().executeOnExecutor(AsyncTask.THREAD_POOL_EXECUTOR);
                             }
                         })
                         .setNegativeButton("No", new DialogInterface.OnClickListener() {

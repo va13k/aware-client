@@ -65,7 +65,10 @@ public class JoinStudyDialog extends DialogFragment {
                     public void onClick(DialogInterface dialog, int id) {
                         EditText etStudyConfigUrl = dialogView.findViewById(R.id.et_join_study_url);
                         EditText dbPassword = dialogView.findViewById(R.id.db_password); // manually input password
-                        new ValidateStudyConfig().execute(etStudyConfigUrl.getText().toString(), dbPassword.getText().toString());
+                        new ValidateStudyConfig().executeOnExecutor(
+                                AsyncTask.THREAD_POOL_EXECUTOR,
+                                etStudyConfigUrl.getText().toString(),
+                                dbPassword.getText().toString());
                     }
                 })
                 .setNegativeButton("Cancel", new DialogInterface.OnClickListener() {
@@ -81,7 +84,8 @@ public class JoinStudyDialog extends DialogFragment {
     }
 
     public void validateStudy(String studyUrl) {
-        new ValidateStudyConfig().execute(studyUrl);
+        new ValidateStudyConfig().executeOnExecutor(
+                AsyncTask.THREAD_POOL_EXECUTOR, studyUrl);
     }
 
     public class ValidateStudyConfig extends AsyncTask<String, Void, String> {

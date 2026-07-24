@@ -60,7 +60,9 @@ public class QuitStudyDialog extends DialogFragment {
                         dialogInterface.dismiss();
 
                         if (mStudyExitEntry != null) {
-                            new QuitStudyAsync().execute();
+                            // Leaving a study is also completion-critical UI work; do not queue it
+                            // behind long-lived ESM timers on AsyncTask's serial executor.
+                            new QuitStudyAsync().executeOnExecutor(AsyncTask.THREAD_POOL_EXECUTOR);
                         } else {
                             showLeaveFailedDialog();
                         }
