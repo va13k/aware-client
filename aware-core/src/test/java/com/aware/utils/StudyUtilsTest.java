@@ -2,6 +2,7 @@ package com.aware.utils;
 
 import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertFalse;
+import static org.junit.Assert.assertNull;
 import static org.junit.Assert.assertTrue;
 
 import org.json.JSONArray;
@@ -273,5 +274,158 @@ public class StudyUtilsTest {
                 sensor("status_accelerometer", true));
 
         assertTrue(StudyUtils.consentRequiringEnabledSettings(new JSONArray().put(config)).isEmpty());
+    }
+
+    @Test
+    public void consentRequiring_ambientNoiseNeedsMicrophoneConsent() throws JSONException {
+        JSONObject config = configWithSensors(
+                sensor("status_plugin_ambient_noise", true));
+
+        assertTrue(StudyUtils.consentRequiringEnabledSettings(new JSONArray().put(config))
+                .contains("status_plugin_ambient_noise"));
+    }
+
+    @Test
+    public void consentRequiring_openWeatherNeedsLocationConsent() throws JSONException {
+        JSONObject config = configWithSensors(
+                sensor("status_plugin_openweather", true));
+
+        assertTrue(StudyUtils.consentRequiringEnabledSettings(new JSONArray().put(config))
+                .contains("status_plugin_openweather"));
+    }
+
+    @Test
+    public void groupedConsent_decliningApplicationsAlsoDeclinesInstallations() {
+        Set<String> declined = new HashSet<>();
+        declined.add("status_applications");
+
+        Set<String> expanded = StudyUtils.expandGroupedConsentDeclines(declined);
+
+        assertTrue(expanded.contains("status_applications"));
+        assertTrue(expanded.contains("status_installations"));
+    }
+
+    @Test
+    public void groupedConsent_doesNotTreatStandaloneInstallationsAsAccessibilityGated() {
+        Set<String> declined = new HashSet<>();
+        declined.add("status_battery");
+
+        Set<String> expanded = StudyUtils.expandGroupedConsentDeclines(declined);
+
+        assertFalse(expanded.contains("status_installations"));
+    }
+
+    /**
+     * Regression test for the editable-mode preview loop: a manual "check for study updates" compared
+     * the raw config blobs, so a server config that enabled a sensor this device physically lacks
+     * (e.g. status_gyroscope on a phone with no gyroscope) never compared equal to the participant's
+     * kept config. "Keep my settings" could never reconcile it — the sensor can't be turned on — so
+     * the preview dialog reappeared on every check. configsEqualIgnoringSensors() is the pure core of
+     * the fix: two configs compare equal once the unactionable (unavailable-hardware) sensors are set
+     * aside, so a difference confined to them stops re-triggering the preview.
+     */
+    private static Set<String> ignoring(String... settings) {
+        Set<String> set = new HashSet<>();
+        Collections.addAll(set, settings);
+        return set;
+    }
+
+    @Test
+    public void configsEqualIgnoringSensors_differOnlyByIgnoredSensor_areEqual() throws JSONException {
+        JSONObject local = configWithSensors(sensor("status_wifi", true), sensor("status_gyroscope", false));
+        JSONObject server = configWithSensors(sensor("status_wifi", true), sensor("status_gyroscope", true));
+
+        assertFalse(StudyUtils.jsonEquals(local, server)); // the raw blobs still differ
+        assertTrue(StudyUtils.configsEqualIgnoringSensors(local, server, ignoring("status_gyroscope")));
+    }
+
+    @Test
+    public void configsEqualIgnoringSensors_ignoredSensorAddedByServer_areEqual() throws JSONException {
+        // The additive case: the server introduces a brand-new (unavailable) sensor entry the local
+        // config never had. Dropping it from both must still compare equal.
+        JSONObject local = configWithSensors(sensor("status_wifi", true));
+        JSONObject server = configWithSensors(sensor("status_wifi", true), sensor("status_gyroscope", true));
+
+        assertTrue(StudyUtils.configsEqualIgnoringSensors(local, server, ignoring("status_gyroscope")));
+    }
+
+    @Test
+    public void configsEqualIgnoringSensors_availableSensorAlsoDiffers_areNotEqual() throws JSONException {
+        // If an actionable (available) sensor also changed, the configs must NOT be treated as equal —
+        // the participant still needs the preview for that change.
+        JSONObject local = configWithSensors(sensor("status_wifi", false), sensor("status_gyroscope", false));
+        JSONObject server = configWithSensors(sensor("status_wifi", true), sensor("status_gyroscope", true));
+
+        assertFalse(StudyUtils.configsEqualIgnoringSensors(local, server, ignoring("status_gyroscope")));
+    }
+
+    @Test
+    public void configsEqualIgnoringSensors_emptyIgnoreSet_matchesJsonEquals() throws JSONException {
+        JSONObject local = configWithSensors(sensor("status_wifi", true));
+        JSONObject server = configWithSensors(sensor("status_wifi", false));
+
+        assertFalse(StudyUtils.configsEqualIgnoringSensors(local, server, NO_HARDWARE_EXCLUSIONS));
+    }
+
+    @Test
+    public void configsEqualIgnoringSensors_identicalConfigs_areEqual() throws JSONException {
+        JSONObject a = configWithSensors(sensor("status_wifi", true), sensor("status_gyroscope", true));
+        JSONObject b = configWithSensors(sensor("status_wifi", true), sensor("status_gyroscope", true));
+
+        assertTrue(StudyUtils.configsEqualIgnoringSensors(a, b, ignoring("status_gyroscope")));
+    }
+
+    /**
+     * Regression test for the "you're locked" over-notification: disabling editable mode told every
+     * participant their edit access changed even when it hadn't. enable_config_update absent means the
+     * default (researcher-controlled) state, so enableConfigUpdateChanged() must treat absent the same
+     * as false — only a real flip of effective editability returns a (non-null) new value.
+     */
+    private static JSONObject configWithEditable(Boolean editable) throws JSONException {
+        if (editable == null) return configWithSensors(sensor("status_wifi", true));
+        return configWithSensors(sensor("status_wifi", true),
+                sensor("enable_config_update", editable));
+    }
+
+    @Test
+    public void enableConfigUpdate_absentToFalse_isNotAChange() throws JSONException {
+        // The exact bug: a config that never spelled out enable_config_update, then sets it false.
+        // Effective state (locked) is unchanged, so nothing should notify the participant.
+        assertNull(StudyUtils.enableConfigUpdateChanged(configWithEditable(null), configWithEditable(false)));
+    }
+
+    @Test
+    public void enableConfigUpdate_falseToAbsent_isNotAChange() throws JSONException {
+        assertNull(StudyUtils.enableConfigUpdateChanged(configWithEditable(false), configWithEditable(null)));
+    }
+
+    @Test
+    public void enableConfigUpdate_falseToFalse_isNotAChange() throws JSONException {
+        assertNull(StudyUtils.enableConfigUpdateChanged(configWithEditable(false), configWithEditable(false)));
+    }
+
+    @Test
+    public void enableConfigUpdate_trueToTrue_isNotAChange() throws JSONException {
+        assertNull(StudyUtils.enableConfigUpdateChanged(configWithEditable(true), configWithEditable(true)));
+    }
+
+    @Test
+    public void enableConfigUpdate_editableDisabled_reportsFalse() throws JSONException {
+        // A genuine true → false flip: the participant should be informed, once.
+        assertEquals(Boolean.FALSE,
+                StudyUtils.enableConfigUpdateChanged(configWithEditable(true), configWithEditable(false)));
+    }
+
+    @Test
+    public void enableConfigUpdate_editableEnabled_reportsTrue() throws JSONException {
+        assertEquals(Boolean.TRUE,
+                StudyUtils.enableConfigUpdateChanged(configWithEditable(false), configWithEditable(true)));
+    }
+
+    @Test
+    public void enableConfigUpdate_absentToTrue_reportsTrue() throws JSONException {
+        // Locked-by-default → editable is a real change and should notify.
+        assertEquals(Boolean.TRUE,
+                StudyUtils.enableConfigUpdateChanged(configWithEditable(null), configWithEditable(true)));
     }
 }
