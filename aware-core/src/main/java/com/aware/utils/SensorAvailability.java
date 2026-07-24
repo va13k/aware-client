@@ -3,6 +3,7 @@ package com.aware.utils;
 import android.content.Context;
 import android.hardware.Sensor;
 import android.hardware.SensorManager;
+import android.os.Build;
 
 import com.aware.Aware_Preferences;
 
@@ -54,9 +55,21 @@ public final class SensorAvailability {
      * the sensor start collecting.
      */
     public static boolean isHardwareAvailable(Context context, String statusSetting) {
+        if (!isPlatformSupported(statusSetting, Build.VERSION.SDK_INT)) return false;
         Integer sensorType = HARDWARE_BACKED.get(statusSetting);
         if (sensorType == null) return true; // not hardware-gated at all
         return hasHardware(context, sensorType);
+    }
+
+    /**
+     * Some legacy AWARE sensors do not depend on SensorManager hardware but are nevertheless
+     * unavailable on newer Android releases. Processor reads /proc/stat, which Android blocks from
+     * Nougat onward; treating it as available creates a feedback loop where the config turns it on,
+     * the service turns itself off, and config reconciliation turns it on again.
+     */
+    static boolean isPlatformSupported(String statusSetting, int sdkInt) {
+        return !Aware_Preferences.STATUS_PROCESSOR.equals(statusSetting)
+                || sdkInt < Build.VERSION_CODES.N;
     }
 
     /** True if {@code statusSetting} depends on specific physical sensor hardware at all. */

@@ -291,7 +291,7 @@ public class Aware_Client extends Aware_Activity {
         }
     }
 
-    private static Set<String> activeSensorNames(JSONObject config) {
+    private Set<String> activeSensorNames(JSONObject config) {
         Set<String> active = new HashSet<>();
         JSONArray sensors = config == null ? null : config.optJSONArray("sensors");
         if (sensors == null) return active;
@@ -299,6 +299,13 @@ public class Aware_Client extends Aware_Activity {
             JSONObject sensor = sensors.optJSONObject(i);
             if (sensor == null) continue;
             String setting = sensor.optString("setting", "");
+            // Skip sensors whose hardware this device lacks: the participant can never turn them on,
+            // so they must not appear in the "activate/deactivate" preview as an actionable change.
+            // Mirrors StudyUtils, which now excludes the same sensors from the update decision.
+            if (setting.startsWith("status_")
+                    && !SensorAvailability.isHardwareAvailable(getApplicationContext(), setting)) {
+                continue;
+            }
             if (setting.startsWith("status_") && sensor.optBoolean("value", false)) {
                 active.add(setting.substring("status_".length()).replace('_', ' '));
             }
@@ -836,7 +843,8 @@ public class Aware_Client extends Aware_Activity {
         // Un-decline this consent group so the config sync won't force it back off.
         Set<String> declined = new HashSet<>(Arrays.asList(
                 Aware.getSetting(getApplicationContext(), Aware_Preferences.STUDY_DECLINED_SENSORS).split(",")));
-        declined.removeAll(Arrays.asList(consent.statusSettings));
+        List<String> controlled = SensorCollection.controlledSettings(consent);
+        declined.removeAll(controlled);
         declined.remove("");
         Aware.setSetting(getApplicationContext(), Aware_Preferences.STUDY_DECLINED_SENSORS,
                 TextUtils.join(",", declined));
@@ -1354,7 +1362,13 @@ private void enableAccessibilityService(final Runnable onResolved) {
                 }
             })
             .setNegativeButton("Not now", null)
-            .setCancelable(false)
+            .setCancelable(true)
+            .setOnDismissListener(new DialogInterface.OnDismissListener() {
+                @Override
+                public void onDismiss(DialogInterface dialog) {
+                    locationServicesDialog = null;
+                }
+            })
             .show();
     }
 
@@ -1709,11 +1723,34 @@ private void enableAccessibilityService(final Runnable onResolved) {
         if (requestCode == REQUEST_CODE_SCREENSHOT) {
 
             if (resultCode == RESULT_OK) {
+                updateDeclinedSensor(Aware_Preferences.STATUS_SCREENSHOT, false);
                 startScreenshotService(resultCode, data);
             } else {
+                // Persist this as a participant decline. Otherwise the study drift reconciler sees
+                // server=true/local=false and repeatedly re-enables screenshot, causing the capture
+                // consent Activity to return on later launches.
+                Aware.setSetting(getApplicationContext(),
+                        Aware_Preferences.STATUS_SCREENSHOT, false);
+                updateDeclinedSensor(Aware_Preferences.STATUS_SCREENSHOT, true);
                 Toast.makeText(this, "Screen capture permission denied", Toast.LENGTH_SHORT).show();
             }
         }
+    }
+
+    private void updateDeclinedSensor(String statusSetting, boolean declined) {
+        Set<String> settings = new HashSet<>();
+        String raw = Aware.getSetting(
+                getApplicationContext(), Aware_Preferences.STUDY_DECLINED_SENSORS);
+        if (raw != null) {
+            for (String setting : raw.split(",")) {
+                if (!setting.trim().isEmpty()) settings.add(setting.trim());
+            }
+        }
+        if (declined) settings.add(statusSetting);
+        else settings.remove(statusSetting);
+        Aware.setSetting(getApplicationContext(),
+                Aware_Preferences.STUDY_DECLINED_SENSORS,
+                TextUtils.join(",", settings));
     }
 
     private boolean isAccessibilityServiceEnabled(Context context, Class<?> accessibilityServiceClass) {

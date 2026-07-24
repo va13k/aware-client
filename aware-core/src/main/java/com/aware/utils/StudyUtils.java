@@ -304,6 +304,9 @@ public class StudyUtils extends IntentService {
         for (String key : persistedDeclined.split(",")) {
             if (key.trim().length() > 0) effectiveDeclined.add(key.trim());
         }
+        effectiveDeclined = expandGroupedConsentDeclines(effectiveDeclined);
+        Aware.setSetting(context, Aware_Preferences.STUDY_DECLINED_SENSORS,
+                joinSettings(effectiveDeclined));
 
         //Now apply the new settings
         try {
@@ -562,6 +565,19 @@ public class StudyUtils extends IntentService {
                     if (declinedSettings.contains(setting)) {
                         Log.d(Aware.TAG, "processSensorSettings: " + setting +
                                 " declined by participant, forcing value to false");
+                        value = Boolean.FALSE;
+                    }
+
+                    // A server may enable every sensor generically, including hardware/platform
+                    // features this phone cannot provide. Persist those status flags as false up
+                    // front instead of briefly starting a doomed service. In particular Processor
+                    // is blocked on Android N+, and its former start-disable-toast cycle caused
+                    // config drift reconciliation to reapply the whole study repeatedly.
+                    if (Boolean.TRUE.equals(value)
+                            && setting.startsWith("status_")
+                            && !SensorAvailability.isHardwareAvailable(context, setting)) {
+                        Log.d(Aware.TAG, "processSensorSettings: " + setting
+                                + " unavailable on this device, forcing value to false");
                         value = Boolean.FALSE;
                     }
 
@@ -1030,10 +1046,21 @@ public class StudyUtils extends IntentService {
                 }
 
                 boolean configsEqual = jsonEquals(localConfig, newConfig);
+                // A server change the participant can never act on — one confined to sensors whose
+                // hardware this device lacks — must not keep re-triggering the manual "study update
+                // available" preview. The sensor's checkbox is disabled and it can never collect, so
+                // "Keep my settings" can never reconcile the difference and the dialog would reappear
+                // on every check. Treat a config that differs ONLY in such sensors as "no actionable
+                // update", exactly like an identical config (the same reasoning liveDriftSignature()
+                // already applies to drift). Editable mode only: locked mode has no preview and just
+                // adopts the server config, so it never loops.
+                boolean noActionableDiff = configsEqual
+                        || (editable && configsDifferOnlyByUnavailableSensors(
+                                context, localConfig, newConfig));
                 boolean approvalMatches = approved
                         && pendingApprovalMatches(context, newConfig);
                 if (shouldPreviewManualConfigUpdate(
-                        editable, manual, configsEqual, approvalMatches)) {
+                        editable, manual, noActionableDiff, approvalMatches)) {
                     publishConfigUpdatePreview(context, localConfig, newConfig);
                     if (toast) {
                         new Handler(Looper.getMainLooper()).post(new Runnable() {
@@ -1049,7 +1076,7 @@ public class StudyUtils extends IntentService {
                     return;
                 }
 
-                if (configsEqual) {
+                if (noActionableDiff) {
                     Aware.setSetting(
                             context, Aware_Preferences.PENDING_STUDY_CONFIG_APPROVAL, "");
                     // The server config hasn't changed, but that alone doesn't guarantee the
@@ -1090,12 +1117,16 @@ public class StudyUtils extends IntentService {
 
                     if (Aware.DEBUG)
                         Aware.debug(context, "Live settings drifted from study config, self-healing: " + drift);
-                    Aware.setSetting(context, Aware_Preferences.LAST_DRIFT_SIGNATURE, drift);
-                    Aware.setSetting(context, Aware_Preferences.LAST_DRIFT_RECONCILE_TS, System.currentTimeMillis());
                     // insertCompliance=false: this is a silent local self-heal, not a real config
                     // change, so it shouldn't log an "updated study" compliance row or notify the
                     // participant the way an actual server-side edit does below.
                     applySettings(context, studyUrl, new JSONArray().put(newConfig), false, Aware.getSetting(context, Aware_Preferences.DB_PASSWORD));
+                    // applySettings() resets the settings provider before rebuilding it, so persist
+                    // the backoff marker only after the apply. Writing it before apply meant reset()
+                    // immediately erased it; the next sync retried seconds later, recreated ESM
+                    // schedules, restarted every sensor, and could continue until the phone failed.
+                    Aware.setSetting(context, Aware_Preferences.LAST_DRIFT_SIGNATURE, drift);
+                    Aware.setSetting(context, Aware_Preferences.LAST_DRIFT_RECONCILE_TS, System.currentTimeMillis());
                     return;
                 }
 
@@ -1121,7 +1152,8 @@ public class StudyUtils extends IntentService {
                 // and report which sensors were added / removed so it can notify the participant.
                 ArrayList<String> added = new ArrayList<>();
                 ArrayList<String> removed = new ArrayList<>();
-                diffActiveSensors(localConfig, newConfig, added, removed);
+                diffActiveSensors(localConfig, newConfig, added, removed,
+                        unavailableStatusSettings(context, localConfig, newConfig));
                 Boolean configUpdateAllowedNewValue = enableConfigUpdateChanged(localConfig, newConfig);
 
                 // Persist the curated, participant-meaningful part of this diff so it can still be
@@ -1219,7 +1251,8 @@ public class StudyUtils extends IntentService {
 
         ArrayList<String> added = new ArrayList<>();
         ArrayList<String> removed = new ArrayList<>();
-        diffActiveSensors(localConfig, serverConfig, added, removed);
+        diffActiveSensors(localConfig, serverConfig, added, removed,
+                unavailableStatusSettings(context, localConfig, serverConfig));
         Boolean configUpdateAllowedNewValue =
                 enableConfigUpdateChanged(localConfig, serverConfig);
 
@@ -1561,18 +1594,24 @@ public class StudyUtils extends IntentService {
 
     /**
      * Computes which sensors became active/inactive between two study configs, as human-readable
-     * names, into {@code added} and {@code removed}.
+     * names, into {@code added} and {@code removed}. Settings in {@code excludedStatusSettings}
+     * (e.g. sensors whose hardware this device lacks) are left out entirely — the participant can't
+     * act on them, so listing them as "to activate" / "no longer collecting" would be misleading.
      */
     private static void diffActiveSensors(JSONObject oldConfig, JSONObject newConfig,
-                                          List<String> added, List<String> removed) {
-        Set<String> before = activeSensorNames(oldConfig);
-        Set<String> after = activeSensorNames(newConfig);
+                                          List<String> added, List<String> removed,
+                                          Set<String> excludedStatusSettings) {
+        Set<String> before = activeSensorNames(oldConfig, excludedStatusSettings);
+        Set<String> after = activeSensorNames(newConfig, excludedStatusSettings);
         for (String s : after) if (!before.contains(s)) added.add(s);
         for (String s : before) if (!after.contains(s)) removed.add(s);
     }
 
-    /** Human-readable names of sensors whose status_* setting is enabled (true) in a config. */
-    private static Set<String> activeSensorNames(JSONObject config) {
+    /**
+     * Human-readable names of sensors whose status_* setting is enabled (true) in a config,
+     * skipping any setting named in {@code excludedStatusSettings}.
+     */
+    private static Set<String> activeSensorNames(JSONObject config, Set<String> excludedStatusSettings) {
         Set<String> active = new HashSet<>();
         JSONArray sensors = config.optJSONArray("sensors");
         if (sensors == null) return active;
@@ -1580,11 +1619,84 @@ public class StudyUtils extends IntentService {
             JSONObject sensor = sensors.optJSONObject(i);
             if (sensor == null) continue;
             String setting = sensor.optString("setting", "");
+            if (excludedStatusSettings.contains(setting)) continue;
             if (setting.startsWith("status_") && sensor.optBoolean("value", false)) {
                 active.add(setting.substring("status_".length()).replace('_', ' '));
             }
         }
         return active;
+    }
+
+    /**
+     * The status_* settings in {@code configs} whose sensor hardware this device doesn't have (per
+     * {@link SensorAvailability}). Such sensors can never collect regardless of the config, so a
+     * difference confined to them isn't an actionable study update — see
+     * {@link #configsDifferOnlyByUnavailableSensors} and the preview gate in {@link #syncStudyConfig}.
+     */
+    private static Set<String> unavailableStatusSettings(Context context, JSONObject... configs) {
+        Set<String> unavailable = new HashSet<>();
+        for (JSONObject config : configs) {
+            JSONArray sensors = config == null ? null : config.optJSONArray("sensors");
+            if (sensors == null) continue;
+            for (int i = 0; i < sensors.length(); i++) {
+                JSONObject sensor = sensors.optJSONObject(i);
+                if (sensor == null) continue;
+                String setting = sensor.optString("setting", "");
+                if (setting.startsWith("status_")
+                        && !SensorAvailability.isHardwareAvailable(context, setting)) {
+                    unavailable.add(setting);
+                }
+            }
+        }
+        return unavailable;
+    }
+
+    /**
+     * True when {@code local} and {@code server} are not identical, yet become identical once the
+     * status_* settings for sensors this device can't support (no hardware) are ignored — i.e. the
+     * only thing the server changed is a sensor the participant could never turn on anyway.
+     */
+    private static boolean configsDifferOnlyByUnavailableSensors(
+            Context context, JSONObject local, JSONObject server) {
+        Set<String> unavailable = unavailableStatusSettings(context, local, server);
+        if (unavailable.isEmpty()) return false;
+        return configsEqualIgnoringSensors(local, server, unavailable);
+    }
+
+    /**
+     * True if {@code a} and {@code b} are equal (per {@link #jsonEquals}) after removing every
+     * sensors[] entry whose "setting" is in {@code ignoredStatusSettings} from both. Split out as a
+     * pure, Context-free function so it's directly unit-testable, same reasoning as
+     * {@link #driftSignature}. Only the named status_* entries are dropped, not sibling frequency /
+     * threshold entries for the same sensor — AWARE study edits toggle a sensor's status_* value in
+     * place, so a status-only compare matches how the codebase already defines a sensor being on/off
+     * ({@link #driftSignature}, {@link #diffActiveSensors}).
+     */
+    static boolean configsEqualIgnoringSensors(
+            JSONObject a, JSONObject b, Set<String> ignoredStatusSettings) {
+        try {
+            return jsonEquals(
+                    withoutSensorSettings(a, ignoredStatusSettings),
+                    withoutSensorSettings(b, ignoredStatusSettings));
+        } catch (JSONException e) {
+            return false;
+        }
+    }
+
+    /** Deep copy of {@code config} with every sensors[] entry named in {@code settingsToRemove} dropped. */
+    private static JSONObject withoutSensorSettings(
+            JSONObject config, Set<String> settingsToRemove) throws JSONException {
+        JSONObject copy = new JSONObject(config.toString());
+        JSONArray sensors = copy.optJSONArray("sensors");
+        if (sensors == null) return copy;
+        JSONArray kept = new JSONArray();
+        for (int i = 0; i < sensors.length(); i++) {
+            JSONObject sensor = sensors.optJSONObject(i);
+            if (sensor != null && settingsToRemove.contains(sensor.optString("setting", ""))) continue;
+            kept.put(sensors.get(i));
+        }
+        copy.put("sensors", kept);
+        return copy;
     }
 
     /** The raw status_* setting keys enabled (value true) in a config. */
@@ -1699,13 +1811,20 @@ public class StudyUtils extends IntentService {
     }
 
     /**
-     * Null if {@code enable_config_update} didn't change (or is absent from either config);
-     * otherwise its new value, for the participant-facing "study updated" notice.
+     * Null if the study's <em>effective</em> editability didn't change; otherwise its new value, for
+     * the participant-facing "study updated" notice. Absent {@code enable_config_update} means the
+     * default, researcher-controlled (locked) state, so it is normalised to {@code false} before
+     * comparing: a config that merely starts or stops spelling the setting out (absent ↔ false) is NOT
+     * a change and must not tell participants their edit access changed. Only a real flip
+     * (locked ↔ editable) returns non-null.
      */
-    private static Boolean enableConfigUpdateChanged(JSONObject oldConfig, JSONObject newConfig) {
+    // Package-private so StudyUtilsTest can lock in the absent-means-false normalisation.
+    static Boolean enableConfigUpdateChanged(JSONObject oldConfig, JSONObject newConfig) {
         Boolean before = sensorSettingValue(oldConfig, Aware_Preferences.ENABLE_CONFIG_UPDATE);
         Boolean after = sensorSettingValue(newConfig, Aware_Preferences.ENABLE_CONFIG_UPDATE);
-        if (after == null || after.equals(before)) return null;
-        return after;
+        boolean effectiveBefore = before != null && before;
+        boolean effectiveAfter = after != null && after;
+        if (effectiveBefore == effectiveAfter) return null;
+        return effectiveAfter;
     }
 }

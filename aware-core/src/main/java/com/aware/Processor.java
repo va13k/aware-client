@@ -13,7 +13,6 @@ import android.os.Bundle;
 import android.os.Handler;
 import android.os.IBinder;
 import android.util.Log;
-import android.widget.Toast;
 
 import com.aware.providers.Processor_Provider;
 import com.aware.providers.Processor_Provider.Processor_Data;
@@ -175,14 +174,12 @@ public class Processor extends Aware_Sensor {
         if (PERMISSIONS_OK) {
 
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.N) {
-                Log.d(TAG, "Processor service is not allowed by Google, buuuu. Disabling sensor...");
-
-                Toast.makeText(getApplicationContext(), "Google has disabled processor sensor: Android N (7+).", Toast.LENGTH_LONG).show();
+                Log.w(TAG, "Processor sensor is unavailable on Android N (7+) because /proc/stat is restricted; disabling it");
 
                 Aware.setSetting(getApplicationContext(), Aware_Preferences.STATUS_PROCESSOR, false);
                 Aware.stopProcessor(getApplicationContext());
                 stopSelf();
-                return START_STICKY;
+                return START_NOT_STICKY;
             }
 
             DEBUG = Aware.getSetting(this, Aware_Preferences.DEBUG_FLAG).equals("true");
