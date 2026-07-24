@@ -233,6 +233,16 @@ public class StudyUtilsTest {
     }
 
     @Test
+    public void processorAvailability_isBlockedFromAndroidNougatOnward() {
+        assertTrue(SensorAvailability.isPlatformSupported(
+                "status_processor", android.os.Build.VERSION_CODES.M));
+        assertFalse(SensorAvailability.isPlatformSupported(
+                "status_processor", android.os.Build.VERSION_CODES.N));
+        assertFalse(SensorAvailability.isPlatformSupported(
+                "status_processor", 30));
+    }
+
+    @Test
     public void consentRequiring_picksEnabledPermissionAndAccessibilitySensors() throws JSONException {
         JSONObject config = configWithSensors(
                 sensor("status_location_gps", true),   // runtime permission
