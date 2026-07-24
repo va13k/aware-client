@@ -131,6 +131,19 @@ public class PermissionSequenceTest {
     }
 
     @Test
+    public void cancellingPermissionFlow_declinesAllRemainingWithoutRestart() {
+        PermissionSequence seq = new PermissionSequence(
+                Arrays.asList("location", "microphone"),
+                permission -> false);
+
+        assertEquals("location", seq.nextToRequest());
+        seq.cancelRemaining();
+
+        assertTrue(seq.isDone());
+        assertFalse(seq.shouldRestartService());
+    }
+
+    @Test
     public void skippingWithNotNow_countsAsDenied_andAdvances() {
         // "Not now" on the rationale skips that permission but still moves the sequence forward, and it
         // counts as a denial so the service is not restarted.
