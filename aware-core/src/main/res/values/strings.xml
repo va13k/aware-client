@@ -6,6 +6,8 @@
     <string name="channel_general_description">General AWARE notifications</string>
     <string name="channel_silent_description">Non-interruptive AWARE notifications</string>
     <string name="channel_datasync_description">AWARE datasync notifications</string>
+    <string name="channel_foreground_name">AWARE background collection</string>
+    <string name="channel_foreground_description">Shows when AWARE is collecting study data in the background</string>
 
     <string name="read_permission">Allow read-only access to the local data.</string>
     <string name="write_permission">Allow read and write access to the local data.</string>
@@ -40,7 +42,7 @@
     <string name="sign_up">Sign Up!</string>
     <string name="install">Install</string>
     <string name="foreground_notification_title">AWARE</string>
-    <string name="foreground_notification_text">Data collection active</string>
+    <string name="foreground_notification_text">Collecting study data in the background</string>
     <string name="foreground_notification_sync_text">Sync</string>
 
     <string name="sensor_screentext">ScreenText</string>

@@ -199,6 +199,7 @@ public class Aware extends Service {
     public static final String AWARE_NOTIFICATION_CHANNEL_GENERAL = "AWARE_NOTIFICATION_CHANNEL_GENERAL";
     public static final String AWARE_NOTIFICATION_CHANNEL_SILENT = "AWARE_NOTIFICATION_CHANNEL_SILENT";
     public static final String AWARE_NOTIFICATION_CHANNEL_DATASYNC = "AWARE_NOTIFICATION_CHANNEL_DATASYNC";
+    public static final String AWARE_NOTIFICATION_CHANNEL_FOREGROUND = "AWARE_FOREGROUND_SERVICE";
     public static final String ACTION_AWARE_START_PLUGIN = "ACTION_AWARE_START_PLUGIN";
     public static final String ACTION_AWARE_STOP_PLUGIN = "ACTION_AWARE_STOP_PLUGIN";
 
@@ -323,6 +324,21 @@ public class Aware extends Service {
             aware_channel_silent.enableVibration(false);
             aware_channel_silent.setSound(null,null);
             not_manager.createNotificationChannel(aware_channel_silent);
+
+            // Foreground-service notifications must remain visible. This separate channel uses LOW
+            // importance without sound or vibration; channel importance cannot be raised after a
+            // channel has already been created on the device.
+            NotificationChannel aware_channel_foreground = new NotificationChannel(
+                    AWARE_NOTIFICATION_CHANNEL_FOREGROUND,
+                    getResources().getString(R.string.channel_foreground_name),
+                    NotificationManager.IMPORTANCE_LOW);
+            aware_channel_foreground.setDescription(
+                    getResources().getString(R.string.channel_foreground_description));
+            aware_channel_foreground.enableLights(false);
+            aware_channel_foreground.enableVibration(false);
+            aware_channel_foreground.setSound(null, null);
+            aware_channel_foreground.setShowBadge(false);
+            not_manager.createNotificationChannel(aware_channel_foreground);
         }
 
         // Start the foreground service only if it's the client or a standalone application
@@ -380,20 +396,32 @@ public class Aware extends Service {
 
     public void foreground(boolean enable) {
         if (enable) {
-            Intent aware = new Intent(this, Aware.class);
-            PendingIntent onTap = PendingIntent.getService(this, 0, aware, 0);
+            Intent launchIntent = getPackageManager().getLaunchIntentForPackage(getPackageName());
+            PendingIntent onTap = null;
+            if (launchIntent != null) {
+                launchIntent.addFlags(Intent.FLAG_ACTIVITY_CLEAR_TOP | Intent.FLAG_ACTIVITY_SINGLE_TOP);
+                onTap = PendingIntent.getActivity(
+                        this,
+                        0,
+                        launchIntent,
+                        PendingIntent.FLAG_UPDATE_CURRENT | PendingIntent.FLAG_IMMUTABLE);
+            }
 
-            NotificationCompat.Builder mBuilder = new NotificationCompat.Builder(this, Aware.AWARE_NOTIFICATION_CHANNEL_SILENT);
+            NotificationCompat.Builder mBuilder =
+                    new NotificationCompat.Builder(this, Aware.AWARE_NOTIFICATION_CHANNEL_FOREGROUND);
             mBuilder.setSmallIcon(R.drawable.ic_action_aware_studies);
             mBuilder.setContentTitle(getApplicationContext().getResources().getString(R.string.foreground_notification_title));
             mBuilder.setContentText(getApplicationContext().getResources().getString(R.string.foreground_notification_text));
             mBuilder.setOngoing(true);
             mBuilder.setOnlyAlertOnce(true);
-            mBuilder.setContentIntent(onTap);
-            mBuilder = Aware.setNotificationProperties(mBuilder, AWARE_NOTIFICATION_IMPORTANCE_SILENT);
+            mBuilder.setCategory(NotificationCompat.CATEGORY_SERVICE);
+            mBuilder.setPriority(NotificationCompat.PRIORITY_LOW);
+            mBuilder.setVisibility(NotificationCompat.VISIBILITY_PUBLIC);
+            mBuilder.setShowWhen(false);
+            if (onTap != null) mBuilder.setContentIntent(onTap);
 
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O)
-                mBuilder.setChannelId(Aware.AWARE_NOTIFICATION_CHANNEL_SILENT);
+                mBuilder.setChannelId(Aware.AWARE_NOTIFICATION_CHANNEL_FOREGROUND);
 
             startForeground(Aware.AWARE_FOREGROUND_SERVICE, mBuilder.build());
         } else {
