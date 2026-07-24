@@ -1028,11 +1028,6 @@ public class Aware extends Service {
                     startPlugins(getApplicationContext());
                 }
 
-                if (intent.getAction().equalsIgnoreCase(ACTION_AWARE_KEEP_ALIVE)) {
-                    startAWARE(getApplicationContext());
-                    startPlugins(getApplicationContext());
-                }
-
             } else {
                 startAWARE(getApplicationContext());
                 startPlugins(getApplicationContext());
@@ -2808,6 +2803,11 @@ public class Aware extends Service {
      * Start core and active services
      */
     public static void startAWARE(Context context) {
+
+        // Keep grouped participant consent authoritative before any sensor service is evaluated.
+        // This also migrates studies joined before installation events were tied to Applications
+        // consent, preventing package monitoring from remaining active after that consent was denied.
+        StudyUtils.enforceGroupedConsent(context);
 
         startScheduler(context);
 

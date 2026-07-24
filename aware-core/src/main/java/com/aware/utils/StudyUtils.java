@@ -1783,6 +1783,56 @@ public class StudyUtils extends IntentService {
     }
 
     /**
+     * Installation events use package broadcasts and do not need Accessibility at the Android API
+     * level. In the participant-facing consent, however, they are disclosed as part of Applications
+     * usage. Preserve that product-level consent boundary: declining the Applications choice also
+     * declines installation events.
+     */
+    static Set<String> expandGroupedConsentDeclines(Set<String> declined) {
+        Set<String> expanded = new HashSet<>();
+        if (declined != null) expanded.addAll(declined);
+        if (expanded.contains(Aware_Preferences.STATUS_APPLICATIONS)
+                || expanded.contains(Aware_Preferences.STATUS_NOTIFICATIONS)
+                || expanded.contains(Aware_Preferences.STATUS_CRASHES)) {
+            expanded.add(Aware_Preferences.STATUS_INSTALLATIONS);
+        }
+        return expanded;
+    }
+
+    private static String joinSettings(Set<String> settings) {
+        StringBuilder joined = new StringBuilder();
+        for (String setting : settings) {
+            if (joined.length() > 0) joined.append(',');
+            joined.append(setting);
+        }
+        return joined.toString();
+    }
+
+    /**
+     * Migrates existing enrolments made before installation events were tied to Applications
+     * consent, and mirrors the forced-off value into both setting stores before services start.
+     */
+    public static void enforceGroupedConsent(Context context) {
+        Set<String> declined = new HashSet<>();
+        for (String key : Aware.getSetting(
+                context, Aware_Preferences.STUDY_DECLINED_SENSORS).split(",")) {
+            if (key.trim().length() > 0) declined.add(key.trim());
+        }
+        Set<String> expanded = expandGroupedConsentDeclines(declined);
+        if (!expanded.contains(Aware_Preferences.STATUS_INSTALLATIONS)) {
+            return;
+        }
+        if (!declined.contains(Aware_Preferences.STATUS_INSTALLATIONS)) {
+            Aware.setSetting(context, Aware_Preferences.STUDY_DECLINED_SENSORS,
+                    joinSettings(expanded));
+        }
+        Aware.setSetting(context, Aware_Preferences.STATUS_INSTALLATIONS, false);
+        PreferenceManager.getDefaultSharedPreferences(context).edit()
+                .putBoolean(Aware_Preferences.STATUS_INSTALLATIONS, false)
+                .apply();
+    }
+
+    /**
      * Holds every consent-requiring sensor enabled in {@code configs} OFF, by persisting it into the
      * declined set (unioned with anything already there), and returns the resulting declined set.
      * The programmatic join entry points ({@link Aware#joinStudy} / the {@link StudyUtils} service)

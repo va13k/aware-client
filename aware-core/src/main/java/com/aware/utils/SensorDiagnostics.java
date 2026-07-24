@@ -212,39 +212,55 @@ public final class SensorDiagnostics {
                 false
             )
         );
+        GATES.put(
+            Aware_Preferences.STATUS_PLUGIN_AMBIENT_NOISE,
+            new Gate(
+                new String[]{Manifest.permission.RECORD_AUDIO},
+                false,
+                false
+            )
+        );
+        GATES.put(
+            Aware_Preferences.STATUS_PLUGIN_OPENWEATHER,
+            new Gate(
+                new String[]{Manifest.permission.ACCESS_COARSE_LOCATION},
+                false,
+                false
+            )
+        );
 
         sampled(Aware_Preferences.STATUS_ACCELEROMETER, ".provider.accelerometer",
-                "sensor_accelerometer", Aware_Preferences.FREQUENCY_ACCELEROMETER,
+                "accelerometer", Aware_Preferences.FREQUENCY_ACCELEROMETER,
                 200000, SensorFreshness.Unit.MICROSECONDS);
         sampled(Aware_Preferences.STATUS_LINEAR_ACCELEROMETER, ".provider.accelerometer.linear",
-                "sensor_accelerometer_linear", Aware_Preferences.FREQUENCY_LINEAR_ACCELEROMETER,
+                "linear_accelerometer", Aware_Preferences.FREQUENCY_LINEAR_ACCELEROMETER,
                 200000, SensorFreshness.Unit.MICROSECONDS);
         sampled(Aware_Preferences.STATUS_BAROMETER, ".provider.barometer",
-                "sensor_barometer", Aware_Preferences.FREQUENCY_BAROMETER,
+                "barometer", Aware_Preferences.FREQUENCY_BAROMETER,
                 200000, SensorFreshness.Unit.MICROSECONDS);
         sampled(Aware_Preferences.STATUS_GRAVITY, ".provider.gravity",
-                "sensor_gravity", Aware_Preferences.FREQUENCY_GRAVITY,
+                "gravity", Aware_Preferences.FREQUENCY_GRAVITY,
                 200000, SensorFreshness.Unit.MICROSECONDS);
         sampled(Aware_Preferences.STATUS_GYROSCOPE, ".provider.gyroscope",
-                "sensor_gyroscope", Aware_Preferences.FREQUENCY_GYROSCOPE,
+                "gyroscope", Aware_Preferences.FREQUENCY_GYROSCOPE,
                 200000, SensorFreshness.Unit.MICROSECONDS);
         sampled(Aware_Preferences.STATUS_LIGHT, ".provider.light",
-                "sensor_light", Aware_Preferences.FREQUENCY_LIGHT,
+                "light", Aware_Preferences.FREQUENCY_LIGHT,
                 200000, SensorFreshness.Unit.MICROSECONDS);
         sampled(Aware_Preferences.STATUS_MAGNETOMETER, ".provider.magnetometer",
-                "sensor_magnetometer", Aware_Preferences.FREQUENCY_MAGNETOMETER,
+                "magnetometer", Aware_Preferences.FREQUENCY_MAGNETOMETER,
                 200000, SensorFreshness.Unit.MICROSECONDS);
         sampled(Aware_Preferences.STATUS_PROXIMITY, ".provider.proximity",
-                "sensor_proximity", Aware_Preferences.FREQUENCY_PROXIMITY,
+                "proximity", Aware_Preferences.FREQUENCY_PROXIMITY,
                 200000, SensorFreshness.Unit.MICROSECONDS);
         sampled(Aware_Preferences.STATUS_ROTATION, ".provider.rotation",
-                "sensor_rotation", Aware_Preferences.FREQUENCY_ROTATION,
+                "rotation", Aware_Preferences.FREQUENCY_ROTATION,
                 200000, SensorFreshness.Unit.MICROSECONDS);
         sampled(Aware_Preferences.STATUS_TEMPERATURE, ".provider.temperature",
-                "sensor_temperature", Aware_Preferences.FREQUENCY_TEMPERATURE,
+                "temperature", Aware_Preferences.FREQUENCY_TEMPERATURE,
                 200000, SensorFreshness.Unit.MICROSECONDS);
         sampled(Aware_Preferences.STATUS_BLUETOOTH, ".provider.bluetooth",
-                "sensor_bluetooth", Aware_Preferences.FREQUENCY_BLUETOOTH,
+                "bluetooth", Aware_Preferences.FREQUENCY_BLUETOOTH,
                 60, SensorFreshness.Unit.SECONDS);
         sampled(Aware_Preferences.STATUS_PROCESSOR, ".provider.processor",
                 "processor", Aware_Preferences.FREQUENCY_PROCESSOR,

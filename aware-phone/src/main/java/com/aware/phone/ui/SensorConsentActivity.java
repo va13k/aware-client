@@ -60,10 +60,22 @@ public class SensorConsentActivity extends AppCompatActivity {
      */
     public static final String EXTRA_UPDATE_MODE = "update_mode";
 
+    /**
+     * When true, this screen runs BEFORE the participant enters their identifier and signs up (the
+     * new onboarding order): it collects the grant-requiring permissions, discloses the
+     * automatically-collected sensors, records the consent, then hands off to
+     * {@link Aware_Join_Study} — it does NOT apply the study or enrol here. When false (legacy /
+     * update flows) the screen applies the study and finishes into the app as before.
+     */
+    public static final String EXTRA_PRE_JOIN = "pre_join";
+
     private LinearLayout list;
     private List<ConsentItem> items;
+    // The full list rendered on screen. A rows (requiresGrant) map back to an entry in {@link #items} for the grant flow. Built once in onCreate.
+    private List<SensorCollection.ConsentRow> displayRows;
 
     private boolean updateMode;
+    private boolean preJoin;
     private String studyUrl;
     private String inputPassword;
     private JSONArray studyConfigs;
@@ -100,6 +112,7 @@ public class SensorConsentActivity extends AppCompatActivity {
         setContentView(R.layout.activity_sensor_consent);
 
         updateMode = getIntent().getBooleanExtra(EXTRA_UPDATE_MODE, false);
+        preJoin = getIntent().getBooleanExtra(EXTRA_PRE_JOIN, false);
         studyConfigs = new JSONArray();
         if (updateMode) {
             // Mid-study re-consent: the participant is already enrolled, so read the study they're in
@@ -141,12 +154,26 @@ public class SensorConsentActivity extends AppCompatActivity {
                     "The researcher added sensors to this study. Enable the ones you agree to share, or leave them off — you can enable them later from the sensor list.");
             ((Button) findViewById(R.id.btn_dont_join)).setText("Not now");
             items = SensorCollection.heldConsentsForConfig(getApplicationContext(), studyConfigs);
+            // Update mode shows only the held (grant-requiring) sensors
+            displayRows = rowsFromItems(items);
         } else {
             items = SensorCollection.enabledConsentsForConfig(studyConfigs);
+            // Fresh join: show everything the study collects — grant-requiring and automatic.
+            displayRows = SensorCollection.consentRowsForConfig(studyConfigs);
+            ((TextView) findViewById(R.id.consent_title)).setText("Data this study collects");
+            ((TextView) findViewById(R.id.consent_subtitle)).setText(
+                    "Review what this study collects. Sensors marked “Needs permission” ask for your "
+                            + "consent when you tap Enable; the rest are collected automatically once you join. "
+                            + "Agreeing continues to the last step.");
+            ((Button) findViewById(R.id.btn_continue)).setText("Agree & continue");
         }
 
-        if (items.isEmpty()) {
+        // Nothing to show: update mode → back to app; fresh join → straight on to the identifier step
+        // (pre-join) or apply directly (legacy post-join). "Nothing" means no rows at all — a study
+        // sensors still shows the screen so they are disclosed.
+        if (displayRows.isEmpty()) {
             if (updateMode) { goToMainUi(); return; }
+            if (preJoin) { forwardToJoinStudy(); return; }
             applyAndFinish(Collections.<String>emptySet());
             return;
         }
@@ -176,36 +203,76 @@ public class SensorConsentActivity extends AppCompatActivity {
     private void buildRows() {
         list.removeAllViews();
         LayoutInflater inflater = LayoutInflater.from(this);
-        for (int i = 0; i < items.size(); i++) {
-            final ConsentItem item = items.get(i);
-            final int requestCode = i;
-
-            View row = inflater.inflate(R.layout.item_sensor_consent, (ViewGroup) list, false);
-            ((TextView) row.findViewById(R.id.sensor_label)).setText(item.label);
-            ((TextView) row.findViewById(R.id.sensor_reason)).setText(item.reason);
-
-            Button enable = row.findViewById(R.id.btn_enable);
-            TextView granted = row.findViewById(R.id.txt_granted);
-
-            if (consentedKeys.contains(item.key)) {
-                enable.setVisibility(View.GONE);
-                granted.setVisibility(View.VISIBLE);
-            } else {
-                enable.setVisibility(View.VISIBLE);
-                granted.setVisibility(View.GONE);
-                enable.setOnClickListener(new View.OnClickListener() {
-                    @Override
-                    public void onClick(View v) {
-                        if (item.needsAccessibility) {
-                            enableAccessibility(item);
-                        } else {
-                            ActivityCompat.requestPermissions(SensorConsentActivity.this, item.permissions, requestCode);
-                        }
-                    }
-                });
+        SensorCollection.ConsentGroup currentGroup = null;
+        for (SensorCollection.ConsentRow row : displayRows) {
+            if (row.group != currentGroup) {
+                currentGroup = row.group;
+                View section = inflater.inflate(
+                        R.layout.item_consent_section, (ViewGroup) list, false);
+                ((TextView) section.findViewById(R.id.consent_section_title)).setText(
+                        currentGroup == SensorCollection.ConsentGroup.PLUGIN
+                                ? "Plugins" : "Sensors");
+                list.addView(section);
             }
-            list.addView(row);
+            View view = inflater.inflate(R.layout.item_consent_row, (ViewGroup) list, false);
+            ((TextView) view.findViewById(R.id.consent_emoji)).setText(row.emoji);
+            ((TextView) view.findViewById(R.id.consent_label)).setText(row.label);
+            ((TextView) view.findViewById(R.id.consent_description)).setText(row.description);
+            ((TextView) view.findViewById(R.id.consent_badge)).setText(badgeText(row.badge));
+
+            Button enable = view.findViewById(R.id.btn_enable);
+            TextView granted = view.findViewById(R.id.txt_granted);
+
+            if (!row.requiresGrant()) {
+                // collected automatically once the study starts; nothing to grant.
+                enable.setVisibility(View.GONE);
+                granted.setVisibility(View.GONE);
+            } else {
+                final ConsentItem item = row.grantItem;
+                final int requestCode = indexOfItem(item.key);
+                if (consentedKeys.contains(item.key)) {
+                    enable.setVisibility(View.GONE);
+                    granted.setVisibility(View.VISIBLE);
+                } else {
+                    enable.setVisibility(View.VISIBLE);
+                    granted.setVisibility(View.GONE);
+                    enable.setOnClickListener(new View.OnClickListener() {
+                        @Override
+                        public void onClick(View v) {
+                            if (item.needsAccessibility) {
+                                enableAccessibility(item);
+                            } else {
+                                ActivityCompat.requestPermissions(SensorConsentActivity.this, item.permissions, requestCode);
+                            }
+                        }
+                    });
+                }
+            }
+            list.addView(view);
         }
+    }
+
+    /** Index of the consent item with {@code key} in {@link #items} — the request code its grant uses. */
+    private int indexOfItem(String key) {
+        for (int i = 0; i < items.size(); i++) {
+            if (items.get(i).key.equals(key)) return i;
+        }
+        return -1;
+    }
+
+    private String badgeText(SensorCollection.ConsentBadge badge) {
+        switch (badge) {
+            case PERMISSION: return "Needs permission";
+            case ACCESSIBILITY: return "Accessibility";
+            default: return "Automatic";
+        }
+    }
+
+    /** Wrap grant-requiring consent items into display rows (used by the mid-study update list). */
+    private List<SensorCollection.ConsentRow> rowsFromItems(List<ConsentItem> src) {
+        List<SensorCollection.ConsentRow> out = new ArrayList<>();
+        for (ConsentItem item : src) out.add(SensorCollection.rowFor(item));
+        return out;
     }
 
     private void enableAccessibility(ConsentItem item) {
@@ -335,20 +402,55 @@ public class SensorConsentActivity extends AppCompatActivity {
             if (key.trim().length() > 0) declined.add(key.trim());
         }
         for (ConsentItem item : items) {
+            List<String> controlled = SensorCollection.controlledSettings(item);
             if (consentedKeys.contains(item.key)) {
-                declined.removeAll(Arrays.asList(item.statusSettings));
+                declined.removeAll(controlled);
             } else {
-                declined.addAll(Arrays.asList(item.statusSettings));
+                declined.addAll(controlled);
             }
         }
         Aware.logStudyCompliance(getApplicationContext(),
                 (updateMode ? "consent given (study update): " : "consent given: ")
                         + SensorCollection.consentStateSummary(studyConfigs, declined));
+
+        if (preJoin) {
+            // Pre-join: record the participant's choices now, before enrolment. applySettings (run
+            // later, when they sign up) preserves both across its internal reset and forces the
+            // declined sensors off; the config-sync drift check reads the declined set to keep them
+            // off. Then hand off to the identifier / sign-up step — do NOT apply or enrol here.
+            Aware.setSetting(getApplicationContext(), Aware_Preferences.STUDY_DECLINED_SENSORS,
+                    TextUtils.join(",", declined));
+            Aware.setSetting(getApplicationContext(), Aware_Preferences.STUDY_CONSENT_RECORD,
+                    SensorCollection.consentFingerprint(studyUrl, studyConfigs));
+            forwardToJoinStudy();
+            return;
+        }
         applyAndFinish(declined);
     }
 
+    /** Hand off to the identifier / sign-up step after pre-join consent, flagged so it won't re-ask. */
+    private void forwardToJoinStudy() {
+        Intent join = new Intent(getApplicationContext(), Aware_Join_Study.class);
+        join.putExtra(Aware_Join_Study.EXTRA_STUDY_URL, studyUrl);
+        try {
+            if (studyConfigs.length() > 0) {
+                join.putExtra(Aware_Join_Study.EXTRA_STUDY_CONFIG, studyConfigs.getJSONObject(0).toString());
+            }
+        } catch (JSONException e) {
+            e.printStackTrace();
+        }
+        join.putExtra(Aware_Join_Study.INPUT_PASSWORD, inputPassword);
+        join.putExtra(Aware_Join_Study.EXTRA_CONSENT_DONE, true);
+        join.setFlags(Intent.FLAG_ACTIVITY_NEW_TASK | Intent.FLAG_ACTIVITY_CLEAR_TASK);
+        startActivity(join);
+        finish();
+    }
+
     private void applyAndFinish(Set<String> declinedSettings) {
-        new ApplySettingsAsync(declinedSettings).execute();
+        // Consent may coexist with a long-running legacy AsyncTask (notably an ESM expiration
+        // monitor). Joining must not wait on Android's process-wide serial AsyncTask queue.
+        new ApplySettingsAsync(declinedSettings)
+                .executeOnExecutor(AsyncTask.THREAD_POOL_EXECUTOR);
     }
 
     private void goToMainUi() {
@@ -381,6 +483,13 @@ public class SensorConsentActivity extends AppCompatActivity {
     private void cancelJoin() {
         if (updateMode) {
             Aware.logStudyCompliance(getApplicationContext(), "study update: added sensors left off");
+            goToMainUi();
+            return;
+        }
+
+        if (preJoin) {
+            // Not enrolled yet — enrolment happens at sign-up, after this screen — so there is nothing
+            // to roll back. Just leave the flow without joining.
             goToMainUi();
             return;
         }

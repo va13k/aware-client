@@ -24,6 +24,9 @@ import org.json.JSONArray;
 import org.json.JSONObject;
 
 import java.util.ArrayList;
+import java.util.Arrays;
+import java.util.Collections;
+import java.util.Comparator;
 import java.util.HashMap;
 import java.util.HashSet;
 import java.util.List;
@@ -105,17 +108,17 @@ public final class SensorCollection {
     }
 
     static {
-        REGISTRY.put("accelerometer", new Def(".provider.accelerometer", "sensor_accelerometer", Sensor.TYPE_ACCELEROMETER, NONE, false));
-        REGISTRY.put("linear_accelerometer", new Def(".provider.accelerometer.linear", "sensor_accelerometer_linear", Sensor.TYPE_LINEAR_ACCELERATION, NONE, false));
+        REGISTRY.put("accelerometer", new Def(".provider.accelerometer", "accelerometer", Sensor.TYPE_ACCELEROMETER, NONE, false));
+        REGISTRY.put("linear_accelerometer", new Def(".provider.accelerometer.linear", "linear_accelerometer", Sensor.TYPE_LINEAR_ACCELERATION, NONE, false));
         REGISTRY.put("significant_motion", new Def(".provider.significant", "significant", Sensor.TYPE_ACCELEROMETER, NONE, false));
-        REGISTRY.put("barometer", new Def(".provider.barometer", "sensor_barometer", Sensor.TYPE_PRESSURE, NONE, false));
-        REGISTRY.put("gravity", new Def(".provider.gravity", "sensor_gravity", Sensor.TYPE_GRAVITY, NONE, false));
-        REGISTRY.put("gyroscope", new Def(".provider.gyroscope", "sensor_gyroscope", Sensor.TYPE_GYROSCOPE, NONE, false));
-        REGISTRY.put("light", new Def(".provider.light", "sensor_light", Sensor.TYPE_LIGHT, NONE, false));
-        REGISTRY.put("magnetometer", new Def(".provider.magnetometer", "sensor_magnetometer", Sensor.TYPE_MAGNETIC_FIELD, NONE, false));
-        REGISTRY.put("proximity", new Def(".provider.proximity", "sensor_proximity", Sensor.TYPE_PROXIMITY, NONE, false));
-        REGISTRY.put("rotation", new Def(".provider.rotation", "sensor_rotation", Sensor.TYPE_ROTATION_VECTOR, NONE, false));
-        REGISTRY.put("temperature", new Def(".provider.temperature", "sensor_temperature", Sensor.TYPE_AMBIENT_TEMPERATURE, NONE, false));
+        REGISTRY.put("barometer", new Def(".provider.barometer", "barometer", Sensor.TYPE_PRESSURE, NONE, false));
+        REGISTRY.put("gravity", new Def(".provider.gravity", "gravity", Sensor.TYPE_GRAVITY, NONE, false));
+        REGISTRY.put("gyroscope", new Def(".provider.gyroscope", "gyroscope", Sensor.TYPE_GYROSCOPE, NONE, false));
+        REGISTRY.put("light", new Def(".provider.light", "light", Sensor.TYPE_LIGHT, NONE, false));
+        REGISTRY.put("magnetometer", new Def(".provider.magnetometer", "magnetometer", Sensor.TYPE_MAGNETIC_FIELD, NONE, false));
+        REGISTRY.put("proximity", new Def(".provider.proximity", "proximity", Sensor.TYPE_PROXIMITY, NONE, false));
+        REGISTRY.put("rotation", new Def(".provider.rotation", "rotation", Sensor.TYPE_ROTATION_VECTOR, NONE, false));
+        REGISTRY.put("temperature", new Def(".provider.temperature", "temperature", Sensor.TYPE_AMBIENT_TEMPERATURE, NONE, false));
 
         REGISTRY.put("battery", new Def(".provider.battery", "battery", -1, NONE, false));
         REGISTRY.put("screen", new Def(".provider.screen", "screen", -1, NONE, false));
@@ -129,7 +132,7 @@ public final class SensorCollection {
         // ACCESS_FINE_LOCATION permission below — Android blocks WifiManager.startScan() with a
         // SecurityException when Location services are off, regardless of granted permissions.
         REGISTRY.put("wifi", new Def(".provider.wifi", "wifi", -1, new String[]{Manifest.permission.ACCESS_FINE_LOCATION}, false, true));
-        REGISTRY.put("bluetooth", new Def(".provider.bluetooth", "sensor_bluetooth", -1, new String[]{Manifest.permission.ACCESS_FINE_LOCATION}, false));
+        REGISTRY.put("bluetooth", new Def(".provider.bluetooth", "bluetooth", -1, new String[]{Manifest.permission.ACCESS_FINE_LOCATION}, false));
         REGISTRY.put("communication", new Def(".provider.communication", "calls", -1, new String[]{Manifest.permission.READ_CALL_LOG}, false));
         REGISTRY.put("telephony", new Def(".provider.telephony", "telephony", -1, new String[]{Manifest.permission.READ_PHONE_STATE}, false));
 
@@ -556,7 +559,7 @@ public final class SensorCollection {
             new ConsentItem(
                 "application",
                 "Applications usage",
-                "Application screen time & foreground activity, notifications, crashes and installations",
+                "Foreground app activity, notifications, crashes, and app install/update/removal events.",
                 new String[]{
                     Aware_Preferences.STATUS_APPLICATIONS,
                     Aware_Preferences.STATUS_NOTIFICATIONS,
@@ -584,6 +587,28 @@ public final class SensorCollection {
                 },
                 NONE,
                 true
+            ),
+            new ConsentItem(
+                "ambient_noise",
+                "Ambient Noise plugin",
+                "Measure environmental sound levels.",
+                new String[]{
+                    Aware_Preferences.STATUS_PLUGIN_AMBIENT_NOISE
+                },
+                new String[]{
+                    Manifest.permission.RECORD_AUDIO
+                }
+            ),
+            new ConsentItem(
+                "openweather",
+                "OpenWeather plugin",
+                "Use location to record local weather conditions.",
+                new String[]{
+                    Aware_Preferences.STATUS_PLUGIN_OPENWEATHER
+                },
+                new String[]{
+                    Manifest.permission.ACCESS_COARSE_LOCATION
+                }
             )
     };
 
@@ -613,6 +638,21 @@ public final class SensorCollection {
             }
         }
         return null;
+    }
+
+    /**
+     * Every setting controlled by a consent choice. Installation events do not technically require
+     * Accessibility, so they are not one of the settings that makes the Applications consent row
+     * appear. When that row is present, however, its disclosure explicitly includes installation
+     * events; accepting or declining it must therefore control installations as part of the same
+     * participant choice.
+     */
+    public static List<String> controlledSettings(ConsentItem item) {
+        List<String> settings = new ArrayList<>(Arrays.asList(item.statusSettings));
+        if ("application".equals(item.key)) {
+            settings.add(Aware_Preferences.STATUS_INSTALLATIONS);
+        }
+        return settings;
     }
 
     /**
@@ -667,6 +707,220 @@ public final class SensorCollection {
         return enabled;
     }
 
+    /** How (if at all) the participant must act for a sensor shown on the consent screen. */
+    public enum ConsentBadge { PERMISSION, ACCESSIBILITY, AUTOMATIC }
+    public enum ConsentGroup { SENSOR, PLUGIN }
+
+    /**
+     * One participant-facing row on the join consent screen. Either a grant-requiring sensor
+     * ({@link #grantItem} non-null — tap to grant a runtime permission or the Accessibility service)
+     * or an automatically-collected sensor ({@link #grantItem} null — disclosed for transparency,
+     * with nothing to grant).
+     */
+    public static final class ConsentRow {
+        public final String label;
+        public final String description;
+        public final String emoji;
+        public final ConsentBadge badge;
+        public final ConsentGroup group;
+        public final ConsentItem grantItem; // non-null only for grant-requiring sensors
+
+        ConsentRow(String label, String description, String emoji, ConsentBadge badge,
+                   ConsentGroup group, ConsentItem grantItem) {
+            this.label = label;
+            this.description = description;
+            this.emoji = emoji;
+            this.badge = badge;
+            this.group = group;
+            this.grantItem = grantItem;
+        }
+
+        public boolean requiresGrant() { return grantItem != null; }
+    }
+
+    /**
+     * The full, ordered list of sensors a study collects, for the pre-join consent screen: every
+     * grant-requiring sensor the config enables (each a tap-to-grant row) followed by every
+     * automatically-collected sensor it enables (disclosed only). Built directly from the
+     * not-yet-applied config JSON, same as {@link #enabledConsentsForConfig}, so it can run before the
+     * study is applied.
+     */
+    public static List<ConsentRow> consentRowsForConfig(JSONArray configs) {
+        List<ConsentRow> sensorRows = new ArrayList<>();
+        List<ConsentRow> pluginRows = new ArrayList<>();
+        Set<String> covered = new HashSet<>();
+        for (ConsentItem item : enabledConsentsForConfig(configs)) {
+            ConsentBadge badge = item.needsAccessibility ? ConsentBadge.ACCESSIBILITY : ConsentBadge.PERMISSION;
+            ConsentGroup group = consentGroup(item.statusSettings);
+            ConsentRow row = new ConsentRow(
+                    item.label, item.reason, consentEmoji(item.key), badge, group, item);
+            (group == ConsentGroup.PLUGIN ? pluginRows : sensorRows).add(row);
+            covered.addAll(controlledSettings(item));
+        }
+
+        List<ConsentRow> automaticSensors = new ArrayList<>();
+        List<ConsentRow> automaticPlugins = new ArrayList<>();
+        for (String setting : enabledStatusSettings(configs)) {
+            if (covered.contains(setting) || consentItemForSetting(setting) != null) continue;
+            String name = setting.substring("status_".length());
+            ConsentGroup group = setting.startsWith("status_plugin_")
+                    ? ConsentGroup.PLUGIN : ConsentGroup.SENSOR;
+            ConsentRow row = new ConsentRow(
+                    autoLabel(name), autoDescription(name), autoEmoji(name),
+                    ConsentBadge.AUTOMATIC, group, null);
+            (group == ConsentGroup.PLUGIN ? automaticPlugins : automaticSensors).add(row);
+        }
+        Comparator<ConsentRow> byLabel = new Comparator<ConsentRow>() {
+            @Override
+            public int compare(ConsentRow a, ConsentRow b) {
+                return a.label.compareToIgnoreCase(b.label);
+            }
+        };
+        Collections.sort(automaticSensors, byLabel);
+        Collections.sort(automaticPlugins, byLabel);
+        sensorRows.addAll(automaticSensors);
+        pluginRows.addAll(automaticPlugins);
+
+        List<ConsentRow> rows = new ArrayList<>();
+        rows.addAll(sensorRows);
+        rows.addAll(pluginRows);
+        return rows;
+    }
+
+    /** A single grant-requiring display row for {@code item} — e.g. the mid-study update list. */
+    public static ConsentRow rowFor(ConsentItem item) {
+        ConsentBadge badge = item.needsAccessibility ? ConsentBadge.ACCESSIBILITY : ConsentBadge.PERMISSION;
+        return new ConsentRow(item.label, item.reason, consentEmoji(item.key), badge,
+                consentGroup(item.statusSettings), item);
+    }
+
+    private static ConsentGroup consentGroup(String[] statusSettings) {
+        for (String setting : statusSettings) {
+            if (setting != null && setting.startsWith("status_plugin_")) {
+                return ConsentGroup.PLUGIN;
+            }
+        }
+        return ConsentGroup.SENSOR;
+    }
+
+    /** Every status_* setting the config enables (value == true), across all config elements. */
+    private static Set<String> enabledStatusSettings(JSONArray configs) {
+        Set<String> out = new HashSet<>();
+        if (configs == null) return out;
+        for (int i = 0; i < configs.length(); i++) {
+            JSONObject element = configs.optJSONObject(i);
+            JSONArray sensors = element == null ? null : element.optJSONArray("sensors");
+            if (sensors == null) continue;
+            for (int j = 0; j < sensors.length(); j++) {
+                JSONObject sensor = sensors.optJSONObject(j);
+                if (sensor == null || !sensor.optBoolean("value", false)) continue;
+                String setting = sensor.optString("setting", "");
+                if (setting.startsWith("status_")) out.add(setting);
+            }
+        }
+        return out;
+    }
+
+    private static String consentEmoji(String consentKey) {
+        switch (consentKey) {
+            case "locations": return "📍";          // 📍
+            case "wifi": return "📶";               // 📶
+            case "bluetooth": return "🔵";          // 🔵
+            case "telephony": return "📡";          // 📡
+            case "communication": return "💬";      // 💬
+            case "application": return "📊";        // 📊
+            case "keyboard": return "⌨️";           // ⌨️
+            case "screenshot": return "📸";         // 📸
+            case "ambient_noise": return "🎤";      // 🎤
+            case "openweather": return "🌦️";        // 🌦️
+            default: return "🔒";                   // 🔒
+        }
+    }
+
+    private static String autoEmoji(String name) {
+        if (name.startsWith("plugin_")) {
+            String plugin = name.substring("plugin_".length());
+            if ("openweather".equals(plugin)) return "🌦️";
+            if ("esm_scheduler".equals(plugin)) return "📝";
+            if ("ambient_noise".equals(plugin)) return "🎤";
+            return "🧩";
+        }
+        switch (name) {
+            case "accelerometer":
+            case "linear_accelerometer":
+            case "significant_motion": return "🏃";  // 🏃
+            case "gyroscope": return "🌀";           // 🌀
+            case "magnetometer":
+            case "rotation": return "🧭";            // 🧭
+            case "gravity": return "⬇️";             // ⬇️
+            case "barometer": return "🌦️";           // 🌦️
+            case "light": return "💡";               // 💡
+            case "proximity": return "📏";           // 📏
+            case "temperature": return "🌡️";         // 🌡️
+            case "battery": return "🔋";             // 🔋
+            case "screen": return "📱";              // 📱
+            case "processor": return "⚙️";           // ⚙️
+            case "network_traffic": return "📈";     // 📈
+            case "timezone": return "🕐";            // 🕐
+            default: return "📊";                    // 📊
+        }
+    }
+
+    private static String autoLabel(String name) {
+        if (name.startsWith("plugin_")) {
+            String plugin = name.substring("plugin_".length());
+            if ("openweather".equals(plugin)) return "OpenWeather plugin";
+            if ("esm_scheduler".equals(plugin)) return "ESM Scheduler plugin";
+            if ("ambient_noise".equals(plugin)) return "Ambient Noise plugin";
+            String prettyPlugin = plugin.replace('_', ' ');
+            return (prettyPlugin.isEmpty()
+                    ? "Plugin"
+                    : Character.toUpperCase(prettyPlugin.charAt(0)) + prettyPlugin.substring(1))
+                    + " plugin";
+        }
+        switch (name) {
+            case "linear_accelerometer": return "Linear accelerometer";
+            case "significant_motion": return "Significant motion";
+            case "network_traffic": return "Network traffic";
+            case "installations": return "Application installations";
+            case "processor": return "Processor (CPU)";
+            case "timezone": return "Time zone";
+            default:
+                String pretty = name.replace('_', ' ');
+                return pretty.isEmpty() ? pretty : Character.toUpperCase(pretty.charAt(0)) + pretty.substring(1);
+        }
+    }
+
+    private static String autoDescription(String name) {
+        if (name.startsWith("plugin_")) {
+            String plugin = name.substring("plugin_".length());
+            if ("openweather".equals(plugin)) return "Record local weather conditions.";
+            if ("esm_scheduler".equals(plugin)) return "Schedule study questionnaires.";
+            if ("ambient_noise".equals(plugin)) return "Measure environmental sound levels.";
+            return "Additional study data collection.";
+        }
+        switch (name) {
+            case "accelerometer": return "Device movement and orientation.";
+            case "linear_accelerometer": return "Movement with gravity removed.";
+            case "significant_motion": return "Detects notable movement.";
+            case "gyroscope": return "Rotation and turning of the device.";
+            case "magnetometer": return "Magnetic field / compass heading.";
+            case "rotation": return "Device orientation in space.";
+            case "gravity": return "Direction of gravity.";
+            case "barometer": return "Air pressure.";
+            case "light": return "Ambient light level.";
+            case "proximity": return "Whether something is close to the screen.";
+            case "temperature": return "Ambient temperature.";
+            case "battery": return "Charging state and battery level.";
+            case "screen": return "Screen on/off and lock/unlock.";
+            case "processor": return "Processor (CPU) load.";
+            case "network_traffic": return "Amount of data sent and received.";
+            case "installations": return "Application install, update, and removal events.";
+            case "timezone": return "Device time zone.";
+            default: return "Collected automatically.";
+        }
+    }
+
     /**
      * True if the study config enables at least one sensor that still needs a permission grant or
      * Accessibility Service enable the participant hasn't already given — i.e. there's actually
@@ -682,7 +936,7 @@ public final class SensorCollection {
 
     /**
      * Fingerprint of what a consent for this study would cover: the study URL plus the sorted keys
-     * of every promptable sensor its config enables (e.g. "https://…|bluetooth,locations,wifi").
+     * of every promptable sensor its config enables (like "https://…|bluetooth,locations,wifi").
      * Stored as {@link com.aware.Aware_Preferences#STUDY_CONSENT_RECORD} when the participant
      * completes the consent screen; a mismatch (different study, or a changed sensor set) means
      * their recorded agreement doesn't cover this join.

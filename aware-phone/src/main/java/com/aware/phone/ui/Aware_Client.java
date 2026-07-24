@@ -195,8 +195,10 @@ public class Aware_Client extends Aware_Activity {
         if ((added == null || added.isEmpty()) && (removed == null || removed.isEmpty())) {
             message.append("\n\nThe update changes sensor frequencies or other study settings.");
         }
-        if (configUpdateAllowedNewValue != null && !configUpdateAllowedNewValue) {
-            message.append("\n\nThis update also disables editable mode.");
+        if (configUpdateAllowedNewValue != null) {
+            message.append(configUpdateAllowedNewValue
+                    ? "\n\nAfter this update you can adjust the sensor settings for this study yourself."
+                    : "\n\nAfter this update, the researcher manages the sensor settings for this study.");
         }
         message.append("\n\nAgreeing replaces your local sensor configuration. "
                 + "If new sensors need permission, you will review consent next.");
@@ -435,8 +437,8 @@ public class Aware_Client extends Aware_Activity {
         }
         if (configUpdateAllowedNewValue != null) {
             msg.append("\n\n").append(configUpdateAllowedNewValue
-                    ? "You can now change your own settings for this study."
-                    : "Your settings are locked to the researcher's configuration again.");
+                    ? "You can now adjust the sensor settings for this study yourself."
+                    : "The researcher now manages the sensor settings for this study.");
         }
         if (hasHeld) {
             msg.append("\n\nSome added sensors need your permission before they can collect. Review them now?");
@@ -852,7 +854,8 @@ public class Aware_Client extends Aware_Activity {
         // Turn on only the sub-settings the study config enables (fall back to the whole group if the
         // config can't be read), so enabling "Calls & messages" doesn't switch on more than the study wants.
         List<String> toEnable = SensorCollection.configEnabledSettings(
-                Aware.getActiveStudyConfig(getApplicationContext()), consent.statusSettings);
+                Aware.getActiveStudyConfig(getApplicationContext()),
+                controlled.toArray(new String[controlled.size()]));
         if (toEnable.isEmpty()) toEnable = Arrays.asList(consent.statusSettings);
         for (String setting : toEnable) {
             Aware.setSetting(getApplicationContext(), setting, true);
@@ -1323,7 +1326,7 @@ private void enableAccessibilityService(final Runnable onResolved) {
             }
         })
         .setNegativeButton("Not now", null)
-        .setCancelable(false)
+        .setCancelable(true)
         .setOnDismissListener(new DialogInterface.OnDismissListener() {
             @Override
             public void onDismiss(DialogInterface dialog) {

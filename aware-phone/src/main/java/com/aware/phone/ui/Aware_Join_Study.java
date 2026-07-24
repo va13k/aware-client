@@ -55,11 +55,20 @@ public class Aware_Join_Study extends Aware_Activity {
     public static final String EXTRA_STUDY_CONFIG = "study_config";
     public static final String INPUT_PASSWORD = "input_password";
 
+    /**
+     * Set when the participant already reviewed the consent on {@link SensorConsentActivity}
+     * before reaching this screen (the pre-join onboarding order). Skips re-launching the consent
+     * screen from Sign up — the grants and declined set are already recorded and applySettings honours
+     * them.
+     */
+    public static final String EXTRA_CONSENT_DONE = "consent_done";
+
 
 
     private static String study_url;
     private JSONArray study_configs;
     private static String input_password;
+    private boolean consentDone;
 
 
 
@@ -101,6 +110,7 @@ public class Aware_Join_Study extends Aware_Activity {
         study_url = getIntent().getStringExtra(EXTRA_STUDY_URL);
         String studyConfigStr = getIntent().getStringExtra(EXTRA_STUDY_CONFIG);
         input_password = getIntent().getStringExtra(INPUT_PASSWORD);
+        consentDone = getIntent().getBooleanExtra(EXTRA_CONSENT_DONE, false);
 
         //If we are getting here from an AWARE study link (deeplink)
         String scheme = getIntent().getScheme();
@@ -605,6 +615,13 @@ public class Aware_Join_Study extends Aware_Activity {
 
         mSensorsAdapter = new SensorsAdapter(active_sensors);
         sensorsRecyclerView.setAdapter(mSensorsAdapter);
+
+        // When the participant arrived via the sensor consent screen, it already reviewed the full
+        // sensor list in a friendly form — so hide this duplicate "Sensors needed" list and keep the
+        // sign-up step focused on entering the study identifier.
+        if (consentDone) {
+            findViewById(R.id.ll_sensors_required).setVisibility(View.GONE);
+        }
 
         //Show the plugins' information
         active_plugins = new ArrayList<>();

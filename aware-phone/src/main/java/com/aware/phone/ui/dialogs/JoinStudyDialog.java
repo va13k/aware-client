@@ -20,6 +20,7 @@ import com.aware.Aware;
 import com.aware.Aware_Preferences;
 import com.aware.phone.R;
 import com.aware.phone.ui.Aware_Join_Study;
+import com.aware.phone.ui.SensorConsentActivity;
 import com.aware.utils.StudyUtils;
 
 import org.json.JSONException;
@@ -153,13 +154,16 @@ public class JoinStudyDialog extends DialogFragment {
                         Toast.LENGTH_LONG).show();
             }
             else {
-
-                Intent studyInfo = new Intent(mActivity, Aware_Join_Study.class);
-                studyInfo.putExtra(Aware_Join_Study.EXTRA_STUDY_URL, url);
-                studyInfo.putExtra(Aware_Join_Study.EXTRA_STUDY_CONFIG, studyConfig);
-                studyInfo.putExtra(Aware_Join_Study.INPUT_PASSWORD, input_password);
-                studyInfo.setFlags(Intent.FLAG_ACTIVITY_CLEAR_TOP | Intent.FLAG_ACTIVITY_NEW_TASK);
-                mActivity.startActivity(studyInfo);
+                // Show the sensor consent screen first (it reviews what the study collects and
+                // collects any permission grants), then it hands off to the identifier / sign-up
+                // step. Runs before enrolment — nothing is applied until the participant signs up.
+                Intent consent = new Intent(mActivity, SensorConsentActivity.class);
+                consent.putExtra(Aware_Join_Study.EXTRA_STUDY_URL, url);
+                consent.putExtra(Aware_Join_Study.EXTRA_STUDY_CONFIG, studyConfig);
+                consent.putExtra(Aware_Join_Study.INPUT_PASSWORD, input_password);
+                consent.putExtra(SensorConsentActivity.EXTRA_PRE_JOIN, true);
+                consent.setFlags(Intent.FLAG_ACTIVITY_CLEAR_TOP | Intent.FLAG_ACTIVITY_NEW_TASK);
+                mActivity.startActivity(consent);
             }
         }
     }
