@@ -10,8 +10,6 @@ import android.util.Log;
 import android.content.pm.PackageManager;
 import androidx.core.content.ContextCompat;
 import com.aware.Aware;
-import com.aware.ui.PermissionsHandler;
-
 import java.util.ArrayList;
 
 /**
@@ -99,11 +97,14 @@ public class Aware_Sensor extends Service {
         }
 
         if (!PERMISSIONS_OK) {
-            Intent permissions = new Intent(this, PermissionsHandler.class);
-            permissions.putExtra(PermissionsHandler.EXTRA_REQUIRED_PERMISSIONS, REQUIRED_PERMISSIONS);
-            permissions.setFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
-            permissions.putExtra(PermissionsHandler.EXTRA_REDIRECT_SERVICE, getPackageName() + "/" + getClass().getName()); //restarts plugin once permissions are accepted
-            startActivity(permissions);
+            // Never launch permission UI from a background service. Enabling several study sensors
+            // at once otherwise creates several PermissionsHandler activities (often all titled
+            // "Allow Location") which stack faster than the participant can dismiss them. The
+            // consent/settings UI owns permission requests; it restarts AWARE after a grant.
+            Log.w(Aware.TAG, "Not starting " + getClass().getName()
+                    + ": required permission is missing; waiting for participant consent");
+            stopSelf(startId);
+            return START_NOT_STICKY;
         } else {
             PERMISSIONS_OK = true;
 

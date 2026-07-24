@@ -880,7 +880,9 @@ public class Aware extends Service {
         Aware.debug(getApplicationContext(),"Aware-starting");
 
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M && ContextCompat.checkSelfPermission(getApplicationContext(), Manifest.permission.WRITE_EXTERNAL_STORAGE) != PackageManager.PERMISSION_GRANTED) {
-            return START_STICKY;
+            Log.w(TAG, "AWARE core not starting: storage permission is missing");
+            stopSelf(startId);
+            return START_NOT_STICKY;
         }
 
         if (Environment.getExternalStorageState().equals(Environment.MEDIA_MOUNTED)) {

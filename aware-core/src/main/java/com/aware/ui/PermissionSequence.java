@@ -56,6 +56,12 @@ public class PermissionSequence {
         index++;
     }
 
+    /** Decline every remaining item, used when the participant cancels the permission flow. */
+    public void cancelRemaining() {
+        if (index < permissions.size()) anyDenied = true;
+        index = permissions.size();
+    }
+
     /** True once every permission has been handled (all either granted or advanced past). */
     public boolean isDone() {
         return nextToRequest() == null;
