@@ -156,7 +156,7 @@ public class StudyUtils extends IntentService {
 
                 Cursor dbStudy = Aware.getStudy(getApplicationContext(), full_url);
                 if (Aware.DEBUG)
-                    Log.d(Aware.TAG, DatabaseUtils.dumpCursorToString(dbStudy));
+                    Log.d(Aware.TAG, LogRedactor.redact(DatabaseUtils.dumpCursorToString(dbStudy)));
 
                 if (dbStudy == null || !dbStudy.moveToFirst()) {
                     ContentValues studyData = new ContentValues();
@@ -174,7 +174,7 @@ public class StudyUtils extends IntentService {
                     getContentResolver().insert(Aware_Provider.Aware_Studies.CONTENT_URI, studyData);
 
                     if (Aware.DEBUG) {
-                        Log.d(Aware.TAG, "New study data: " + studyData.toString());
+                        Log.d(Aware.TAG, LogRedactor.redact("New study data: " + studyData.toString()));
                     }
                 } else {
                     //User rejoined a study he was already part of. Mark as abandoned.
@@ -210,7 +210,7 @@ public class StudyUtils extends IntentService {
                     getContentResolver().insert(Aware_Provider.Aware_Studies.CONTENT_URI, studyData);
 
                     if (Aware.DEBUG) {
-                        Log.d(Aware.TAG, "Rejoined study data: " + studyData.toString());
+                        Log.d(Aware.TAG, LogRedactor.redact("Rejoined study data: " + studyData.toString()));
                     }
                 }
 

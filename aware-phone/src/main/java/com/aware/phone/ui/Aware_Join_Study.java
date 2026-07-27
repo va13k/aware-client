@@ -408,7 +408,7 @@ public class Aware_Join_Study extends Aware_Activity {
                     JSONObject studyInfo = result.getJSONObject("study_info");
 
                     if (Aware.DEBUG)
-                        Log.d(Aware.TAG, DatabaseUtils.dumpCursorToString(dbStudy));
+                        Log.d(Aware.TAG, LogRedactor.redact(DatabaseUtils.dumpCursorToString(dbStudy)));
 
                     if (dbStudy == null || !dbStudy.moveToFirst()) {
                         ContentValues studyData = new ContentValues();
@@ -425,7 +425,7 @@ public class Aware_Join_Study extends Aware_Activity {
                         getContentResolver().insert(Aware_Provider.Aware_Studies.CONTENT_URI, studyData);
 
                         if (Aware.DEBUG) {
-                            Log.d(Aware.TAG, "New study data: " + studyData.toString());
+                            Log.d(Aware.TAG, LogRedactor.redact("New study data: " + studyData.toString()));
                         }
                     } else {
                         //Update the information to the latest
@@ -445,7 +445,7 @@ public class Aware_Join_Study extends Aware_Activity {
                         getContentResolver().insert(Aware_Provider.Aware_Studies.CONTENT_URI, studyData);
 
                         if (Aware.DEBUG) {
-                            Log.d(Aware.TAG, "Re-scanned study data: " + studyData.toString());
+                            Log.d(Aware.TAG, LogRedactor.redact("Re-scanned study data: " + studyData.toString()));
                         }
                     }
 

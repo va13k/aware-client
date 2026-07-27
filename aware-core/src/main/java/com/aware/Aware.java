@@ -2055,7 +2055,7 @@ public class Aware extends Service {
                         JSONArray study_config = new JSONArray(answer);
 
                         if (DEBUG)
-                            Log.d(TAG, "Study config: " + study_config.toString(5));
+                            Log.d(TAG, LogRedactor.redact("Study config: " + study_config.toString(5)));
 
                         if (study_config.getJSONObject(0).has("message")) {
                             Toast.makeText(getApplicationContext(), study_config.getJSONObject(0).getString("message"), Toast.LENGTH_LONG).show();
@@ -2064,7 +2064,7 @@ public class Aware extends Service {
 
                         Cursor dbStudy = Aware.getStudy(getApplicationContext(), full_url);
                         if (Aware.DEBUG)
-                            Log.d(Aware.TAG, DatabaseUtils.dumpCursorToString(dbStudy));
+                            Log.d(Aware.TAG, LogRedactor.redact(DatabaseUtils.dumpCursorToString(dbStudy)));
 
                         if (dbStudy == null || !dbStudy.moveToFirst()) {
                             ContentValues studyData = new ContentValues();
@@ -2082,7 +2082,7 @@ public class Aware extends Service {
                             getContentResolver().insert(Aware_Provider.Aware_Studies.CONTENT_URI, studyData);
 
                             if (Aware.DEBUG)
-                                Log.d(Aware.TAG, "New study data: " + studyData.toString());
+                                Log.d(Aware.TAG, LogRedactor.redact("New study data: " + studyData.toString()));
 
                         } else {
                             ContentValues studyData = new ContentValues();
@@ -2101,7 +2101,7 @@ public class Aware extends Service {
                             getContentResolver().insert(Aware_Provider.Aware_Studies.CONTENT_URI, studyData);
 
                             if (Aware.DEBUG) {
-                                Log.d(Aware.TAG, "Rejoined study data: " + studyData.toString());
+                                Log.d(Aware.TAG, LogRedactor.redact("Rejoined study data: " + studyData.toString()));
                             }
                         }
 

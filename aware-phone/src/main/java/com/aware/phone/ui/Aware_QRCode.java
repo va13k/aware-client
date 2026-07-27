@@ -27,6 +27,7 @@ import com.aware.Aware_Preferences;
 import com.aware.providers.Aware_Provider;
 import com.aware.utils.Http;
 import com.aware.utils.Https;
+import com.aware.utils.LogRedactor;
 import com.aware.utils.SSLManager;
 
 import org.json.JSONArray;
@@ -247,7 +248,7 @@ public class Aware_QRCode extends Aware_Activity implements ZBarScannerView.Resu
                     Cursor dbStudy = Aware.getStudy(getApplicationContext(), study_url);
 
                     if (Aware.DEBUG)
-                        Log.d(Aware.TAG, DatabaseUtils.dumpCursorToString(dbStudy));
+                        Log.d(Aware.TAG, LogRedactor.redact(DatabaseUtils.dumpCursorToString(dbStudy)));
 
                     if (dbStudy == null || !dbStudy.moveToFirst()) {
                         ContentValues studyData = new ContentValues();
