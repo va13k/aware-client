@@ -34,6 +34,75 @@ public class Jdbc {
     }
 
     /**
+     * Outcome of a database connection attempt, distinguishing an authentication failure (the
+     * stored password is wrong) from an unreachable server (transient / network). Callers need
+     * this distinction so that "the password changed" is handled differently from "the database is
+     * temporarily down": only the former should ask the participant to re-authenticate.
+     */
+    public enum ConnectionResult { OK, AUTH_FAILED, UNREACHABLE }
+
+    /**
+     * Classifies a {@link SQLException} from a connection attempt as an authentication failure or a
+     * reachability failure. Pure and side-effect free so it can be unit-tested without a database.
+     * <p>
+     * MySQL signals access-denied with SQLState {@code 28000} and vendor error code {@code 1045};
+     * anything else (connect/socket timeout, communications link failure, unknown host, driver
+     * errors) is treated as {@link ConnectionResult#UNREACHABLE}. The safe default is
+     * {@code UNREACHABLE} so an unrecognised error never prompts the participant for a password.
+     *
+     * @param e the exception thrown while connecting
+     * @return {@link ConnectionResult#AUTH_FAILED} for access-denied, else {@link ConnectionResult#UNREACHABLE}
+     */
+    static ConnectionResult classify(SQLException e) {
+        if (e == null) return ConnectionResult.UNREACHABLE;
+        if ("28000".equals(e.getSQLState()) || e.getErrorCode() == 1045) {
+            return ConnectionResult.AUTH_FAILED;
+        }
+        return ConnectionResult.UNREACHABLE;
+    }
+
+    /**
+     * Probes whether the given credentials can authenticate against the database, on a short-lived
+     * connection that fails fast when the host is unreachable.
+     * <p>
+     * Unlike {@link #testConnection}, this returns a three-state {@link ConnectionResult} so callers
+     * can tell a rejected password ({@link ConnectionResult#AUTH_FAILED}) from a down/unreachable
+     * server ({@link ConnectionResult#UNREACHABLE}). It uses its own connection with bounded
+     * {@code connectTimeout}/{@code socketTimeout} and never touches the shared sync connection.
+     * The password/connection string are never logged.
+     *
+     * @param timeoutSeconds maximum time to spend connecting
+     * @return {@link ConnectionResult#OK} if the credentials authenticate, otherwise the classified failure
+     */
+    public static ConnectionResult probeConnection(String host, String port, String name,
+                                                   String username, String password, int timeoutSeconds) {
+        int timeoutMs = timeoutSeconds * 1000;
+        String connectionUrl = String.format(
+                "jdbc:mysql://%s:%s/%s?connectTimeout=%d&socketTimeout=%d",
+                host, port, name, timeoutMs, timeoutMs);
+
+        Connection localConnection = null;
+        try {
+            Class.forName("com.mysql.jdbc.Driver");
+            localConnection = DriverManager.getConnection(connectionUrl, username, password);
+            return ConnectionResult.OK;
+        } catch (SQLException e) {
+            ConnectionResult result = classify(e);
+            Log.i(TAG, "Database probe result: " + result);
+            return result;
+        } catch (Exception e) {
+            // Driver load or other unexpected failure: treat as unreachable so we never prompt.
+            Log.i(TAG, "Database probe result: " + ConnectionResult.UNREACHABLE);
+            return ConnectionResult.UNREACHABLE;
+        } finally {
+            try {
+                if (localConnection != null && !localConnection.isClosed()) localConnection.close();
+            } catch (SQLException ignored) {
+            }
+        }
+    }
+
+    /**
      * Inserts data into a remote database table.
      *
      * @param context application context
@@ -57,6 +126,84 @@ public class Jdbc {
             return false;
         }
         return true;
+    }
+
+    /**
+     * Best-effort, single-shot insert on a short-lived connection that fails fast when the host is
+     * unreachable.
+     * <p>
+     * Unlike {@link #insertData}, this does NOT reuse the shared sync connection and adds bounded
+     * {@code connectTimeout}/{@code socketTimeout} query parameters, so an unreachable database
+     * fails within roughly {@code timeoutSeconds} instead of hanging on the default TCP timeout.
+     * It is used by the study-exit notification: leaving a study must stay responsive and must
+     * never be blocked by an unreachable research database.
+     *
+     * @param context        application context
+     * @param table          name of the remote table to insert into
+     * @param rows           rows to insert
+     * @param timeoutSeconds maximum time to spend connecting/talking to the database
+     * @return true if the database acknowledged the insert; false if it could not be reached or the
+     *         insert failed. Callers must treat false as "not notified", never as "leave failed".
+     */
+    public static boolean insertDataFastFail(Context context, String table, JSONArray rows, int timeoutSeconds) {
+        if (rows.length() == 0) return true;
+
+        int timeoutMs = timeoutSeconds * 1000;
+        String connectionUrl = String.format(
+                "jdbc:mysql://%s:%s/%s?connectTimeout=%d&socketTimeout=%d",
+                Aware.getSetting(context, Aware_Preferences.DB_HOST),
+                Aware.getSetting(context, Aware_Preferences.DB_PORT),
+                Aware.getSetting(context, Aware_Preferences.DB_NAME),
+                timeoutMs, timeoutMs);
+
+        Connection localConnection = null;
+        try {
+            Class.forName("com.mysql.jdbc.Driver");
+            localConnection = DriverManager.getConnection(connectionUrl,
+                    Aware.getSetting(context, Aware_Preferences.DB_USERNAME),
+                    Aware.getSetting(context, Aware_Preferences.DB_PASSWORD));
+
+            List<String> fields = new ArrayList<>();
+            Iterator<String> fieldIterator = rows.getJSONObject(0).keys();
+            while (fieldIterator.hasNext()) {
+                fields.add(fieldIterator.next());
+            }
+
+            List<String> fieldsWithBacktick = new ArrayList<>();  // in case of reserved keywords
+            List<Character> sqlParamPlaceholder = new ArrayList<>();
+            for (int i = 0; i < fields.size(); i++) {
+                fieldsWithBacktick.add("`" + fields.get(i) + "`");
+                sqlParamPlaceholder.add('?');
+            }
+
+            String sqlStatement = String.format("INSERT INTO %s (%s) VALUES (%s)", table,
+                    TextUtils.join(",", fieldsWithBacktick),
+                    TextUtils.join(",", sqlParamPlaceholder));
+            PreparedStatement ps = localConnection.prepareStatement(sqlStatement);
+
+            for (int i = 0; i < rows.length(); i++) {
+                JSONObject row = rows.getJSONObject(i);
+                int paramIndex = 1;
+                for (String field : fields) {
+                    ps.setString(paramIndex, row.getString(field));
+                    paramIndex++;
+                }
+                ps.addBatch();
+            }
+
+            ps.executeBatch();
+            Log.i(TAG, "Study-exit notification acknowledged by remote table '" + table + "'");
+            return true;
+        } catch (Exception e) {
+            // Do not log the connection string/credentials; the host is enough to diagnose.
+            Log.w(TAG, "Study-exit notification could not reach the research database: " + e.getMessage());
+            return false;
+        } finally {
+            try {
+                if (localConnection != null && !localConnection.isClosed()) localConnection.close();
+            } catch (SQLException ignored) {
+            }
+        }
     }
 
     /**

@@ -230,6 +230,165 @@ public class StudyUtils extends IntentService {
     }
 
     /**
+     * Timeout for the best-effort study-exit notification. Kept short so "leave study" stays
+     * responsive when the research database is unreachable (e.g. the study no longer exists).
+     */
+    private static final int STUDY_EXIT_UPLOAD_TIMEOUT_SECONDS = 8;
+
+    /**
+     * Best-effort, fast-failing upload of a single study-exit compliance row to the research
+     * database, so the researcher is notified when the database is reachable.
+     * <p>
+     * Leaving a study must never depend on this succeeding: callers un-enroll locally regardless of
+     * the result. A {@code false} return means "could not notify" (e.g. the database is gone), not
+     * "leave failed".
+     *
+     * @param context   application context
+     * @param exitEntry the study-exit row (the same values written to the local studies provider)
+     * @return true if the research database acknowledged the exit row, false otherwise
+     */
+    public static boolean uploadStudyExit(Context context, ContentValues exitEntry) {
+        if (exitEntry == null) return false;
+        try {
+            JSONObject row = new JSONObject();
+            for (Map.Entry<String, Object> value : exitEntry.valueSet()) {
+                row.put(value.getKey(), value.getValue());
+            }
+            return Jdbc.insertDataFastFail(context, "aware_studies",
+                    new JSONArray().put(row), STUDY_EXIT_UPLOAD_TIMEOUT_SECONDS);
+        } catch (Exception e) {
+            Log.e(Aware.TAG, "Study-exit notification could not be built", e);
+            return false;
+        }
+    }
+
+    /**
+     * Timeout for a database credential probe. Short so a rotated-password check (or a re-auth
+     * attempt) never hangs the UI when the server is slow or unreachable.
+     */
+    private static final int STUDY_PROBE_TIMEOUT_SECONDS = 8;
+
+    /**
+     * Returns true when the active password-join study's stored password is being rejected by the
+     * database (an authentication failure, not an unreachable server) — i.e. the researcher rotated
+     * the password and the participant must re-enter it. Only applies to
+     * {@code config_without_password=true} studies; a false-mode config carries its own password.
+     *
+     * @param context   application context
+     * @param newConfig the freshly downloaded study configuration
+     * @return true if a participant re-authentication is required
+     */
+    private static boolean needsPasswordReauth(Context context, JSONObject newConfig) {
+        if (newConfig == null) return false;
+        JSONObject dbInfo = newConfig.optJSONObject("database");
+        if (dbInfo == null) return false;
+        if (!dbInfo.optBoolean("config_without_password", false)) return false;
+
+        Jdbc.ConnectionResult result = Jdbc.probeConnection(
+                dbInfo.optString("database_host", ""),
+                dbInfo.optString("database_port", ""),
+                dbInfo.optString("database_name", ""),
+                dbInfo.optString("database_username", ""),
+                Aware.getSetting(context, Aware_Preferences.DB_PASSWORD),
+                STUDY_PROBE_TIMEOUT_SECONDS);
+        return result == Jdbc.ConnectionResult.AUTH_FAILED;
+    }
+
+    /**
+     * Attempts to re-authenticate the active study with a participant-entered password.
+     * <p>
+     * On {@link Jdbc.ConnectionResult#OK} the password is stored, the pending re-auth flag is
+     * cleared, and a config sync is triggered so collection resumes with no re-join. On any other
+     * result nothing is changed and the outcome is returned so the UI can tell the participant
+     * whether the password was wrong or the server was unreachable.
+     *
+     * @param context     application context
+     * @param newPassword the password the participant entered
+     * @return the probe result
+     */
+    /**
+     * Builds a study compliance row (same columns the join/quit flows use) from the active-study
+     * cursor, tagged with the given compliance reason.
+     */
+    private static ContentValues complianceRow(Context context, Cursor study, String compliance) {
+        ContentValues cv = new ContentValues();
+        cv.put(Aware_Provider.Aware_Studies.STUDY_DEVICE_ID,
+                Aware.getSetting(context, Aware_Preferences.DEVICE_ID));
+        cv.put(Aware_Provider.Aware_Studies.STUDY_TIMESTAMP, System.currentTimeMillis());
+        cv.put(Aware_Provider.Aware_Studies.STUDY_KEY,
+                study.getInt(study.getColumnIndex(Aware_Provider.Aware_Studies.STUDY_KEY)));
+        cv.put(Aware_Provider.Aware_Studies.STUDY_API,
+                study.getString(study.getColumnIndex(Aware_Provider.Aware_Studies.STUDY_API)));
+        cv.put(Aware_Provider.Aware_Studies.STUDY_URL,
+                study.getString(study.getColumnIndex(Aware_Provider.Aware_Studies.STUDY_URL)));
+        cv.put(Aware_Provider.Aware_Studies.STUDY_PI,
+                study.getString(study.getColumnIndex(Aware_Provider.Aware_Studies.STUDY_PI)));
+        cv.put(Aware_Provider.Aware_Studies.STUDY_CONFIG,
+                study.getString(study.getColumnIndex(Aware_Provider.Aware_Studies.STUDY_CONFIG)));
+        cv.put(Aware_Provider.Aware_Studies.STUDY_JOINED,
+                study.getLong(study.getColumnIndex(Aware_Provider.Aware_Studies.STUDY_JOINED)));
+        cv.put(Aware_Provider.Aware_Studies.STUDY_EXIT,
+                study.getLong(study.getColumnIndex(Aware_Provider.Aware_Studies.STUDY_EXIT)));
+        cv.put(Aware_Provider.Aware_Studies.STUDY_TITLE,
+                study.getString(study.getColumnIndex(Aware_Provider.Aware_Studies.STUDY_TITLE)));
+        cv.put(Aware_Provider.Aware_Studies.STUDY_DESCRIPTION,
+                study.getString(study.getColumnIndex(Aware_Provider.Aware_Studies.STUDY_DESCRIPTION)));
+        cv.put(Aware_Provider.Aware_Studies.STUDY_COMPLIANCE, compliance);
+        return cv;
+    }
+
+    public static Jdbc.ConnectionResult reauthenticateStudy(Context context, String newPassword) {
+        JSONObject dbInfo = null;
+        ContentValues resumedRow = null;
+        Cursor study = Aware.getActiveStudy(context);
+        if (study != null && study.moveToFirst()) {
+            try {
+                JSONObject config = new JSONObject(study.getString(
+                        study.getColumnIndex(Aware_Provider.Aware_Studies.STUDY_CONFIG)));
+                dbInfo = config.optJSONObject("database");
+            } catch (JSONException e) {
+                Log.e(Aware.TAG, "Re-auth: stored study config is unreadable");
+            }
+            resumedRow = complianceRow(context, study,
+                    "collection resumed after password re-authentication");
+        }
+        if (study != null && !study.isClosed()) study.close();
+
+        if (dbInfo == null) return Jdbc.ConnectionResult.UNREACHABLE;
+
+        Jdbc.ConnectionResult result = Jdbc.probeConnection(
+                dbInfo.optString("database_host", ""),
+                dbInfo.optString("database_port", ""),
+                dbInfo.optString("database_name", ""),
+                dbInfo.optString("database_username", ""),
+                newPassword,
+                STUDY_PROBE_TIMEOUT_SECONDS);
+
+        if (result == Jdbc.ConnectionResult.OK) {
+            Aware.setSetting(context, Aware_Preferences.DB_PASSWORD, newPassword);
+            Aware.setSetting(context, Aware_Preferences.PENDING_STUDY_REAUTH, "");
+            // Audit the recovery for the researcher: the data gap was the live signal; this row is
+            // the record, uploaded now that the credentials are valid again.
+            if (resumedRow != null) {
+                context.getContentResolver().insert(
+                        Aware_Provider.Aware_Studies.CONTENT_URI, resumedRow);
+                try {
+                    JSONObject json = new JSONObject();
+                    for (Map.Entry<String, Object> e : resumedRow.valueSet()) {
+                        json.put(e.getKey(), e.getValue());
+                    }
+                    Jdbc.insertData(context, "aware_studies", new JSONArray().put(json));
+                } catch (Exception e) {
+                    Log.e(Aware.TAG, "Failed to upload re-auth audit row", e);
+                }
+            }
+            // Resume collection/upload with no re-join.
+            syncStudyConfig(context, false);
+        }
+        return result;
+    }
+
+    /**
      * Sets first all the settings to the client.
      * If there are plugins, apply the same settings to them.
      * This allows us to add plugins to studies from the dashboard.
@@ -1013,6 +1172,10 @@ public class StudyUtils extends IntentService {
     public static void syncStudyConfig(
             Context context, Boolean toast, boolean manual, boolean approved) {
         if (!Aware.isStudy(context)) return;
+        // Awaiting password re-authentication: don't re-probe/re-apply on every sync — it would keep
+        // hammering the database with the rejected password. The pending prompt drives recovery, and
+        // reauthenticateStudy() clears this flag (then re-runs this sync) once the password is fixed.
+        if (Aware.getSetting(context, Aware_Preferences.PENDING_STUDY_REAUTH).trim().length() > 0) return;
         boolean editable = Boolean.parseBoolean(Aware.getSetting(
                 context, Aware_Preferences.ENABLE_CONFIG_UPDATE));
         if (shouldSkipAutomaticConfigSync(editable, manual)) {
@@ -1039,6 +1202,18 @@ public class StudyUtils extends IntentService {
                 JSONObject newConfig = getStudyConfig(studyUrl);
                 boolean valid = validateStudyConfig(context, newConfig, Aware.getSetting(context, Aware_Preferences.DB_PASSWORD));
                 if (!valid) {
+                    // A password-join study whose stored password is now rejected (an auth failure,
+                    // not an unreachable server) means the researcher rotated the password: flag the
+                    // participant for re-authentication instead of reporting a dead-end config error,
+                    // and skip applying the config until they re-authenticate.
+                    if (needsPasswordReauth(context, newConfig)) {
+                        Aware.setSetting(context, Aware_Preferences.PENDING_STUDY_REAUTH, studyUrl);
+                        Log.w(Aware.TAG, "Study database password rejected; participant re-authentication required.");
+                        // Nudge an open UI to prompt immediately instead of only on next app open.
+                        context.sendBroadcast(new Intent(Aware.ACTION_AWARE_STUDY_REAUTH_REQUIRED));
+                        return;
+                    }
+
                     String msg = "Failed to sync study, something is wrong with the config.";
                     Log.e(Aware.TAG, msg);
                     if (toast) {

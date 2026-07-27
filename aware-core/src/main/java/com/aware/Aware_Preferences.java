@@ -656,6 +656,15 @@ public class Aware_Preferences {
     public static final String PENDING_STUDY_CONFIG_APPROVAL = "pending_study_config_approval";
 
     /**
+     * Study URL awaiting participant re-authentication: set by StudyUtils.syncStudyConfig() when a
+     * password-join study (config_without_password=true) rejects the stored database password
+     * (auth failure, not an unreachable server). Aware_Client shows a password prompt while this is
+     * non-empty; cleared once the participant enters a password the database accepts. Empty means
+     * no re-authentication is pending.
+     */
+    public static final String PENDING_STUDY_REAUTH = "pending_study_reauth";
+
+    /**
      * Signature of the last detected mismatch between live sensor settings and the study config
      * that StudyUtils.syncStudyConfig() attempted to self-heal (empty string = none). Used to avoid
      * re-applying settings on every sync poll when the drift can't actually be fixed (e.g. a sensor

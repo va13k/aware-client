@@ -164,6 +164,12 @@ public class Aware extends Service {
      * (e.g. rebuild the sensor list to reflect newly enabled/disabled sensors).
      */
     public static final String ACTION_AWARE_STUDY_CONFIG_UPDATED = "ACTION_AWARE_STUDY_CONFIG_UPDATED";
+    /**
+     * Broadcast when a study needs the participant to re-enter its database password (the researcher
+     * rotated it, so the stored password is now rejected). An open UI shows the re-auth prompt live
+     * instead of only on the next app open.
+     */
+    public static final String ACTION_AWARE_STUDY_REAUTH_REQUIRED = "ACTION_AWARE_STUDY_REAUTH_REQUIRED";
     /** Broadcast when an editable-mode server configuration is awaiting participant approval. */
     public static final String ACTION_AWARE_STUDY_CONFIG_UPDATE_AVAILABLE =
             "ACTION_AWARE_STUDY_CONFIG_UPDATE_AVAILABLE";

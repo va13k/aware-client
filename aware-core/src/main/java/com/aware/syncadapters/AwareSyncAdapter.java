@@ -98,6 +98,13 @@ public class AwareSyncAdapter extends AbstractThreadedSyncAdapter {
     ) {
         Log.i(Aware.TAG, "Performing sync for " + Arrays.toString(DATABASE_TABLES));
         
+        // Pause uploads while a study is awaiting password re-authentication: the stored password is
+        // rejected, so every upload attempt would be a failed login hammering the research database.
+        if (Aware.getSetting(mContext, Aware_Preferences.PENDING_STUDY_REAUTH).trim().length() > 0) {
+            Log.i(Aware.TAG, "Skipping data sync: study awaiting password re-authentication.");
+            return;
+        }
+
         if (!Aware.getSetting(mContext, Aware_Preferences.WEBSERVICE_SILENT).equals("true"))
             notManager = (NotificationManager) mContext.getSystemService(Context.NOTIFICATION_SERVICE);
 
@@ -193,6 +200,8 @@ public class AwareSyncAdapter extends AbstractThreadedSyncAdapter {
                 int batches = (int) Math.ceil(total_records / (double) MAX_POST_SIZE);
 
                 long removeFrom = 0;
+                long removeFromId = 0;
+                long[] batchMaxId = new long[]{0};
                 Long lastSynced;
 
                 do {
@@ -200,13 +209,15 @@ public class AwareSyncAdapter extends AbstractThreadedSyncAdapter {
                         notifyUser(context, "Table: " + database_table + " syncing batch " + (uploaded_records + MAX_POST_SIZE) / MAX_POST_SIZE + " of " + batches, false, true, notificationID);
 
                     Cursor sync_data = getSyncData(remoteLatestData, CONTENT_URI, study_condition, columnsStr, uploaded_records, context, MAX_POST_SIZE);
-                    lastSynced = syncBatch(sync_data, database_table, device_id, context, DEBUG);
+                    lastSynced = syncBatch(sync_data, database_table, device_id, context, DEBUG, batchMaxId);
                     if (lastSynced == null) {
                         removeFrom = 0;
+                        removeFromId = 0;
                         Log.d(Aware.TAG, "Connection to server interrupted. Will try again later.");
                         break;
                     } else {
                         removeFrom = lastSynced;
+                        removeFromId = batchMaxId[0];
                     }
                     uploaded_records += MAX_POST_SIZE;
                 }
@@ -214,7 +225,7 @@ public class AwareSyncAdapter extends AbstractThreadedSyncAdapter {
 
                 //Are we performing database space maintenance?
                 if (removeFrom > 0 && allow_table_maintenance)
-                    performDatabaseSpaceMaintenance(CONTENT_URI, removeFrom, columnsStr, web_service_remove_data, context, database_table, DEBUG);
+                    performDatabaseSpaceMaintenance(CONTENT_URI, removeFrom, removeFromId, columnsStr, web_service_remove_data, context, database_table, DEBUG);
 
                 if (DEBUG)
                     Log.d(Aware.TAG, database_table + " sync time: " + DateUtils.formatElapsedTime((System.currentTimeMillis() - start) / 1000));
@@ -496,7 +507,7 @@ public class AwareSyncAdapter extends AbstractThreadedSyncAdapter {
         return context_data;
     }
 
-    private void performDatabaseSpaceMaintenance(Uri CONTENT_URI, long last, String[] columnsStr, Boolean WEBSERVICE_REMOVE_DATA, Context mContext, String DATABASE_TABLE, Boolean DEBUG) {
+    private void performDatabaseSpaceMaintenance(Uri CONTENT_URI, long last, long lastId, String[] columnsStr, Boolean WEBSERVICE_REMOVE_DATA, Context mContext, String DATABASE_TABLE, Boolean DEBUG) {
         // keep records when contain end_timestamp (session-based entries), only remove the rows where the end_timestamp > 0
         String deleteSessionBasedSensors = "";
         if (exists(columnsStr, "double_end_timestamp")) {
@@ -529,9 +540,12 @@ public class AwareSyncAdapter extends AbstractThreadedSyncAdapter {
                         Log.d(Aware.TAG, "Cleaning locally any data older than today (yyyy/mm/dd): " + cal.get(Calendar.YEAR) + '/' + (cal.get(Calendar.MONTH) + 1) + '/' + cal.get(Calendar.DAY_OF_MONTH) + " from " + CONTENT_URI.toString());
                     rowsDeleted = mContext.getContentResolver().delete(CONTENT_URI, "timestamp < " + cal.getTimeInMillis() + deleteSessionBasedSensors, null);
                     break;
-                case 4: //Always (experimental)
-                    if (highFrequencySensors.contains(DATABASE_TABLE))
-                        rowsDeleted = mContext.getContentResolver().delete(CONTENT_URI, "timestamp <= " + last, null);
+                case 4: //Always — remove acknowledged rows only.
+                    // Key the deletion on _id (insertion order), not timestamp (capture order): a
+                    // sample a sensor buffered and inserted after this sync read gets a higher _id,
+                    // so it is never deleted before it has itself been uploaded and acknowledged.
+                    if (highFrequencySensors.contains(DATABASE_TABLE) && lastId > 0)
+                        rowsDeleted = mContext.getContentResolver().delete(CONTENT_URI, "_id <= " + lastId + deleteSessionBasedSensors, null);
                     break;
             }
 
@@ -540,15 +554,23 @@ public class AwareSyncAdapter extends AbstractThreadedSyncAdapter {
         }
     }
 
-    private Long syncBatch(Cursor context_data, String DATABASE_TABLE, String DEVICE_ID, Context mContext, Boolean DEBUG) throws JSONException {
+    private Long syncBatch(Cursor context_data, String DATABASE_TABLE, String DEVICE_ID, Context mContext, Boolean DEBUG, long[] outMaxId) throws JSONException {
         JSONArray rows = new JSONArray();
         long lastSynced = 0;
+        long maxId = 0;
         if (context_data != null && context_data.moveToFirst()) {
             do {
                 JSONObject row = new JSONObject();
                 String[] columns = context_data.getColumnNames();
                 for (String c_name : columns) {
-                    if (c_name.equals("_id")) continue; // Skip local database ID
+                    if (c_name.equals("_id")) {
+                        // Track the highest local row id in this batch so acknowledged rows can be
+                        // deleted by _id (insertion order). A sample a sensor buffers and inserts
+                        // after this read gets a higher _id, so it is never deleted before it has
+                        // itself been uploaded.
+                        maxId = context_data.getLong(context_data.getColumnIndex("_id"));
+                        continue; // still skip the local id from the uploaded payload
+                    }
                     if (c_name.equals("timestamp") || c_name.contains("double")) {
                         row.put(c_name, context_data.getDouble(context_data.getColumnIndex(c_name)));
                     } else if (c_name.contains("float")) {
@@ -591,6 +613,9 @@ public class AwareSyncAdapter extends AbstractThreadedSyncAdapter {
                 if (DEBUG) Log.d(Aware.TAG, DATABASE_TABLE + " FAILED to sync. Server down?");
                 return null;
             } else {
+                // The batch was committed (acknowledged) by the database: report the highest _id so
+                // the caller can delete exactly these rows and nothing inserted after this read.
+                outMaxId[0] = maxId;
                 try {
                     Aware.debug(mContext, new JSONObject()
                             .put("table", DATABASE_TABLE)
