@@ -42,9 +42,11 @@ import android.provider.Settings;
 import android.text.TextUtils;
 import android.text.format.DateUtils;
 import android.util.Log;
+import android.text.InputType;
 import android.view.View;
 import android.view.ViewGroup;
 import android.widget.ListAdapter;
+import android.widget.EditText;
 import android.widget.Toast;
 
 import com.aware.Applications;
@@ -61,6 +63,7 @@ import com.aware.phone.utils.AwareUtil;
 import com.aware.providers.Aware_Provider;
 import com.aware.ui.PermissionsHandler;
 import com.aware.utils.SensorAvailability;
+import com.aware.utils.Jdbc;
 import com.aware.utils.StudyUtils;
 import com.aware.ScreenShot;
 
@@ -368,6 +371,115 @@ public class Aware_Client extends Aware_Activity {
         }
     }
 
+    /** Guards against stacking the re-auth dialog on repeated onResume() calls. */
+    private boolean reauthDialogShowing = false;
+
+    /** Live trigger: shows the re-auth prompt as soon as a background sync detects a rotated password. */
+    private final BroadcastReceiver reauthRequiredReceiver = new BroadcastReceiver() {
+        @Override
+        public void onReceive(Context context, Intent intent) {
+            showPendingReauthIfAny();
+        }
+    };
+
+    /**
+     * If a password-join study's stored database password was rejected during a background sync
+     * (the researcher rotated it), prompt the participant to re-enter it now. Background sync sets
+     * {@link Aware_Preferences#PENDING_STUDY_REAUTH} but cannot prompt, so the request waits here
+     * until the app is open. A successful re-auth resumes collection with no re-join.
+     */
+    private void showPendingReauthIfAny() {
+        String studyUrl = Aware.getSetting(getApplicationContext(), Aware_Preferences.PENDING_STUDY_REAUTH);
+        if (studyUrl == null || studyUrl.trim().length() == 0) return;
+        if (reauthDialogShowing) return;
+
+        final EditText input = new EditText(this);
+        input.setInputType(InputType.TYPE_CLASS_TEXT | InputType.TYPE_TEXT_VARIATION_PASSWORD);
+        input.setHint("Study password");
+
+        reauthDialogShowing = true;
+        final AlertDialog dialog = new AlertDialog.Builder(this)
+                .setTitle("Study password required")
+                .setMessage("This study now requires you to enter its password to keep contributing "
+                        + "data. Please enter the password provided by the researcher.\n\n"
+                        + "If you tap Later, data collection is paused until you enter the password. "
+                        + "You'll be asked again the next time the study updates or you open the app. "
+                        + "You can also leave the study at any time.")
+                .setView(input)
+                .setCancelable(false)
+                .setPositiveButton("Submit", null) // overridden in onShow so a wrong password keeps the dialog open
+                .setNegativeButton("Later", new DialogInterface.OnClickListener() {
+                    @Override
+                    public void onClick(DialogInterface d, int which) {
+                        reauthDialogShowing = false;
+                        d.dismiss();
+                        Toast.makeText(Aware_Client.this,
+                                "Data collection paused until you enter the study password.",
+                                Toast.LENGTH_LONG).show();
+                    }
+                })
+                .create();
+
+        dialog.setOnShowListener(new DialogInterface.OnShowListener() {
+            @Override
+            public void onShow(DialogInterface d) {
+                dialog.getButton(AlertDialog.BUTTON_POSITIVE).setOnClickListener(new View.OnClickListener() {
+                    @Override
+                    public void onClick(View v) {
+                        String entered = input.getText().toString();
+                        if (entered.length() == 0) {
+                            input.setError("Enter a password");
+                            return;
+                        }
+                        new ReauthTask(dialog, entered).executeOnExecutor(AsyncTask.THREAD_POOL_EXECUTOR);
+                    }
+                });
+            }
+        });
+        dialog.show();
+    }
+
+    /** Verifies a participant-entered study password off the main thread and reports the outcome. */
+    private class ReauthTask extends AsyncTask<Void, Void, Jdbc.ConnectionResult> {
+        private final AlertDialog dialog;
+        private final String password;
+
+        ReauthTask(AlertDialog dialog, String password) {
+            this.dialog = dialog;
+            this.password = password;
+        }
+
+        @Override
+        protected void onPreExecute() {
+            dialog.getButton(AlertDialog.BUTTON_POSITIVE).setEnabled(false);
+        }
+
+        @Override
+        protected Jdbc.ConnectionResult doInBackground(Void... voids) {
+            return StudyUtils.reauthenticateStudy(getApplicationContext(), password);
+        }
+
+        @Override
+        protected void onPostExecute(Jdbc.ConnectionResult result) {
+            if (isFinishing()) {
+                reauthDialogShowing = false;
+                return;
+            }
+            if (result == Jdbc.ConnectionResult.OK) {
+                reauthDialogShowing = false;
+                dialog.dismiss();
+                Toast.makeText(Aware_Client.this, "Study password updated.", Toast.LENGTH_LONG).show();
+            } else if (result == Jdbc.ConnectionResult.AUTH_FAILED) {
+                dialog.getButton(AlertDialog.BUTTON_POSITIVE).setEnabled(true);
+                Toast.makeText(Aware_Client.this, "Password still incorrect.", Toast.LENGTH_LONG).show();
+            } else {
+                dialog.getButton(AlertDialog.BUTTON_POSITIVE).setEnabled(true);
+                Toast.makeText(Aware_Client.this, "Can't reach the server. Try again later.",
+                        Toast.LENGTH_LONG).show();
+            }
+        }
+    }
+
     /** Tracks the currently-open nested PreferenceScreen dialog (e.g. "AWARE Study"). */
     private Dialog openSubPrefDialog = null;
 
@@ -658,6 +770,8 @@ public class Aware_Client extends Aware_Activity {
                 new IntentFilter(Aware.ACTION_AWARE_STUDY_CONFIG_UPDATED);
         studyConfigUpdates.addAction(Aware.ACTION_AWARE_STUDY_CONFIG_UPDATE_AVAILABLE);
         registerReceiver(studyConfigUpdatedReceiver, studyConfigUpdates);
+        registerReceiver(reauthRequiredReceiver,
+                new IntentFilter(Aware.ACTION_AWARE_STUDY_REAUTH_REQUIRED));
         checkAndStartScreenshotService();
         checkAndStartPlugin();
     }
@@ -1854,6 +1968,10 @@ private void enableAccessibilityService(final Runnable onResolved) {
         // alive to receive the live broadcast.
         showPendingStudyUpdateNoticeIfAny();
 
+        // A password-join study may have had its password rotated; background sync flags it but
+        // cannot prompt, so ask for the new password here while the app is open.
+        showPendingReauthIfAny();
+
         permissions_ok = true;
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
             for (String p : REQUIRED_PERMISSIONS) {
@@ -2075,6 +2193,7 @@ private void enableAccessibilityService(final Runnable onResolved) {
         unregisterReceiver(screenshotServiceStoppedReceiver);
         unregisterReceiver(noteStatusReceiver);
         unregisterReceiver(studyConfigUpdatedReceiver);
+        unregisterReceiver(reauthRequiredReceiver);
     }
 
     private void hideUnusedPreferences() {

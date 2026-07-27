@@ -274,8 +274,9 @@ public class Aware_Join_Study extends Aware_Activity {
                                 btnAction.setAlpha(1f);
 
                                 Cursor dbStudy = Aware.getActiveStudy(getApplicationContext());
+                                ContentValues complianceEntry = null;
                                 if (dbStudy != null && dbStudy.moveToFirst()) {
-                                    ContentValues complianceEntry = new ContentValues();
+                                    complianceEntry = new ContentValues();
                                     complianceEntry.put(Aware_Provider.Aware_Studies.STUDY_TIMESTAMP, System.currentTimeMillis());
                                     complianceEntry.put(Aware_Provider.Aware_Studies.STUDY_DEVICE_ID, Aware.getSetting(getApplicationContext(), Aware_Preferences.DEVICE_ID));
                                     complianceEntry.put(Aware_Provider.Aware_Studies.STUDY_KEY, dbStudy.getInt(dbStudy.getColumnIndex(Aware_Provider.Aware_Studies.STUDY_KEY)));
@@ -295,7 +296,8 @@ public class Aware_Join_Study extends Aware_Activity {
 
                                 dialogInterface.dismiss();
 
-                                new QuitStudyAsync().executeOnExecutor(AsyncTask.THREAD_POOL_EXECUTOR);
+                                // Best-effort notify the researcher (if reachable); leaving proceeds regardless.
+                                new QuitStudyAsync(complianceEntry).executeOnExecutor(AsyncTask.THREAD_POOL_EXECUTOR);
                             }
                         })
                         .setNegativeButton("No", new DialogInterface.OnClickListener() {
@@ -467,6 +469,11 @@ public class Aware_Join_Study extends Aware_Activity {
 
     private class QuitStudyAsync extends AsyncTask<Void, Void, Void> {
         ProgressDialog mQuitting;
+        private final ContentValues exitEntry;
+
+        QuitStudyAsync(ContentValues exitEntry) {
+            this.exitEntry = exitEntry;
+        }
 
         @Override
         protected void onPreExecute() {
@@ -492,6 +499,11 @@ public class Aware_Join_Study extends Aware_Activity {
 
         @Override
         protected Void doInBackground(Void... params) {
+            // Best-effort: notify the researcher if the database is reachable, but never block
+            // leaving on it. A participant must always be able to withdraw.
+            if (exitEntry != null) {
+                StudyUtils.uploadStudyExit(getApplicationContext(), exitEntry);
+            }
             Aware.reset(getApplicationContext());
             return null;
         }
