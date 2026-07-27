@@ -72,17 +72,15 @@ public class Jdbc {
         String connectionUrl = String.format("jdbc:mysql://%s:%s/%s", host, port, name);
         Log.i(TAG, "Establishing connection to remote database...");
 
-
-
         try {
-            Class.forName("com.mysql.jdbc.Driver").newInstance();
+            Class.forName("com.mysql.jdbc.Driver");
             Log.i(TAG, "Connected to remote database...");
 
             if (config_without_password == false){
-                Log.i(TAG, "No input password. Default password: " + password);
+                Log.i(TAG, "No input password.");
                 connection = DriverManager.getConnection(connectionUrl, username, password);
             }else{
-                Log.i(TAG, "Input password needed: " + input_password);
+                Log.i(TAG, "Input password needed.");
                 connection = DriverManager.getConnection(connectionUrl, username, input_password);
             }
 
@@ -107,7 +105,7 @@ public class Jdbc {
         Log.i(TAG, "Establishing connection to remote database...");
 
         try {
-            Class.forName("com.mysql.jdbc.Driver").newInstance();
+            Class.forName("com.mysql.jdbc.Driver");
 
             connection = DriverManager.getConnection(connectionUrl,
                     Aware.getSetting(context, Aware_Preferences.DB_USERNAME),
