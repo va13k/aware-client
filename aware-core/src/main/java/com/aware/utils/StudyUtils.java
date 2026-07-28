@@ -279,10 +279,8 @@ public class StudyUtils extends IntentService {
      * @return true if a participant re-authentication is required
      */
     private static boolean needsPasswordReauth(Context context, JSONObject newConfig) {
-        if (newConfig == null) return false;
+        if (!requiresParticipantPassword(newConfig)) return false;
         JSONObject dbInfo = newConfig.optJSONObject("database");
-        if (dbInfo == null) return false;
-        if (!dbInfo.optBoolean("config_without_password", false)) return false;
 
         Jdbc.ConnectionResult result = Jdbc.probeConnection(
                 dbInfo.optString("database_host", ""),
@@ -1631,34 +1629,112 @@ public class StudyUtils extends IntentService {
      * @return true if the study config is valid, false otherwise
      */
     public static boolean validateStudyConfig(Context context, JSONObject config, String input_password) {
-        if (config == null) {
-            Log.e(Aware.TAG, "Study configuration is null");
-            return false;
+        return validateStudyConfigDetailed(config, input_password) == StudyConfigValidation.OK;
+    }
+
+    /**
+     * Why a study configuration was rejected. A join screen has to tell the participant what to do
+     * about the failure — re-type the password, try again later, or contact the researcher — and the
+     * boolean {@link #validateStudyConfig} returns cannot distinguish those.
+     */
+    public enum StudyConfigValidation {
+        /** Required schema is present and the database credentials authenticate. */
+        OK,
+        /** Absent, incomplete, or malformed configuration. The participant cannot fix this. */
+        INVALID_CONFIG,
+        /** The study expects a participant-supplied password and none was given. */
+        PASSWORD_REQUIRED,
+        /** The database rejected the password (access denied). */
+        AUTH_FAILED,
+        /** The database could not be reached — down, blocked, or too slow. Not a credential problem. */
+        UNREACHABLE
+    }
+
+    /**
+     * Validates a study configuration's schema and database credentials, classifying the failure.
+     * <p>
+     * Uses {@link Jdbc#probeConnection} rather than {@link Jdbc#testConnection}: the probe reports
+     * a rejected password separately from an unreachable host, is bounded by
+     * {@link #STUDY_PROBE_TIMEOUT_SECONDS} so a dead host cannot stall a join indefinitely, and
+     * connects on its own short-lived connection instead of reassigning the shared sync connection.
+     *
+     * @param config         study configuration to validate; null is {@link StudyConfigValidation#INVALID_CONFIG}
+     * @param input_password password typed by the participant, used only by
+     *                       {@code config_without_password=true} studies. Never logged.
+     * @return the classified outcome
+     */
+    public static StudyConfigValidation validateStudyConfigDetailed(JSONObject config, String input_password) {
+        String missing = firstMissingRequirement(config);
+        if (missing != null) {
+            Log.e(Aware.TAG, "Study configuration is missing: " + missing);
+            return StudyConfigValidation.INVALID_CONFIG;
         }
 
-        // Check for required keys
+        JSONObject dbInfo = config.optJSONObject("database");
+        // config_without_password=true means the config deliberately ships no password and the
+        // participant supplies it; false means the config carries its own.
+        boolean participantSuppliesPassword = requiresParticipantPassword(config);
+        String password = participantSuppliesPassword
+                ? (input_password == null ? "" : input_password)
+                : dbInfo.optString("database_password", "");
+        if (participantSuppliesPassword && password.isEmpty()) {
+            Log.e(Aware.TAG, "Study requires a participant-supplied password, none was given");
+            return StudyConfigValidation.PASSWORD_REQUIRED;
+        }
+
+        Jdbc.ConnectionResult probe = Jdbc.probeConnection(
+                dbInfo.optString("database_host", ""),
+                dbInfo.optString("database_port", ""),
+                dbInfo.optString("database_name", ""),
+                dbInfo.optString("database_username", ""),
+                password,
+                STUDY_PROBE_TIMEOUT_SECONDS);
+        switch (probe) {
+            case OK:
+                return StudyConfigValidation.OK;
+            case AUTH_FAILED:
+                return StudyConfigValidation.AUTH_FAILED;
+            default:
+                return StudyConfigValidation.UNREACHABLE;
+        }
+    }
+
+    /** Database fields that must be present before a connection attempt is even worth making. */
+    private static final String[] REQUIRED_DATABASE_FIELDS = {
+            "database_host", "database_port", "database_name", "database_username"};
+
+    /**
+     * Returns the name of the first required study-config field that is absent or empty, or null when
+     * the configuration carries everything needed to attempt a database connection.
+     * <p>
+     * Package-private and free of logging, network and Context so it can be unit-tested directly —
+     * same reasoning as {@link Jdbc#classify}. Checking the database fields here rather than letting
+     * a connection attempt fail on them keeps "the researcher's config is broken" distinguishable
+     * from "the server is down", which the participant-facing message depends on.
+     */
+    static String firstMissingRequirement(JSONObject config) {
+        if (config == null) return "study configuration";
+
         for (String key: REQUIRED_STUDY_CONFIG_KEYS) {
-            if (!config.has(key)) {
-                Log.e(Aware.TAG, "Study configuration missing required key: " + key);
-                return false;
-            }
+            if (!config.has(key)) return key;
         }
 
-        // Test database connection
-        try {
-            JSONObject dbInfo = config.getJSONObject("database");
-            return Jdbc.testConnection(
-                    dbInfo.getString("database_host"),
-                    dbInfo.getString("database_port"),
-                    dbInfo.getString("database_name"),
-                    dbInfo.getString("database_username"),
-                    dbInfo.getString("database_password"),
-                    dbInfo.optBoolean("config_without_password", false),
-                    input_password);
-        } catch (JSONException e) {
-            Log.e(Aware.TAG, "Error validating database configuration: " + e.getMessage());
-            return false;
+        JSONObject dbInfo = config.optJSONObject("database");
+        if (dbInfo == null) return "database";
+
+        for (String field: REQUIRED_DATABASE_FIELDS) {
+            if (dbInfo.optString(field, "").isEmpty()) return field;
         }
+        return null;
+    }
+
+    /**
+     * True when the study's config deliberately ships no database password and the participant is
+     * expected to supply it ({@code config_without_password=true}). Pure, so it is unit-testable.
+     */
+    static boolean requiresParticipantPassword(JSONObject config) {
+        JSONObject dbInfo = config == null ? null : config.optJSONObject("database");
+        return dbInfo != null && dbInfo.optBoolean("config_without_password", false);
     }
 
     /**
