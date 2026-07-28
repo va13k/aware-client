@@ -15,6 +15,7 @@ import java.sql.Connection;
 import java.sql.DriverManager;
 import java.sql.PreparedStatement;
 import java.sql.SQLException;
+import java.sql.SQLWarning;
 import java.util.ArrayList;
 import java.util.Iterator;
 import java.util.List;
@@ -59,6 +60,34 @@ public class Jdbc {
             return ConnectionResult.AUTH_FAILED;
         }
         return ConnectionResult.UNREACHABLE;
+    }
+
+    /**
+     * Summarises a chain of {@link SQLWarning}s into one log-safe line, or null when the chain is
+     * empty.
+     *
+     * The count matters as much as the text: MySQL reports one warning per offending row, so "1"
+     * and "4000" distinguish a single odd value from a column whose type no longer matches what the
+     * client sends. Pure and side-effect free so it can be unit-tested without a database.
+     *
+     * @param warning head of the warning chain, or null
+     * @return a summary such as {@code 2 warning(s); first: [01000/1265] Data truncated}, or null
+     */
+    static String describeWarnings(SQLWarning warning) {
+        if (warning == null) return null;
+
+        int count = 0;
+        SQLWarning current = warning;
+        // A driver that chains a warning to itself would otherwise spin here forever.
+        while (current != null && count < 1000) {
+            count++;
+            SQLWarning next = current.getNextWarning();
+            if (next == current) break;
+            current = next;
+        }
+
+        return count + " warning(s); first: [" + warning.getSQLState() + "/"
+                + warning.getErrorCode() + "] " + warning.getMessage();
     }
 
     /**
@@ -115,12 +144,15 @@ public class Jdbc {
         if (rows.length() == 0) return true;
 
         try {
-            Jdbc.transactionCount++;
             List<String> fields = new ArrayList<>();
             Iterator<String> fieldIterator = rows.getJSONObject(0).keys();
             while (fieldIterator.hasNext()) {
                 fields.add(fieldIterator.next());
             }
+            // Claim a reference only once nothing else here can throw: insertBatch's finally is what
+            // releases it, so anything that fails between the two would leave the shared connection
+            // referenced by a caller that has gone away, and never closed.
+            Jdbc.transactionCount++;
             Jdbc.insertBatch(context, table, fields, rows);
         } catch (JSONException | SQLException | JdbcConnectionException e) {
             e.printStackTrace();
@@ -279,20 +311,61 @@ public class Jdbc {
             String sqlStatement = String.format("INSERT INTO %s (%s) VALUES (%s)", table,
                     TextUtils.join(",", fieldsWithBacktick),
                     TextUtils.join(",", sqlParamPlaceholder));
-            PreparedStatement ps = Jdbc.connection.prepareStatement(sqlStatement);
 
-            for (int i = 0; i < rows.length(); i++) {
-                JSONObject row = rows.getJSONObject(i);
-                int paramIndex = 1;
+            // The batch lands all-or-nothing. rewriteBatchedStatements=true has the driver merge the
+            // batch into several multi-row INSERTs; under autocommit each of those commits on its
+            // own, so a failure part-way leaves the earlier chunks stored server-side while the
+            // phone — which only learns "the batch failed" — keeps every local row and retries the
+            // whole batch, duplicating them. The client's MySQL user has INSERT only, so such
+            // duplicates can never be removed afterwards. Requires the target table to be InnoDB;
+            // MyISAM silently ignores transactions.
+            boolean autoCommitWas = Jdbc.connection.getAutoCommit();
+            Jdbc.connection.setAutoCommit(false);
+            try (PreparedStatement ps = Jdbc.connection.prepareStatement(sqlStatement)) {
+                for (int i = 0; i < rows.length(); i++) {
+                    JSONObject row = rows.getJSONObject(i);
+                    int paramIndex = 1;
 
-                for (String field: fields) {
-                    ps.setString(paramIndex, row.getString(field));
-                    paramIndex++;
+                    for (String field: fields) {
+                        ps.setString(paramIndex, row.getString(field));
+                        paramIndex++;
+                    }
+                    ps.addBatch();
                 }
-                ps.addBatch();
-            }
 
-            ps.executeBatch();
+                // The connection is shared across batches and accumulates warnings, so clear it
+                // first: what is read below has to belong to this batch and no earlier one.
+                Jdbc.connection.clearWarnings();
+                ps.executeBatch();
+
+                // Every value is bound with setString(), including numeric and double_* columns, so
+                // MySQL implicitly converts each one. A server in strict mode raises an error on a
+                // bad conversion, but a non-strict server (or a MyISAM table, where strict mode
+                // degrades to warnings for multi-row inserts) accepts it as a warning and stores
+                // something other than what was sent. Report that rather than call it a clean
+                // upload; the batch is still committed, because refusing to advance the sync marker
+                // over a warning would wedge the table into retrying the same rows forever.
+                String warnings = describeWarnings(ps.getWarnings());
+                if (warnings == null) warnings = describeWarnings(Jdbc.connection.getWarnings());
+                if (warnings != null) {
+                    Log.w(TAG, "Remote table '" + table + "' accepted the insert with " + warnings);
+                }
+
+                Jdbc.connection.commit();
+            } catch (SQLException e) {
+                try {
+                    Jdbc.connection.rollback();
+                } catch (SQLException rollbackFailed) {
+                    Log.e(TAG, "Rollback of the failed batch for '" + table + "' did not complete: "
+                            + rollbackFailed.getMessage());
+                }
+                throw e;
+            } finally {
+                try {
+                    Jdbc.connection.setAutoCommit(autoCommitWas);
+                } catch (SQLException ignored) {
+                }
+            }
             Log.i(TAG, "Inserted " + rows.length() + " row(s) of data into remote table '" + table);
         } finally {
             Jdbc.transactionCount--;
