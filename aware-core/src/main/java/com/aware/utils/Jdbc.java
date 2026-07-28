@@ -65,11 +65,12 @@ public class Jdbc {
      * Probes whether the given credentials can authenticate against the database, on a short-lived
      * connection that fails fast when the host is unreachable.
      * <p>
-     * Unlike {@link #testConnection}, this returns a three-state {@link ConnectionResult} so callers
-     * can tell a rejected password ({@link ConnectionResult#AUTH_FAILED}) from a down/unreachable
-     * server ({@link ConnectionResult#UNREACHABLE}). It uses its own connection with bounded
-     * {@code connectTimeout}/{@code socketTimeout} and never touches the shared sync connection.
-     * The password/connection string are never logged.
+     * Returns a three-state {@link ConnectionResult} so callers can tell a rejected password
+     * ({@link ConnectionResult#AUTH_FAILED}) from a down/unreachable server
+     * ({@link ConnectionResult#UNREACHABLE}). Connects on its own short-lived connection with
+     * bounded {@code connectTimeout}/{@code socketTimeout}, leaving the shared {@link #connection}
+     * used by uploads untouched, so a probe can run during a sync without disturbing it. The
+     * password and connection string are never logged.
      *
      * @param timeoutSeconds maximum time to spend connecting
      * @return {@link ConnectionResult#OK} if the credentials authenticate, otherwise the classified failure
@@ -203,40 +204,6 @@ public class Jdbc {
                 if (localConnection != null && !localConnection.isClosed()) localConnection.close();
             } catch (SQLException ignored) {
             }
-        }
-    }
-
-    /**
-     * Test if a connection to a database can be established.
-     * @param host db host
-     * @param port db port
-     * @param name db name
-     * @param username db username
-     * @param password db password
-     * @return true if a connection was established, false otherwise.
-     */
-    public static boolean testConnection(String host, String port, String name, String username, String password, Boolean config_without_password, String input_password) {
-        String connectionUrl = String.format("jdbc:mysql://%s:%s/%s", host, port, name);
-        Log.i(TAG, "Establishing connection to remote database...");
-
-        try {
-            Class.forName("com.mysql.jdbc.Driver");
-            Log.i(TAG, "Connected to remote database...");
-
-            if (config_without_password == false){
-                Log.i(TAG, "No input password.");
-                connection = DriverManager.getConnection(connectionUrl, username, password);
-            }else{
-                Log.i(TAG, "Input password needed.");
-                connection = DriverManager.getConnection(connectionUrl, username, input_password);
-            }
-
-            connection.close();
-            return true;
-        } catch (Exception e) {
-            Log.e(TAG, "Failed to establish connection to database, reason: " + e.getMessage());
-            e.printStackTrace();
-            return false;
         }
     }
 
