@@ -173,7 +173,8 @@ public class AwareSyncAdapter extends AbstractThreadedSyncAdapter {
             String[] columnsStr = getTableColumnsNames(CONTENT_URI, context);
 
             /**
-             * We used to check the latest timestamp from the server side. We now keep track of it locally on the phone for scalability and performance hit on MySQL per sync event.
+             * The last-synced marker is read from the local aware_log table. The server is never
+             * queried for it: one round trip per table per sync event does not scale.
              */
             String latest = getLatestRecordSynched(database_table, columnsStr);
 
@@ -181,14 +182,13 @@ public class AwareSyncAdapter extends AbstractThreadedSyncAdapter {
             int total_records = getNumberOfRecordsToSync(CONTENT_URI, columnsStr, latest, study_condition, context);
             boolean allow_table_maintenance = isTableAllowedForMaintenance(database_table);
 
-            if (Aware.DEBUG) {
-                if (latest == null) {
-                    Log.d(Aware.TAG, "Unable to reach the server to retrieve latest... Will try again later.");
-                    return;
-                }
+            // Nothing further is computable without a marker. Checked outside the DEBUG block so a
+            // build with debugging off takes the same path as one with it on.
+            if (latest == null) return;
 
-                Log.d(Aware.TAG, "Table: " + database_table + " exists");
-                Log.d(Aware.TAG, "Last synced record in this table: " + latest);
+            if (Aware.DEBUG) {
+                Log.d(Aware.TAG, "Syncing table: " + database_table);
+                Log.d(Aware.TAG, "Local last-synced marker for this table: " + latest);
                 Log.d(Aware.TAG, "Joined study since: " + study_condition);
                 Log.d(Aware.TAG, "Rows remaining to sync: " + total_records);
             }
