@@ -645,42 +645,77 @@ public class Aware extends Service {
         }
     }
 
+    /** This device's facts as the platform reports them, keyed by aware_device column name. */
+    private static Map<String, String> deviceSnapshot() {
+        Map<String, String> snapshot = new HashMap<>();
+        snapshot.put(Aware_Device.BOARD, Build.BOARD);
+        snapshot.put(Aware_Device.BRAND, Build.BRAND);
+        snapshot.put(Aware_Device.DEVICE, Build.DEVICE);
+        snapshot.put(Aware_Device.BUILD_ID, Build.DISPLAY);
+        snapshot.put(Aware_Device.HARDWARE, Build.HARDWARE);
+        snapshot.put(Aware_Device.MANUFACTURER, Build.MANUFACTURER);
+        snapshot.put(Aware_Device.MODEL, Build.MODEL);
+        snapshot.put(Aware_Device.PRODUCT, Build.PRODUCT);
+        snapshot.put(Aware_Device.SERIAL, Build.SERIAL);
+        snapshot.put(Aware_Device.RELEASE, Build.VERSION.RELEASE);
+        snapshot.put(Aware_Device.RELEASE_TYPE, Build.TYPE);
+        snapshot.put(Aware_Device.SDK, String.valueOf(Build.VERSION.SDK_INT));
+        return snapshot;
+    }
+
+    /**
+     * Records this device's hardware and OS profile in aware_device, adding a row only when the
+     * device's facts differ from the newest row already stored for this device_id.
+     *
+     * aware_device is a device dimension, not an event stream: one row per device, plus a new row
+     * when a device fact genuinely changes (an Android upgrade, a hardware swap). Two rows under
+     * one device_id therefore carry meaning — compare release/sdk/build_id between them and a
+     * mid-study OS upgrade is legible. Scoping the lookup to this device_id keeps that true on a
+     * phone whose app data was cleared, where earlier device_ids still have rows of their own.
+     *
+     * Runs on every intent delivered to this service, so it must stay cheap: one indexed-by-nothing
+     * single-row read of a table that holds a handful of rows.
+     */
     private void get_device_info() {
-        Cursor awareContextDevice = getContentResolver().query(Aware_Device.CONTENT_URI, null, null, null, null);
-        if (awareContextDevice == null || !awareContextDevice.moveToFirst()) {
-            ContentValues rowData = new ContentValues();
-            rowData.put(Aware_Device.TIMESTAMP, System.currentTimeMillis());
-            rowData.put(Aware_Device.DEVICE_ID, Aware.getSetting(this, Aware_Preferences.DEVICE_ID));
-            rowData.put(Aware_Device.BOARD, Build.BOARD);
-            rowData.put(Aware_Device.BRAND, Build.BRAND);
-            rowData.put(Aware_Device.DEVICE, Build.DEVICE);
-            rowData.put(Aware_Device.BUILD_ID, Build.DISPLAY);
-            rowData.put(Aware_Device.HARDWARE, Build.HARDWARE);
-            rowData.put(Aware_Device.MANUFACTURER, Build.MANUFACTURER);
-            rowData.put(Aware_Device.MODEL, Build.MODEL);
-            rowData.put(Aware_Device.PRODUCT, Build.PRODUCT);
-            rowData.put(Aware_Device.SERIAL, Build.SERIAL);
-            rowData.put(Aware_Device.RELEASE, Build.VERSION.RELEASE);
-            rowData.put(Aware_Device.RELEASE_TYPE, Build.TYPE);
-            rowData.put(Aware_Device.SDK, String.valueOf(Build.VERSION.SDK_INT));
-            rowData.put(Aware_Device.LABEL, Aware.getSetting(this, Aware_Preferences.DEVICE_LABEL));
+        String device_id = Aware.getSetting(this, Aware_Preferences.DEVICE_ID);
+        Map<String, String> current = deviceSnapshot();
+        Map<String, String> stored = null;
 
-            try {
-                getContentResolver().insert(Aware_Device.CONTENT_URI, rowData);
-
-                Intent deviceData = new Intent(ACTION_AWARE_DEVICE_INFORMATION);
-                sendBroadcast(deviceData);
-
-                if (Aware.DEBUG) Log.d(TAG, "Device information:" + rowData.toString());
-
-            } catch (SQLiteException e) {
-                if (Aware.DEBUG) Log.d(TAG, e.getMessage());
-            } catch (SQLException e) {
-                if (Aware.DEBUG) Log.d(TAG, e.getMessage());
+        Cursor newest = getContentResolver().query(Aware_Device.CONTENT_URI, null,
+                Aware_Device.DEVICE_ID + "=?", new String[]{device_id},
+                Aware_Device.TIMESTAMP + " DESC LIMIT 1");
+        if (newest != null && newest.moveToFirst()) {
+            stored = new HashMap<>();
+            for (String column : DeviceFacts.COMPARED_COLUMNS) {
+                int index = newest.getColumnIndex(column);
+                stored.put(column, index < 0 ? null : newest.getString(index));
             }
         }
-        if (awareContextDevice != null && !awareContextDevice.isClosed())
-            awareContextDevice.close();
+        if (newest != null && !newest.isClosed()) newest.close();
+
+        if (DeviceFacts.unchanged(stored, current)) return;
+
+        ContentValues rowData = new ContentValues();
+        rowData.put(Aware_Device.TIMESTAMP, System.currentTimeMillis());
+        rowData.put(Aware_Device.DEVICE_ID, device_id);
+        for (Map.Entry<String, String> fact : current.entrySet()) {
+            rowData.put(fact.getKey(), fact.getValue());
+        }
+        rowData.put(Aware_Device.LABEL, Aware.getSetting(this, Aware_Preferences.DEVICE_LABEL));
+
+        try {
+            getContentResolver().insert(Aware_Device.CONTENT_URI, rowData);
+
+            Intent deviceData = new Intent(ACTION_AWARE_DEVICE_INFORMATION);
+            sendBroadcast(deviceData);
+
+            if (Aware.DEBUG) Log.d(TAG, "Device information:" + rowData.toString());
+
+        } catch (SQLiteException e) {
+            if (Aware.DEBUG) Log.d(TAG, e.getMessage());
+        } catch (SQLException e) {
+            if (Aware.DEBUG) Log.d(TAG, e.getMessage());
+        }
     }
 
     /**
