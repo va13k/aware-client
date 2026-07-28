@@ -25,6 +25,7 @@ import com.aware.utils.Http;
 import com.aware.utils.Https;
 import com.aware.utils.Jdbc;
 import com.aware.utils.SSLManager;
+import com.aware.utils.SyncBatchBudget;
 import org.json.JSONArray;
 import org.json.JSONException;
 import org.json.JSONObject;
@@ -202,24 +203,31 @@ public class AwareSyncAdapter extends AbstractThreadedSyncAdapter {
                 long removeFrom = 0;
                 long removeFromId = 0;
                 long[] batchMaxId = new long[]{0};
+                int[] batchRowCount = new int[]{0};
                 Long lastSynced;
 
                 do {
                     if (!Aware.getSetting(context, Aware_Preferences.WEBSERVICE_SILENT).equals("true"))
                         notifyUser(context, "Table: " + database_table + " syncing batch " + (uploaded_records + MAX_POST_SIZE) / MAX_POST_SIZE + " of " + batches, false, true, notificationID);
 
+                    batchRowCount[0] = 0;
                     Cursor sync_data = getSyncData(remoteLatestData, CONTENT_URI, study_condition, columnsStr, uploaded_records, context, MAX_POST_SIZE);
-                    lastSynced = syncBatch(sync_data, database_table, device_id, context, DEBUG, batchMaxId);
+                    lastSynced = syncBatch(sync_data, database_table, device_id, context, DEBUG, batchMaxId, batchRowCount);
                     if (lastSynced == null) {
                         removeFrom = 0;
                         removeFromId = 0;
-                        Log.d(Aware.TAG, "Connection to server interrupted. Will try again later.");
+                        Log.d(Aware.TAG, "Batch for " + database_table + " was not acknowledged by the database. Will try again later.");
                         break;
                     } else {
                         removeFrom = lastSynced;
                         removeFromId = batchMaxId[0];
                     }
-                    uploaded_records += MAX_POST_SIZE;
+                    // Advance by the rows the batch actually carried, which is fewer than the
+                    // row-count cap whenever the payload budget closed the batch early. Advancing by
+                    // the cap instead would step the offset past rows that were never uploaded. The
+                    // floor of 1 is a guard against an unproductive batch looping forever; a batch
+                    // that took no rows reports lastSynced 0 and the condition below ends the loop.
+                    uploaded_records += Math.max(batchRowCount[0], 1);
                 }
                 while (uploaded_records < total_records && lastSynced > 0 && isWifiNeededAndConnected());
 
@@ -272,6 +280,14 @@ public class AwareSyncAdapter extends AbstractThreadedSyncAdapter {
         }
     }
 
+    /**
+     * Upper bound on the number of rows a batch reads at once, scaled to the device's total RAM.
+     *
+     * This is a row count, so it says nothing about how many bytes those rows carry. The byte
+     * ceiling is {@link SyncBatchBudget#MAX_PAYLOAD_BYTES}, applied while a batch is being built;
+     * whichever of the two binds first ends the batch. Returns 0 when the device is under memory
+     * pressure, which skips the sync entirely.
+     */
     private int getBatchSize() {
         ActivityManager.MemoryInfo memInfo = new ActivityManager.MemoryInfo();
         ActivityManager actManager = (ActivityManager) mContext.getSystemService(Context.ACTIVITY_SERVICE);
@@ -554,13 +570,17 @@ public class AwareSyncAdapter extends AbstractThreadedSyncAdapter {
         }
     }
 
-    private Long syncBatch(Cursor context_data, String DATABASE_TABLE, String DEVICE_ID, Context mContext, Boolean DEBUG, long[] outMaxId) throws JSONException {
+    private Long syncBatch(Cursor context_data, String DATABASE_TABLE, String DEVICE_ID, Context mContext, Boolean DEBUG, long[] outMaxId, int[] outRowCount) throws JSONException {
         JSONArray rows = new JSONArray();
         long lastSynced = 0;
         long maxId = 0;
+        long payloadBytes = 0;
+        boolean cappedByPayload = false;
         if (context_data != null && context_data.moveToFirst()) {
             do {
                 JSONObject row = new JSONObject();
+                long rowBytes = 0;
+                long rowId = 0;
                 String[] columns = context_data.getColumnNames();
                 for (String c_name : columns) {
                     if (c_name.equals("_id")) {
@@ -568,33 +588,57 @@ public class AwareSyncAdapter extends AbstractThreadedSyncAdapter {
                         // deleted by _id (insertion order). A sample a sensor buffers and inserts
                         // after this read gets a higher _id, so it is never deleted before it has
                         // itself been uploaded.
-                        maxId = context_data.getLong(context_data.getColumnIndex("_id"));
+                        rowId = context_data.getLong(context_data.getColumnIndex("_id"));
                         continue; // still skip the local id from the uploaded payload
                     }
                     if (c_name.equals("timestamp") || c_name.contains("double")) {
                         row.put(c_name, context_data.getDouble(context_data.getColumnIndex(c_name)));
+                        rowBytes += SyncBatchBudget.columnBytes(c_name, SyncBatchBudget.NUMERIC_VALUE_BYTES);
                     } else if (c_name.contains("float")) {
                         row.put(c_name, context_data.getFloat(context_data.getColumnIndex(c_name)));
+                        rowBytes += SyncBatchBudget.columnBytes(c_name, SyncBatchBudget.NUMERIC_VALUE_BYTES);
                     } else if (c_name.contains("long")) {
                         row.put(c_name, context_data.getLong(context_data.getColumnIndex(c_name)));
+                        rowBytes += SyncBatchBudget.columnBytes(c_name, SyncBatchBudget.NUMERIC_VALUE_BYTES);
                     } else if (c_name.contains("blob") || c_name.contains("image_data")) {
                         byte[] blob = context_data.getBlob(context_data.getColumnIndex(c_name));
-                        Log.d(Aware.TAG, "BLOB data length: " + blob.length);
-                        row.put(c_name, Base64.encodeToString(blob, Base64.DEFAULT));
+                        String encoded = blob == null ? "" : Base64.encodeToString(blob, Base64.DEFAULT);
+                        row.put(c_name, encoded);
+                        rowBytes += SyncBatchBudget.columnBytes(c_name, encoded.length());
                     } else if (c_name.contains("integer")) {
                         row.put(c_name, context_data.getInt(context_data.getColumnIndex(c_name)));
+                        rowBytes += SyncBatchBudget.columnBytes(c_name, SyncBatchBudget.NUMERIC_VALUE_BYTES);
                     } else {
                         String str = "";
                         if (!context_data.isNull(context_data.getColumnIndex(c_name))) { // Fixes nulls and batch inserts not being possible
                             str = context_data.getString(context_data.getColumnIndex(c_name));
                         }
                         row.put(c_name, str);
+                        rowBytes += SyncBatchBudget.columnBytes(c_name, str.length());
                     }
                 }
+
+                // Stop before the payload outgrows what the phone can hold and the server will
+                // accept. The caller resumes from the rows actually taken, so a held-back row is the
+                // first row of the next batch rather than a skipped one.
+                if (SyncBatchBudget.holdForNextBatch(rows.length(), payloadBytes, rowBytes,
+                        SyncBatchBudget.MAX_PAYLOAD_BYTES)) {
+                    cappedByPayload = true;
+                    break;
+                }
+
                 rows.put(row);
+                payloadBytes += rowBytes;
+                if (rowId > maxId) maxId = rowId;
             } while (context_data.moveToNext());
 
             context_data.close(); // Clear phone's memory immediately
+
+            if (rows.length() == 0) return 0L;
+
+            if (DEBUG && cappedByPayload)
+                Log.d(Aware.TAG, DATABASE_TABLE + " batch capped at " + rows.length()
+                        + " row(s) / ~" + (payloadBytes / 1024) + " KB by the payload budget");
 
             lastSynced = rows.getJSONObject(rows.length() - 1).getLong("timestamp"); // Last record to be synced
             // For some tables, we must not clear everything.  Leave one row of these tables.
@@ -608,14 +652,20 @@ public class AwareSyncAdapter extends AbstractThreadedSyncAdapter {
 
             boolean dataInserted = Jdbc.insertData(mContext, DATABASE_TABLE, rows);
 
-            // Something went wrong, e.g., server is down, lost internet, etc.
+            // The database did not acknowledge the batch. Jdbc has already logged the underlying
+            // cause; unreachable server, rejected credentials and a rejected statement all arrive
+            // here alike, so this line does not guess between them.
             if (!dataInserted) {
-                if (DEBUG) Log.d(Aware.TAG, DATABASE_TABLE + " FAILED to sync. Server down?");
+                if (DEBUG) Log.d(Aware.TAG, DATABASE_TABLE + ": batch of " + rows.length()
+                        + " row(s) / ~" + (payloadBytes / 1024) + " KB was not acknowledged. See the JDBC log above.");
                 return null;
             } else {
                 // The batch was committed (acknowledged) by the database: report the highest _id so
-                // the caller can delete exactly these rows and nothing inserted after this read.
+                // the caller can delete exactly these rows and nothing inserted after this read, and
+                // the row count so the caller resumes from what actually went rather than from the
+                // row-count cap it asked for.
                 outMaxId[0] = maxId;
+                outRowCount[0] = rows.length();
                 try {
                     Aware.debug(mContext, new JSONObject()
                             .put("table", DATABASE_TABLE)
