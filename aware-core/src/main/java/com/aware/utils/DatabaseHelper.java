@@ -69,6 +69,46 @@ public class DatabaseHelper extends SQLiteOpenHelper {
         db.setVersion(newVersion);
     }
 
+    /**
+     * The column names declared by a table's field definition.
+     *
+     * Read from the definition rather than from the table it creates, because the carry-over below
+     * needs the new column set before the new table holds any rows, and a table's shape is fully
+     * described by the definition already in hand.
+     *
+     * Splits on the commas between column definitions, which means stepping over the commas inside a
+     * trailing table constraint such as {@code UNIQUE(a, b)}; a constraint contributes no column and
+     * is skipped.
+     *
+     * @param fields one entry of the table-fields array, as handed to the constructor
+     * @return the column names, in declaration order
+     */
+    static List<String> declaredColumns(String fields) {
+        List<String> columns = new ArrayList<>();
+        int depth = 0;
+        StringBuilder current = new StringBuilder();
+        for (int i = 0; i <= fields.length(); i++) {
+            char c = i < fields.length() ? fields.charAt(i) : ',';
+            if (c == '(') depth++;
+            if (c == ')') depth--;
+            if (c == ',' && depth == 0) {
+                String definition = current.toString().trim();
+                current.setLength(0);
+                if (definition.isEmpty()) continue;
+                String name = definition.split("\\s+")[0];
+                // A table constraint (UNIQUE(...), PRIMARY KEY(...), FOREIGN KEY ...) names no column.
+                if (name.indexOf('(') >= 0) continue;
+                String upper = name.toUpperCase();
+                if (upper.equals("UNIQUE") || upper.equals("PRIMARY") || upper.equals("FOREIGN")
+                        || upper.equals("CHECK") || upper.equals("CONSTRAINT")) continue;
+                columns.add(name);
+            } else {
+                current.append(c);
+            }
+        }
+        return columns;
+    }
+
     @Override
     public void onUpgrade(SQLiteDatabase db, int oldVersion, int newVersion) {
         if (DEBUG) Log.w(TAG, "Upgrading database: " + db.getPath());
@@ -79,12 +119,19 @@ public class DatabaseHelper extends SQLiteOpenHelper {
             //Modify existing tables if there are changes, while retaining old data. This also works for brand new tables, where nothing is changed.
             List<String> columns = getColumns(db, databaseTables[i]);
 
+            // An upgrade runs in a transaction, so an attempt that fails rolls back and leaves the
+            // original table in place — but a temp_ table created outside that transaction's reach
+            // would survive and collide with the rename below.
+            db.execSQL("DROP TABLE IF EXISTS temp_" + databaseTables[i] + ";");
             db.execSQL("ALTER TABLE " + databaseTables[i] + " RENAME TO temp_" + databaseTables[i] + ";");
 
             db.execSQL("CREATE TABLE " + databaseTables[i] + " (" + tableFields[i] + ");");
             db.execSQL("CREATE INDEX IF NOT EXISTS time_device ON " + databaseTables[i] + " (timestamp, device_id);");
 
-            columns.retainAll(getColumns(db, databaseTables[i]));
+            // The new table is empty at this point, so its shape comes from the definition that
+            // created it. Carrying over only the columns both shapes share is what lets a column be
+            // dropped: it stays behind with the temp table.
+            columns.retainAll(declaredColumns(tableFields[i]));
 
             String cols = TextUtils.join(",", columns);
             String new_cols = cols;
