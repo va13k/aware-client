@@ -19,10 +19,6 @@ import com.aware.Aware;
 import com.aware.utils.DatabaseHelper;
 
 import java.util.HashMap;
-import java.net.HttpURLConnection;
-import java.net.URL;
-import java.util.concurrent.ExecutorService;
-import java.util.concurrent.Executors;
 
 /**
  * AWARE framework content provider - Device information - Framework settings -
@@ -33,8 +29,6 @@ import java.util.concurrent.Executors;
 public class Aware_Provider extends ContentProvider {
 
     public static final int DATABASE_VERSION = 19;
-    private static final ExecutorService INSTALLATION_COUNTER_EXECUTOR =
-            Executors.newSingleThreadExecutor();
 
     /**
      * AWARE framework content authority
@@ -142,7 +136,8 @@ public class Aware_Provider extends ContentProvider {
         public static final String STUDY_TITLE = "study_title";
         public static final String STUDY_DESCRIPTION = "study_description";
         public static final String STUDY_JOINED = "double_join";
-        public static final String STUDY_UPDATED = "double_updated"; // TODO RIO: Use this date for all relevant study updates
+        /** When the study configuration on this device was last replaced by a server version. */
+        public static final String STUDY_UPDATED = "double_updated";
         public static final String STUDY_EXIT = "double_exit";
         public static final String STUDY_COMPLIANCE = "study_compliance";
     }
@@ -240,6 +235,7 @@ public class Aware_Provider extends ContentProvider {
                     Aware_Studies.STUDY_TITLE + " text default ''," +
                     Aware_Studies.STUDY_DESCRIPTION + " text default ''," +
                     Aware_Studies.STUDY_JOINED + " real default 0," +
+                    Aware_Studies.STUDY_UPDATED + " real default 0," +
                     Aware_Studies.STUDY_EXIT + " real default 0," +
                     Aware_Studies.STUDY_COMPLIANCE + " text default ''",
 
@@ -367,36 +363,11 @@ public class Aware_Provider extends ContentProvider {
             case DEVICE_INFO:
                 long dev_id = database.insertWithOnConflict(DATABASE_TABLES[0], Aware_Device.DEVICE_ID, values, SQLiteDatabase.CONFLICT_IGNORE);
                 if (dev_id > 0) {
-                    // Only count an actual new row. The previous code launched this request even
-                    // for conflict/no-op inserts and created a fresh executor each time, leaking a
-                    // thread on repeated core starts.
-                    INSTALLATION_COUNTER_EXECUTOR.execute(new Runnable() {
-                        @Override
-                        public void run() {
-                            HttpURLConnection connection = null;
-                            try {
-                                URL url = new URL("https://awareframework.com/aware_installation_counter.php?data=" + values.toString());
-                                connection = (HttpURLConnection) url.openConnection();
-                                connection.setConnectTimeout(10_000);
-                                connection.setReadTimeout(10_000);
-                                connection.setRequestMethod("GET");
-                                connection.getResponseCode();
-                            } catch (Exception e) {
-                                Log.e("Aware", "Installation counter request failed", e);
-                            } finally {
-                                if (connection != null) connection.disconnect();
-                            }
-                        }
-                    });
                     Uri devUri = ContentUris.withAppendedId(
                             Aware_Device.CONTENT_URI, dev_id);
                     getContext().getContentResolver().notifyChange(devUri, null, false);
                     database.setTransactionSuccessful();
                     database.endTransaction();
-
-
-
-
                     return devUri;
                 }
                 database.endTransaction();
@@ -534,6 +505,7 @@ public class Aware_Provider extends ContentProvider {
         studiesMap.put(Aware_Studies.STUDY_TITLE, Aware_Studies.STUDY_TITLE);
         studiesMap.put(Aware_Studies.STUDY_DESCRIPTION, Aware_Studies.STUDY_DESCRIPTION);
         studiesMap.put(Aware_Studies.STUDY_JOINED, Aware_Studies.STUDY_JOINED);
+        studiesMap.put(Aware_Studies.STUDY_UPDATED, Aware_Studies.STUDY_UPDATED);
         studiesMap.put(Aware_Studies.STUDY_EXIT, Aware_Studies.STUDY_EXIT);
         studiesMap.put(Aware_Studies.STUDY_COMPLIANCE, Aware_Studies.STUDY_COMPLIANCE);
 
