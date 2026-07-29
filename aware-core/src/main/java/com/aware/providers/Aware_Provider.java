@@ -71,18 +71,14 @@ public class Aware_Provider extends ContentProvider {
         public static final String TIMESTAMP = "timestamp";
         public static final String DEVICE_ID = "device_id";
         public static final String BOARD = "board";
-        public static final String BRAND = "brand";
         public static final String DEVICE = "device";
         public static final String BUILD_ID = "build_id";
         public static final String HARDWARE = "hardware";
         public static final String MANUFACTURER = "manufacturer";
         public static final String MODEL = "model";
         public static final String PRODUCT = "product";
-        public static final String SERIAL = "serial";
         public static final String RELEASE = "release";
-        public static final String RELEASE_TYPE = "release_type";
         public static final String SDK = "sdk";
-        public static final String LABEL = "label";
     }
 
     /**
@@ -199,18 +195,14 @@ public class Aware_Provider extends ContentProvider {
                     + Aware_Device.TIMESTAMP + " real default 0,"
                     + Aware_Device.DEVICE_ID + " text default '',"
                     + Aware_Device.BOARD + " text default '',"
-                    + Aware_Device.BRAND + " text default '',"
                     + Aware_Device.DEVICE + " text default '',"
                     + Aware_Device.BUILD_ID + " text default '',"
                     + Aware_Device.HARDWARE + " text default '',"
                     + Aware_Device.MANUFACTURER + " text default '',"
                     + Aware_Device.MODEL + " text default '',"
                     + Aware_Device.PRODUCT + " text default '',"
-                    + Aware_Device.SERIAL + " text default '',"
                     + Aware_Device.RELEASE + " text default '',"
-                    + Aware_Device.RELEASE_TYPE + " text default '',"
                     + Aware_Device.SDK + " text default '',"
-                    + Aware_Device.LABEL + " text default '',"
                     + "UNIQUE(" + Aware_Device.DEVICE_ID + ")",
 
             // Settings
@@ -497,18 +489,14 @@ public class Aware_Provider extends ContentProvider {
         deviceMap.put(Aware_Device.TIMESTAMP, Aware_Device.TIMESTAMP);
         deviceMap.put(Aware_Device.DEVICE_ID, Aware_Device.DEVICE_ID);
         deviceMap.put(Aware_Device.BOARD, Aware_Device.BOARD);
-        deviceMap.put(Aware_Device.BRAND, Aware_Device.BRAND);
         deviceMap.put(Aware_Device.DEVICE, Aware_Device.DEVICE);
         deviceMap.put(Aware_Device.BUILD_ID, Aware_Device.BUILD_ID);
         deviceMap.put(Aware_Device.HARDWARE, Aware_Device.HARDWARE);
         deviceMap.put(Aware_Device.MANUFACTURER, Aware_Device.MANUFACTURER);
         deviceMap.put(Aware_Device.MODEL, Aware_Device.MODEL);
         deviceMap.put(Aware_Device.PRODUCT, Aware_Device.PRODUCT);
-        deviceMap.put(Aware_Device.SERIAL, Aware_Device.SERIAL);
         deviceMap.put(Aware_Device.RELEASE, Aware_Device.RELEASE);
-        deviceMap.put(Aware_Device.RELEASE_TYPE, Aware_Device.RELEASE_TYPE);
         deviceMap.put(Aware_Device.SDK, Aware_Device.SDK);
-        deviceMap.put(Aware_Device.LABEL, Aware_Device.LABEL);
 
         settingsMap = new HashMap<>();
         settingsMap.put(Aware_Settings.SETTING_ID, Aware_Settings.SETTING_ID);

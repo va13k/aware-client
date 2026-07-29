@@ -649,49 +649,44 @@ public class Aware extends Service {
     private static Map<String, String> deviceSnapshot() {
         Map<String, String> snapshot = new HashMap<>();
         snapshot.put(Aware_Device.BOARD, Build.BOARD);
-        snapshot.put(Aware_Device.BRAND, Build.BRAND);
         snapshot.put(Aware_Device.DEVICE, Build.DEVICE);
         snapshot.put(Aware_Device.BUILD_ID, Build.DISPLAY);
         snapshot.put(Aware_Device.HARDWARE, Build.HARDWARE);
         snapshot.put(Aware_Device.MANUFACTURER, Build.MANUFACTURER);
         snapshot.put(Aware_Device.MODEL, Build.MODEL);
         snapshot.put(Aware_Device.PRODUCT, Build.PRODUCT);
-        snapshot.put(Aware_Device.SERIAL, Build.SERIAL);
         snapshot.put(Aware_Device.RELEASE, Build.VERSION.RELEASE);
-        snapshot.put(Aware_Device.RELEASE_TYPE, Build.TYPE);
         snapshot.put(Aware_Device.SDK, String.valueOf(Build.VERSION.SDK_INT));
         return snapshot;
     }
 
     /**
-     * Records this device's hardware and OS profile in aware_device, adding a row only when the
-     * device's facts differ from the newest row already stored for this device_id.
+     * Keeps this device's hardware and OS profile current in aware_device.
      *
-     * aware_device is a device dimension, not an event stream: one row per device, plus a new row
-     * when a device fact genuinely changes (an Android upgrade, a hardware swap). Two rows under
-     * one device_id therefore carry meaning — compare release/sdk/build_id between them and a
-     * mid-study OS upgrade is legible. Scoping the lookup to this device_id keeps that true on a
-     * phone whose app data was cleared, where earlier device_ids still have rows of their own.
+     * The table holds one row per device — {@code UNIQUE(device_id)} permits exactly that — so the
+     * row is rewritten in place when the device's facts change, carrying a fresh timestamp. The sync
+     * selects rows newer than its marker, so an unchanged row is never re-sent and a rewritten one
+     * travels once: the server accumulates a row per real change, which is where the history of a
+     * mid-study Android upgrade lives.
      *
-     * Runs on every intent delivered to this service, so it must stay cheap: one indexed-by-nothing
-     * single-row read of a table that holds a handful of rows.
+     * Runs on every intent delivered to this service, so it stays cheap: one single-row read of a
+     * table holding one row per device_id this phone has used.
      */
     private void get_device_info() {
         String device_id = Aware.getSetting(this, Aware_Preferences.DEVICE_ID);
         Map<String, String> current = deviceSnapshot();
         Map<String, String> stored = null;
 
-        Cursor newest = getContentResolver().query(Aware_Device.CONTENT_URI, null,
-                Aware_Device.DEVICE_ID + "=?", new String[]{device_id},
-                Aware_Device.TIMESTAMP + " DESC LIMIT 1");
-        if (newest != null && newest.moveToFirst()) {
+        Cursor storedRow = getContentResolver().query(Aware_Device.CONTENT_URI, null,
+                Aware_Device.DEVICE_ID + "=?", new String[]{device_id}, null);
+        if (storedRow != null && storedRow.moveToFirst()) {
             stored = new HashMap<>();
             for (String column : DeviceFacts.COMPARED_COLUMNS) {
-                int index = newest.getColumnIndex(column);
-                stored.put(column, index < 0 ? null : newest.getString(index));
+                int index = storedRow.getColumnIndex(column);
+                stored.put(column, index < 0 ? null : storedRow.getString(index));
             }
         }
-        if (newest != null && !newest.isClosed()) newest.close();
+        if (storedRow != null && !storedRow.isClosed()) storedRow.close();
 
         if (DeviceFacts.unchanged(stored, current)) return;
 
@@ -701,10 +696,14 @@ public class Aware extends Service {
         for (Map.Entry<String, String> fact : current.entrySet()) {
             rowData.put(fact.getKey(), fact.getValue());
         }
-        rowData.put(Aware_Device.LABEL, Aware.getSetting(this, Aware_Preferences.DEVICE_LABEL));
 
         try {
-            getContentResolver().insert(Aware_Device.CONTENT_URI, rowData);
+            if (stored == null) {
+                getContentResolver().insert(Aware_Device.CONTENT_URI, rowData);
+            } else {
+                getContentResolver().update(Aware_Device.CONTENT_URI, rowData,
+                        Aware_Device.DEVICE_ID + "=?", new String[]{device_id});
+            }
 
             Intent deviceData = new Intent(ACTION_AWARE_DEVICE_INFORMATION);
             sendBroadcast(deviceData);
@@ -1514,12 +1513,6 @@ public class Aware extends Service {
             return;
         }
 
-        if (key.equals(Aware_Preferences.DEVICE_LABEL) && ((String) value).length() > 0) {
-            ContentValues newLabel = new ContentValues();
-            newLabel.put(Aware_Provider.Aware_Device.LABEL, (String) value);
-            context.getApplicationContext().getContentResolver().update(Aware_Provider.Aware_Device.CONTENT_URI, newLabel, Aware_Provider.Aware_Device.DEVICE_ID + " LIKE '" + Aware.getSetting(context, Aware_Preferences.DEVICE_ID) + "'", null);
-        }
-
         ContentValues setting = new ContentValues();
         setting.put(Aware_Settings.SETTING_KEY, key);
         setting.put(Aware_Settings.SETTING_VALUE, value.toString());
@@ -1580,12 +1573,6 @@ public class Aware extends Service {
         if (key.equals(Aware_Preferences.DEVICE_ID) && Aware.getSetting(context, Aware_Preferences.DEVICE_ID).length() > 0) {
             Log.d(Aware.TAG, "AWARE UUID: " + Aware.getSetting(context, Aware_Preferences.DEVICE_ID) + " in " + package_name);
             return;
-        }
-
-        if (key.equals(Aware_Preferences.DEVICE_LABEL) && ((String) value).length() > 0) {
-            ContentValues newLabel = new ContentValues();
-            newLabel.put(Aware_Provider.Aware_Device.LABEL, (String) value);
-            context.getContentResolver().update(Aware_Provider.Aware_Device.CONTENT_URI, newLabel, Aware_Provider.Aware_Device.DEVICE_ID + " LIKE '" + Aware.getSetting(context, Aware_Preferences.DEVICE_ID) + "'", null);
         }
 
         ContentValues setting = new ContentValues();
@@ -2318,10 +2305,6 @@ public class Aware extends Service {
         Aware.setSetting(context, Aware_Preferences.WEBSERVICE_SERVER, webservice_server, "com.aware.phone");
         Aware.setSetting(context, Aware_Preferences.FREQUENCY_WEBSERVICE, frequency_webservice, "com.aware.phone");
         Aware.setSetting(context, Aware_Preferences.PENDING_STUDY_UPDATE_NOTICE, pending_study_update_notice, "com.aware.phone");
-
-        ContentValues update_label = new ContentValues();
-        update_label.put(Aware_Device.LABEL, device_label);
-        context.getContentResolver().update(Aware_Device.CONTENT_URI, update_label, Aware_Device.DEVICE_ID + " LIKE '" + device_id + "'", null);
 
         //Turn off all active plugins
         ArrayList<String> active_plugins = new ArrayList<>();

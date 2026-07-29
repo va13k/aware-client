@@ -11,14 +11,14 @@ import java.util.HashMap;
 import java.util.Map;
 
 /**
- * Unit tests for the comparison that decides whether a device's current facts warrant a new
- * aware_device row.
+ * Unit tests for the comparison that decides whether the stored aware_device row still describes the
+ * device.
  *
- * A spurious "changed" verdict costs more here than a missed one: aware_device is a device
- * dimension, so two rows under one device_id are supposed to mean an Android upgrade or a hardware
- * change, and noise rows make a real upgrade indistinguishable from them. The null/empty
- * equivalence is pinned in particular — a column the platform reports as null but SQLite stores as
- * empty text would otherwise read as changed on every single check.
+ * A spurious "changed" verdict costs more here than a missed one: the row is rewritten with a fresh
+ * timestamp, and the sync carries every rewrite to the server as its own row, so noise here reads as
+ * device history that never happened. The null/empty equivalence is pinned in particular — a column
+ * the platform reports as null but SQLite stores as empty text would otherwise read as changed on
+ * every single check.
  */
 public class DeviceFactsTest {
 
@@ -69,9 +69,9 @@ public class DeviceFactsTest {
     @Test
     public void nullAndEmptyAreTheSameValue() {
         Map<String, String> stored = snapshot();
-        stored.put(Aware_Device.SERIAL, null);
+        stored.put(Aware_Device.MANUFACTURER, null);
         Map<String, String> current = snapshot();
-        current.put(Aware_Device.SERIAL, "");
+        current.put(Aware_Device.MANUFACTURER, "");
 
         assertTrue(DeviceFacts.unchanged(stored, current));
         assertTrue(DeviceFacts.unchanged(current, stored));
@@ -100,13 +100,13 @@ public class DeviceFactsTest {
     }
 
     @Test
-    public void aLabelChangeAloneDoesNotWarrantARow() {
-        // label is maintained in place across every row of a device_id by UPDATE, so inserting on a
-        // label edit would produce two rows with identical content differing only by timestamp.
+    public void aColumnOutsideTheComparedSetDoesNotWarrantARewrite() {
+        // Only COMPARED_COLUMNS describe the device. A value carried alongside them in the same row
+        // — device_id, or anything added to the table later — has no say in the verdict.
         Map<String, String> stored = snapshot();
-        stored.put(Aware_Device.LABEL, "old name");
+        stored.put(Aware_Device.DEVICE_ID, "device-a");
         Map<String, String> current = snapshot();
-        current.put(Aware_Device.LABEL, "new name");
+        current.put(Aware_Device.DEVICE_ID, "device-b");
 
         assertTrue(DeviceFacts.unchanged(stored, current));
     }
