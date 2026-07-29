@@ -197,8 +197,10 @@ public class JoinStudyDialog extends DialogFragment {
                     return Outcome.of(StudyUtils.StudyConfigValidation.INVALID_CONFIG);
                 }
 
-                StudyUtils.StudyConfigValidation result =
-                        StudyUtils.validateStudyConfigDetailed(studyConfig, request.inputPassword);
+                // The application context, not mActivity: validation probes the database, and the
+                // trust store it reads for that outlives whichever screen started the join.
+                StudyUtils.StudyConfigValidation result = StudyUtils.validateStudyConfigDetailed(
+                        mActivity.getApplicationContext(), studyConfig, request.inputPassword);
                 if (result != StudyUtils.StudyConfigValidation.OK) {
                     Log.d(TAG, "Failed to join study with URL: " + request.studyUrl
                             + ", reason: " + result);

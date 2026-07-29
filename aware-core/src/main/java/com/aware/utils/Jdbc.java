@@ -101,18 +101,21 @@ public class Jdbc {
      * used by uploads untouched, so a probe can run during a sync without disturbing it. The
      * password and connection string are never logged.
      *
+     * @param context        application context, for the trust store behind {@link MysqlTls}
      * @param timeoutSeconds maximum time to spend connecting
      * @return {@link ConnectionResult#OK} if the credentials authenticate, otherwise the classified failure
      */
-    public static ConnectionResult probeConnection(String host, String port, String name,
-                                                   String username, String password, int timeoutSeconds) {
+    public static ConnectionResult probeConnection(Context context, String host, String port,
+                                                   String name, String username, String password,
+                                                   int timeoutSeconds) {
         int timeoutMs = timeoutSeconds * 1000;
-        String connectionUrl = String.format(
-                "jdbc:mysql://%s:%s/%s?connectTimeout=%d&socketTimeout=%d",
-                host, port, name, timeoutMs, timeoutMs);
 
         Connection localConnection = null;
         try {
+            String connectionUrl = String.format(
+                    "jdbc:mysql://%s:%s/%s?connectTimeout=%d&socketTimeout=%d%s",
+                    host, port, name, timeoutMs, timeoutMs,
+                    MysqlTls.connectionParameters(context));
             Class.forName("com.mysql.jdbc.Driver");
             localConnection = DriverManager.getConnection(connectionUrl, username, password);
             return ConnectionResult.OK;
@@ -182,15 +185,16 @@ public class Jdbc {
         if (rows.length() == 0) return true;
 
         int timeoutMs = timeoutSeconds * 1000;
-        String connectionUrl = String.format(
-                "jdbc:mysql://%s:%s/%s?connectTimeout=%d&socketTimeout=%d",
-                Aware.getSetting(context, Aware_Preferences.DB_HOST),
-                Aware.getSetting(context, Aware_Preferences.DB_PORT),
-                Aware.getSetting(context, Aware_Preferences.DB_NAME),
-                timeoutMs, timeoutMs);
 
         Connection localConnection = null;
         try {
+            String connectionUrl = String.format(
+                    "jdbc:mysql://%s:%s/%s?connectTimeout=%d&socketTimeout=%d%s",
+                    Aware.getSetting(context, Aware_Preferences.DB_HOST),
+                    Aware.getSetting(context, Aware_Preferences.DB_PORT),
+                    Aware.getSetting(context, Aware_Preferences.DB_NAME),
+                    timeoutMs, timeoutMs,
+                    MysqlTls.connectionParameters(context));
             Class.forName("com.mysql.jdbc.Driver");
             localConnection = DriverManager.getConnection(connectionUrl,
                     Aware.getSetting(context, Aware_Preferences.DB_USERNAME),
@@ -244,13 +248,15 @@ public class Jdbc {
      * @param context application context
      */
     private static void connect(Context context) throws JdbcConnectionException {
-        String connectionUrl = String.format("jdbc:mysql://%s:%s/%s?rewriteBatchedStatements=true",
-                Aware.getSetting(context, Aware_Preferences.DB_HOST),
-                Aware.getSetting(context, Aware_Preferences.DB_PORT),
-                Aware.getSetting(context, Aware_Preferences.DB_NAME));
         Log.i(TAG, "Establishing connection to remote database...");
 
         try {
+            String connectionUrl = String.format(
+                    "jdbc:mysql://%s:%s/%s?rewriteBatchedStatements=true%s",
+                    Aware.getSetting(context, Aware_Preferences.DB_HOST),
+                    Aware.getSetting(context, Aware_Preferences.DB_PORT),
+                    Aware.getSetting(context, Aware_Preferences.DB_NAME),
+                    MysqlTls.connectionParameters(context));
             Class.forName("com.mysql.jdbc.Driver");
 
             connection = DriverManager.getConnection(connectionUrl,

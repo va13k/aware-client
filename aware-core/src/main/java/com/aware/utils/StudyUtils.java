@@ -282,7 +282,7 @@ public class StudyUtils extends IntentService {
         if (!requiresParticipantPassword(newConfig)) return false;
         JSONObject dbInfo = newConfig.optJSONObject("database");
 
-        Jdbc.ConnectionResult result = Jdbc.probeConnection(
+        Jdbc.ConnectionResult result = Jdbc.probeConnection(context,
                 dbInfo.optString("database_host", ""),
                 dbInfo.optString("database_port", ""),
                 dbInfo.optString("database_name", ""),
@@ -354,7 +354,7 @@ public class StudyUtils extends IntentService {
 
         if (dbInfo == null) return Jdbc.ConnectionResult.UNREACHABLE;
 
-        Jdbc.ConnectionResult result = Jdbc.probeConnection(
+        Jdbc.ConnectionResult result = Jdbc.probeConnection(context,
                 dbInfo.optString("database_host", ""),
                 dbInfo.optString("database_port", ""),
                 dbInfo.optString("database_name", ""),
@@ -1629,7 +1629,7 @@ public class StudyUtils extends IntentService {
      * @return true if the study config is valid, false otherwise
      */
     public static boolean validateStudyConfig(Context context, JSONObject config, String input_password) {
-        return validateStudyConfigDetailed(config, input_password) == StudyConfigValidation.OK;
+        return validateStudyConfigDetailed(context, config, input_password) == StudyConfigValidation.OK;
     }
 
     /**
@@ -1653,17 +1653,17 @@ public class StudyUtils extends IntentService {
     /**
      * Validates a study configuration's schema and database credentials, classifying the failure.
      * <p>
-     * Uses {@link Jdbc#probeConnection} rather than {@link Jdbc#testConnection}: the probe reports
-     * a rejected password separately from an unreachable host, is bounded by
-     * {@link #STUDY_PROBE_TIMEOUT_SECONDS} so a dead host cannot stall a join indefinitely, and
-     * connects on its own short-lived connection instead of reassigning the shared sync connection.
+     * Credentials are checked with {@link Jdbc#probeConnection}, which reports a rejected password
+     * separately from an unreachable host, is bounded by {@link #STUDY_PROBE_TIMEOUT_SECONDS} so a
+     * dead host cannot stall a join indefinitely, and works on its own short-lived connection.
      *
+     * @param context        application context, which the probe needs to verify the server's certificate
      * @param config         study configuration to validate; null is {@link StudyConfigValidation#INVALID_CONFIG}
      * @param input_password password typed by the participant, used only by
      *                       {@code config_without_password=true} studies. Never logged.
      * @return the classified outcome
      */
-    public static StudyConfigValidation validateStudyConfigDetailed(JSONObject config, String input_password) {
+    public static StudyConfigValidation validateStudyConfigDetailed(Context context, JSONObject config, String input_password) {
         String missing = firstMissingRequirement(config);
         if (missing != null) {
             Log.e(Aware.TAG, "Study configuration is missing: " + missing);
@@ -1682,7 +1682,7 @@ public class StudyUtils extends IntentService {
             return StudyConfigValidation.PASSWORD_REQUIRED;
         }
 
-        Jdbc.ConnectionResult probe = Jdbc.probeConnection(
+        Jdbc.ConnectionResult probe = Jdbc.probeConnection(context,
                 dbInfo.optString("database_host", ""),
                 dbInfo.optString("database_port", ""),
                 dbInfo.optString("database_name", ""),
