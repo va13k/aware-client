@@ -185,7 +185,6 @@ public class StudyUtils extends IntentService {
                     complianceEntry.put(Aware_Provider.Aware_Studies.STUDY_API, dbStudy.getString(dbStudy.getColumnIndex(Aware_Provider.Aware_Studies.STUDY_API)));
                     complianceEntry.put(Aware_Provider.Aware_Studies.STUDY_URL, dbStudy.getString(dbStudy.getColumnIndex(Aware_Provider.Aware_Studies.STUDY_URL)));
                     complianceEntry.put(Aware_Provider.Aware_Studies.STUDY_PI, dbStudy.getString(dbStudy.getColumnIndex(Aware_Provider.Aware_Studies.STUDY_PI)));
-                    complianceEntry.put(Aware_Provider.Aware_Studies.STUDY_CONFIG, dbStudy.getString(dbStudy.getColumnIndex(Aware_Provider.Aware_Studies.STUDY_CONFIG)));
                     complianceEntry.put(Aware_Provider.Aware_Studies.STUDY_JOINED, dbStudy.getLong(dbStudy.getColumnIndex(Aware_Provider.Aware_Studies.STUDY_JOINED)));
                     complianceEntry.put(Aware_Provider.Aware_Studies.STUDY_EXIT, System.currentTimeMillis());
                     complianceEntry.put(Aware_Provider.Aware_Studies.STUDY_TITLE, dbStudy.getString(dbStudy.getColumnIndex(Aware_Provider.Aware_Studies.STUDY_TITLE)));
@@ -321,8 +320,6 @@ public class StudyUtils extends IntentService {
                 study.getString(study.getColumnIndex(Aware_Provider.Aware_Studies.STUDY_URL)));
         cv.put(Aware_Provider.Aware_Studies.STUDY_PI,
                 study.getString(study.getColumnIndex(Aware_Provider.Aware_Studies.STUDY_PI)));
-        cv.put(Aware_Provider.Aware_Studies.STUDY_CONFIG,
-                study.getString(study.getColumnIndex(Aware_Provider.Aware_Studies.STUDY_CONFIG)));
         cv.put(Aware_Provider.Aware_Studies.STUDY_JOINED,
                 study.getLong(study.getColumnIndex(Aware_Provider.Aware_Studies.STUDY_JOINED)));
         cv.put(Aware_Provider.Aware_Studies.STUDY_EXIT,
@@ -524,6 +521,7 @@ public class StudyUtils extends IntentService {
                     studyData.put(Aware_Provider.Aware_Studies.STUDY_DESCRIPTION,
                             studyInfo.optString("study_description", ""));
                     studyData.put(Aware_Provider.Aware_Studies.STUDY_COMPLIANCE, "updated study");
+                    studyData.put(Aware_Provider.Aware_Studies.STUDY_UPDATED, System.currentTimeMillis());
                     studyData.put(Aware_Provider.Aware_Studies.STUDY_JOINED, System.currentTimeMillis());
                     studyData.put(Aware_Provider.Aware_Studies.STUDY_EXIT, 0);
                     context.getContentResolver().insert(Aware_Provider.Aware_Studies.CONTENT_URI, studyData);
@@ -1482,6 +1480,7 @@ public class StudyUtils extends IntentService {
 
             ContentValues values = new ContentValues();
             values.put(Aware_Provider.Aware_Studies.STUDY_CONFIG, effective.toString());
+            values.put(Aware_Provider.Aware_Studies.STUDY_UPDATED, System.currentTimeMillis());
             updated = context.getContentResolver().update(
                     Aware_Provider.Aware_Studies.CONTENT_URI,
                     values,

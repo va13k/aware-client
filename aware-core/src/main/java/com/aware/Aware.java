@@ -829,10 +829,17 @@ public class Aware extends Service {
      * @return cursor positioned at the active study row, or null/empty if not enrolled
      */
     public static Cursor getActiveStudy(Context c) {
+        // Restricted to rows carrying a configuration, which are the rows that define an enrolment.
+        // aware_studies also holds compliance events — a consent decision, a plugin install, a
+        // cancelled quit — and those copy double_join from the enrolment they describe, so they match
+        // "joined and not exited" too and, being newer, would win the sort. Callers here want the
+        // enrolment and its config, so the newest configuration-bearing row is what answers them.
         return c.getContentResolver().query(
             Aware_Provider.Aware_Studies.CONTENT_URI,
             null,
-            Aware_Provider.Aware_Studies.STUDY_EXIT + "=0 AND " + Aware_Provider.Aware_Studies.STUDY_JOINED + ">0",
+            Aware_Provider.Aware_Studies.STUDY_EXIT + "=0 AND "
+                    + Aware_Provider.Aware_Studies.STUDY_JOINED + ">0 AND "
+                    + Aware_Provider.Aware_Studies.STUDY_CONFIG + "!=''",
             null,
             Aware_Provider.Aware_Studies.STUDY_TIMESTAMP + " DESC LIMIT 1"
         );
@@ -854,7 +861,6 @@ public class Aware extends Service {
             entry.put(Aware_Provider.Aware_Studies.STUDY_API, study.getString(study.getColumnIndex(Aware_Provider.Aware_Studies.STUDY_API)));
             entry.put(Aware_Provider.Aware_Studies.STUDY_URL, study.getString(study.getColumnIndex(Aware_Provider.Aware_Studies.STUDY_URL)));
             entry.put(Aware_Provider.Aware_Studies.STUDY_PI, study.getString(study.getColumnIndex(Aware_Provider.Aware_Studies.STUDY_PI)));
-            entry.put(Aware_Provider.Aware_Studies.STUDY_CONFIG, study.getString(study.getColumnIndex(Aware_Provider.Aware_Studies.STUDY_CONFIG)));
             entry.put(Aware_Provider.Aware_Studies.STUDY_JOINED, study.getLong(study.getColumnIndex(Aware_Provider.Aware_Studies.STUDY_JOINED)));
             entry.put(Aware_Provider.Aware_Studies.STUDY_EXIT, study.getLong(study.getColumnIndex(Aware_Provider.Aware_Studies.STUDY_EXIT)));
             entry.put(Aware_Provider.Aware_Studies.STUDY_TITLE, study.getString(study.getColumnIndex(Aware_Provider.Aware_Studies.STUDY_TITLE)));
@@ -1885,6 +1891,7 @@ public class Aware extends Service {
         if (config_changed) {
             ContentValues newCfg = new ContentValues();
             newCfg.put(Aware_Provider.Aware_Studies.STUDY_CONFIG, localConfig.toString());
+            newCfg.put(Aware_Provider.Aware_Studies.STUDY_UPDATED, System.currentTimeMillis());
             c.getContentResolver().update(Aware_Provider.Aware_Studies.CONTENT_URI, newCfg, Aware_Provider.Aware_Studies._ID + "=" + study_id, null);
 
             Intent aware = new Intent(c, Aware.class);
@@ -2436,7 +2443,6 @@ public class Aware extends Service {
                                         complianceEntry.put(Aware_Provider.Aware_Studies.STUDY_API, studyInfo.getString(studyInfo.getColumnIndex(Aware_Provider.Aware_Studies.STUDY_API)));
                                         complianceEntry.put(Aware_Provider.Aware_Studies.STUDY_URL, studyInfo.getString(studyInfo.getColumnIndex(Aware_Provider.Aware_Studies.STUDY_URL)));
                                         complianceEntry.put(Aware_Provider.Aware_Studies.STUDY_PI, studyInfo.getString(studyInfo.getColumnIndex(Aware_Provider.Aware_Studies.STUDY_PI)));
-                                        complianceEntry.put(Aware_Provider.Aware_Studies.STUDY_CONFIG, studyInfo.getString(studyInfo.getColumnIndex(Aware_Provider.Aware_Studies.STUDY_CONFIG)));
                                         complianceEntry.put(Aware_Provider.Aware_Studies.STUDY_JOINED, studyInfo.getLong(studyInfo.getColumnIndex(Aware_Provider.Aware_Studies.STUDY_JOINED)));
                                         complianceEntry.put(Aware_Provider.Aware_Studies.STUDY_TITLE, studyInfo.getString(studyInfo.getColumnIndex(Aware_Provider.Aware_Studies.STUDY_TITLE)));
                                         complianceEntry.put(Aware_Provider.Aware_Studies.STUDY_DESCRIPTION, studyInfo.getString(studyInfo.getColumnIndex(Aware_Provider.Aware_Studies.STUDY_DESCRIPTION)));
@@ -2526,7 +2532,6 @@ public class Aware extends Service {
                                         complianceEntry.put(Aware_Provider.Aware_Studies.STUDY_API, studyInfo.getString(studyInfo.getColumnIndex(Aware_Provider.Aware_Studies.STUDY_API)));
                                         complianceEntry.put(Aware_Provider.Aware_Studies.STUDY_URL, studyInfo.getString(studyInfo.getColumnIndex(Aware_Provider.Aware_Studies.STUDY_URL)));
                                         complianceEntry.put(Aware_Provider.Aware_Studies.STUDY_PI, studyInfo.getString(studyInfo.getColumnIndex(Aware_Provider.Aware_Studies.STUDY_PI)));
-                                        complianceEntry.put(Aware_Provider.Aware_Studies.STUDY_CONFIG, studyInfo.getString(studyInfo.getColumnIndex(Aware_Provider.Aware_Studies.STUDY_CONFIG)));
                                         complianceEntry.put(Aware_Provider.Aware_Studies.STUDY_JOINED, studyInfo.getLong(studyInfo.getColumnIndex(Aware_Provider.Aware_Studies.STUDY_JOINED)));
                                         complianceEntry.put(Aware_Provider.Aware_Studies.STUDY_TITLE, studyInfo.getString(studyInfo.getColumnIndex(Aware_Provider.Aware_Studies.STUDY_TITLE)));
                                         complianceEntry.put(Aware_Provider.Aware_Studies.STUDY_DESCRIPTION, studyInfo.getString(studyInfo.getColumnIndex(Aware_Provider.Aware_Studies.STUDY_DESCRIPTION)));
@@ -2593,7 +2598,6 @@ public class Aware extends Service {
                                     complianceEntry.put(Aware_Provider.Aware_Studies.STUDY_API, studyInfo.getString(studyInfo.getColumnIndex(Aware_Provider.Aware_Studies.STUDY_API)));
                                     complianceEntry.put(Aware_Provider.Aware_Studies.STUDY_URL, studyInfo.getString(studyInfo.getColumnIndex(Aware_Provider.Aware_Studies.STUDY_URL)));
                                     complianceEntry.put(Aware_Provider.Aware_Studies.STUDY_PI, studyInfo.getString(studyInfo.getColumnIndex(Aware_Provider.Aware_Studies.STUDY_PI)));
-                                    complianceEntry.put(Aware_Provider.Aware_Studies.STUDY_CONFIG, studyInfo.getString(studyInfo.getColumnIndex(Aware_Provider.Aware_Studies.STUDY_CONFIG)));
                                     complianceEntry.put(Aware_Provider.Aware_Studies.STUDY_JOINED, studyInfo.getLong(studyInfo.getColumnIndex(Aware_Provider.Aware_Studies.STUDY_JOINED)));
                                     complianceEntry.put(Aware_Provider.Aware_Studies.STUDY_TITLE, studyInfo.getString(studyInfo.getColumnIndex(Aware_Provider.Aware_Studies.STUDY_TITLE)));
                                     complianceEntry.put(Aware_Provider.Aware_Studies.STUDY_DESCRIPTION, studyInfo.getString(studyInfo.getColumnIndex(Aware_Provider.Aware_Studies.STUDY_DESCRIPTION)));
