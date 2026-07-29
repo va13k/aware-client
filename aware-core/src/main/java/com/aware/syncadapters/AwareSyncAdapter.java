@@ -173,8 +173,8 @@ public class AwareSyncAdapter extends AbstractThreadedSyncAdapter {
             String[] columnsStr = getTableColumnsNames(CONTENT_URI, context);
 
             /**
-             * The last-synced marker is read from the local aware_log table. The server is never
-             * queried for it: one round trip per table per sync event does not scale.
+             * The last-synced marker is read from the local aware_sync_markers table. The server is
+             * never queried for it: one round trip per table per sync event does not scale.
              */
             String latest = getLatestRecordSynched(database_table, columnsStr);
 
@@ -369,17 +369,31 @@ public class AwareSyncAdapter extends AbstractThreadedSyncAdapter {
         return columnsStr;
     }
 
+    /**
+     * How far {@code database_table} has been uploaded, shaped as the single-element JSON array the
+     * sync loop consumes, or an empty array when the table has never been uploaded.
+     *
+     * The marker is keyed by table name in its own table, so finding it is an equality match on one
+     * row rather than a pattern match over log text.
+     *
+     * The key the timestamp is returned under has to match the column the table is paged by:
+     * session-based tables advance on their end timestamp, ESM answers on the answer timestamp, and
+     * everything else on {@code timestamp}.
+     */
     private String getLatestRecordSynched(String database_table, String[] columnsStr) {
 
         JSONObject latest = new JSONObject();
-        long last_sync_timestamp;
 
-        Cursor lastSynched = mContext.getContentResolver().query(Aware_Provider.Aware_Log.CONTENT_URI, null, Aware_Provider.Aware_Log.LOG_MESSAGE + " LIKE '{\"table\":\"" + database_table + "\",\"last_sync_timestamp\":%'", null, Aware_Provider.Aware_Log.LOG_TIMESTAMP + " DESC LIMIT 1");
-        if (lastSynched != null && lastSynched.moveToFirst()) {
+        Cursor marker = mContext.getContentResolver().query(
+                Aware_Provider.Aware_Sync_Markers.CONTENT_URI, null,
+                Aware_Provider.Aware_Sync_Markers.MARKER_TABLE + "=?",
+                new String[]{database_table}, null);
+
+        boolean found = marker != null && marker.moveToFirst();
+        if (found) {
+            long last_sync_timestamp = marker.getLong(
+                    marker.getColumnIndex(Aware_Provider.Aware_Sync_Markers.MARKER_LAST_SYNCED));
             try {
-                JSONObject logSyncData = new JSONObject(lastSynched.getString(lastSynched.getColumnIndex(Aware_Provider.Aware_Log.LOG_MESSAGE)));
-                last_sync_timestamp = logSyncData.getLong("last_sync_timestamp");
-
                 if (exists(columnsStr, "double_end_timestamp")) {
                     latest = new JSONObject().put("double_end_timestamp", last_sync_timestamp);
                 } else if (exists(columnsStr, "double_esm_user_answer_timestamp")) {
@@ -390,12 +404,26 @@ public class AwareSyncAdapter extends AbstractThreadedSyncAdapter {
             } catch (JSONException e) {
                 e.printStackTrace();
             }
-            lastSynched.close();
-        } else {
-            return new JSONArray().toString();
         }
+        if (marker != null && !marker.isClosed()) marker.close();
+
+        if (!found) return new JSONArray().toString();
 
         return new JSONArray().put(latest).toString();
+    }
+
+    /**
+     * Records how far {@code database_table} has been uploaded.
+     *
+     * Written after the server acknowledges a batch, and read by the next sync of that table to pick
+     * up where this one stopped. The provider replaces the table's previous marker, so this holds one
+     * row per synced table.
+     */
+    private void setLatestRecordSynched(String database_table, long lastSynced) {
+        ContentValues marker = new ContentValues();
+        marker.put(Aware_Provider.Aware_Sync_Markers.MARKER_TABLE, database_table);
+        marker.put(Aware_Provider.Aware_Sync_Markers.MARKER_LAST_SYNCED, lastSynced);
+        mContext.getContentResolver().insert(Aware_Provider.Aware_Sync_Markers.CONTENT_URI, marker);
     }
 
     private String getStudySyncCondition(Context mContext, String DATABASE_TABLE) {
@@ -666,14 +694,7 @@ public class AwareSyncAdapter extends AbstractThreadedSyncAdapter {
                 // row-count cap it asked for.
                 outMaxId[0] = maxId;
                 outRowCount[0] = rows.length();
-                try {
-                    Aware.debug(mContext, new JSONObject()
-                            .put("table", DATABASE_TABLE)
-                            .put("last_sync_timestamp", lastSynced)
-                            .toString());
-                } catch (JSONException e) {
-                    e.printStackTrace();
-                }
+                setLatestRecordSynched(DATABASE_TABLE, lastSynced);
 
                 if (DEBUG)
                     Log.d(Aware.TAG, "Sync OK into " + DATABASE_TABLE + " [ " + rows.length() + " rows ]");
