@@ -393,7 +393,7 @@ public final class SensorDiagnostics {
                     + " expected_within_ms=" + freshnessWindow
                     + " excluded=" + excluded
                     + " reason=\"" + reason.replace("\"", "'") + "\"";
-            Aware.debug(context, line);
+            Aware.debug(context, Aware.LogType.DIAGNOSTICS, line);
         }
     }
 

@@ -1178,7 +1178,7 @@ public class StudyUtils extends IntentService {
                 context, Aware_Preferences.ENABLE_CONFIG_UPDATE));
         if (shouldSkipAutomaticConfigSync(editable, manual)) {
             if (Aware.DEBUG) {
-                Aware.debug(context,
+                Aware.debug(context, Aware.LogType.STUDY,
                         "Skipping automatic study-config update while participant editing is enabled");
             }
             return;
@@ -1268,7 +1268,7 @@ public class StudyUtils extends IntentService {
                     String drift = liveDriftSignature(context, newConfig);
                     if (drift.isEmpty()) {
                         String msg = "There are no study updates.";
-                        if (Aware.DEBUG) Aware.debug(context, msg);
+                        if (Aware.DEBUG) Aware.debug(context, Aware.LogType.STUDY, msg);
                         if (toast) {
                             new Handler(Looper.getMainLooper()).post(new Runnable() {
                                 @Override
@@ -1291,12 +1291,12 @@ public class StudyUtils extends IntentService {
                         // would restart every sensor service again on every ~1 min sync poll for
                         // no benefit. Back off and retry later in case the cause was transient.
                         if (Aware.DEBUG)
-                            Aware.debug(context, "Live settings drifted from study config but a fix was already attempted recently, skipping: " + drift);
+                            Aware.debug(context, Aware.LogType.STUDY, "Live settings drifted from study config but a fix was already attempted recently, skipping: " + drift);
                         return;
                     }
 
                     if (Aware.DEBUG)
-                        Aware.debug(context, "Live settings drifted from study config, self-healing: " + drift);
+                        Aware.debug(context, Aware.LogType.STUDY, "Live settings drifted from study config, self-healing: " + drift);
                     // insertCompliance=false: this is a silent local self-heal, not a real config
                     // change, so it shouldn't log an "updated study" compliance row or notify the
                     // participant the way an actual server-side edit does below.
@@ -1326,7 +1326,7 @@ public class StudyUtils extends IntentService {
                 holdNewlyAddedConsentSensors(context, localConfig, newConfig);
 
                 applySettings(context, studyUrl, new JSONArray().put(newConfig), true, Aware.getSetting(context, Aware_Preferences.DB_PASSWORD));
-                if (Aware.DEBUG) Aware.debug(context, "Updated study config: " + newConfig);
+                if (Aware.DEBUG) Aware.debug(context, Aware.LogType.STUDY, "Updated study config: " + newConfig);
 
                 // Tell any open UI to rebuild (e.g. show newly enabled sensors) without a re-join,
                 // and report which sensors were added / removed so it can notify the participant.

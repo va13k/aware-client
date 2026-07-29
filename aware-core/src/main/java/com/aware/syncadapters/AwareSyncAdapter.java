@@ -145,7 +145,7 @@ public class AwareSyncAdapter extends AbstractThreadedSyncAdapter {
             }
         }
 
-        Aware.debug(mContext, "STUDY-SYNC: " + database_table);
+        Aware.debug(mContext, Aware.LogType.SYNC, "STUDY-SYNC: " + database_table);
 
         boolean web_service_simple = Aware.getSetting(context, Aware_Preferences.WEBSERVICE_SIMPLE).equals("true");
         boolean web_service_remove_data = Aware.getSetting(context, Aware_Preferences.WEBSERVICE_REMOVE_DATA).equals("true");

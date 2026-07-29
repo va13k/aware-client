@@ -1089,7 +1089,7 @@ public class Scheduler extends Aware_Sensor {
             scheduler_action.putExtra(EXTRA_SCHEDULER_ID, schedule.getScheduleID());
             sendBroadcast(scheduler_action);
 
-            Aware.debug(this, "Scheduler triggered: " + schedule.getScheduleID() + " schedule: " + schedule.build().toString() + " package: " + getPackageName());
+            Aware.debug(this, Aware.LogType.SCHEDULER, "Scheduler triggered: " + schedule.getScheduleID() + " schedule: " + schedule.build().toString() + " package: " + getPackageName());
             Log.d(TAG, "Scheduler triggered: " + schedule.getScheduleID() + " schedule: " + schedule.build().toString() + " package: " + getPackageName());
             if (schedule.getActionType().equals(ACTION_TYPE_BROADCAST)) {
                 Intent broadcast = new Intent(schedule.getActionIntentAction());

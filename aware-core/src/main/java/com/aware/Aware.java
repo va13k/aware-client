@@ -747,13 +747,59 @@ public class Aware extends Service {
         return participant;
     }
 
+    /**
+     * The kinds of record aware_log holds, stored in {@code log_type}.
+     *
+     * A log entry's kind is what analysis groups and filters by, so it travels as its own column
+     * rather than as a prefix inside the message. Keep these values stable: the research database
+     * accumulates them, and a renamed value reads as a new kind for every row written after the
+     * rename.
+     */
+    public static final class LogType {
+        private LogType() {
+        }
+
+        /** The framework or the device starting, stopping, rebooting, or being cleared away. */
+        public static final String LIFECYCLE = "lifecycle";
+        /** A scheduled action firing. */
+        public static final String SCHEDULER = "scheduler";
+        /** Progress of a table's upload. */
+        public static final String SYNC = "sync";
+        /** Study configuration being checked, applied, or reconciled against live settings. */
+        public static final String STUDY = "study";
+        /** Why a sensor is or is not producing data. */
+        public static final String DIAGNOSTICS = "diagnostics";
+        /** A snapshot of the device's connectivity and hardware state. */
+        public static final String CONTEXT = "context";
+        /** The kind a caller that classifies nothing gets, including plugins. */
+        public static final String EVENT = "event";
+    }
+
+    /**
+     * Records a log entry of an unclassified kind. Retained for callers outside this package —
+     * plugins reach aware_log through here.
+     */
     public static void debug(Context c, String message) {
+        debug(c, LogType.EVENT, message);
+    }
+
+    /**
+     * Records a log entry under one of the {@link LogType} kinds.
+     *
+     * Entries are kept only while the device is in a study, since their purpose is the researcher's
+     * compliance record.
+     *
+     * @param type    one of the {@link LogType} values
+     * @param message the entry itself
+     */
+    public static void debug(Context c, String type, String message) {
         //NOTE: only collect this aware_log if in a study for compliance checks
         if (!Aware.isStudy(c)) return;
 
         ContentValues log = new ContentValues();
         log.put(Aware_Provider.Aware_Log.LOG_TIMESTAMP, System.currentTimeMillis());
         log.put(Aware_Provider.Aware_Log.LOG_DEVICE_ID, Aware.getSetting(c, Aware_Preferences.DEVICE_ID));
+        log.put(Aware_Provider.Aware_Log.LOG_TYPE, type);
         log.put(Aware_Provider.Aware_Log.LOG_MESSAGE, message);
 
         if (Aware.DEBUG) Log.d(TAG, "Aware_Log: \n" + log.toString());
@@ -960,7 +1006,7 @@ public class Aware extends Service {
         super.onStartCommand(intent, flags, startId);
 
         // To track the application starting info
-        Aware.debug(getApplicationContext(),"Aware-starting");
+        Aware.debug(getApplicationContext(), LogType.LIFECYCLE, "Aware-starting");
 
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M && ContextCompat.checkSelfPermission(getApplicationContext(), Manifest.permission.WRITE_EXTERNAL_STORAGE) != PackageManager.PERMISSION_GRANTED) {
             Log.w(TAG, "AWARE core not starting: storage permission is missing");
@@ -2738,7 +2784,7 @@ public class Aware extends Service {
                         }
                     }
                     if (intent.getAction().equalsIgnoreCase(Intent.ACTION_BOOT_COMPLETED)) {
-                        Aware.debug(context, "phone: on");
+                        Aware.debug(context, LogType.LIFECYCLE, "phone: on");
                         rowData.put(Battery_Provider.Battery_Data.STATUS, Battery.STATUS_PHONE_BOOTED);
 
                         Intent aware = new Intent(context, Aware.class);
@@ -2748,11 +2794,11 @@ public class Aware extends Service {
                             context.sendBroadcast(new Intent(Aware.ACTION_AWARE_PRIORITY_FOREGROUND));
                     }
                     if (intent.getAction().equalsIgnoreCase(Intent.ACTION_SHUTDOWN)) {
-                        Aware.debug(context, "phone: off");
+                        Aware.debug(context, LogType.LIFECYCLE, "phone: off");
                         rowData.put(Battery_Provider.Battery_Data.STATUS, Battery.STATUS_PHONE_SHUTDOWN);
                     }
                     if (intent.getAction().equalsIgnoreCase(Intent.ACTION_REBOOT)) {
-                        Aware.debug(context, "phone: reboot");
+                        Aware.debug(context, LogType.LIFECYCLE, "phone: reboot");
                         rowData.put(Battery_Provider.Battery_Data.STATUS, Battery.STATUS_PHONE_REBOOT);
                     }
                     if (intent.getAction().equalsIgnoreCase(Intent.ACTION_BOOT_COMPLETED)
@@ -2833,7 +2879,7 @@ public class Aware extends Service {
             complianceStatus.put("location_gps", locationManager.isProviderEnabled(LocationManager.GPS_PROVIDER));
             complianceStatus.put("location_network", locationManager.isProviderEnabled(LocationManager.NETWORK_PROVIDER));
 
-            Aware.debug(context, complianceStatus.toString());
+            Aware.debug(context, LogType.CONTEXT, complianceStatus.toString());
 
         } catch (JSONException e) {
             e.printStackTrace();
@@ -3112,10 +3158,10 @@ public class Aware extends Service {
         // Handle based on whether it's user-initiated or system-initiated closure
         if (isFinishing) {
             // User initiated closure
-            Aware.debug(context, "AWARE interface cleaned from the array of frequently used apps");
+            Aware.debug(context, LogType.LIFECYCLE, "AWARE interface cleaned from the array of frequently used apps");
         } else {
             // System-initiated closure
-            Aware.debug(context, "AWARE interface cleaned by smartphone system");
+            Aware.debug(context, LogType.LIFECYCLE, "AWARE interface cleaned by smartphone system");
         }
     }
 

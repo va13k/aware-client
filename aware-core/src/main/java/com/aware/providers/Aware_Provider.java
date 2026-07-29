@@ -159,6 +159,13 @@ public class Aware_Provider extends ContentProvider {
         public static final String LOG_TIMESTAMP = "timestamp";
         public static final String LOG_DEVICE_ID = "device_id";
         public static final String LOG_MESSAGE = "log_message";
+
+        /**
+         * What kind of record a row is, so the log can be filtered and counted by kind rather than
+         * by matching the text of {@link #LOG_MESSAGE}. See {@link com.aware.Aware.LogType} for the
+         * vocabulary.
+         */
+        public static final String LOG_TYPE = "log_type";
     }
 
     /**
@@ -239,6 +246,7 @@ public class Aware_Provider extends ContentProvider {
             Aware_Log.LOG_ID + " integer primary key autoincrement," +
                     Aware_Log.LOG_TIMESTAMP + " real default 0," +
                     Aware_Log.LOG_DEVICE_ID + " text default ''," +
+                    Aware_Log.LOG_TYPE + " text default ''," +
                     Aware_Log.LOG_MESSAGE + " text default ''",
 
             // Sync markers
@@ -533,6 +541,7 @@ public class Aware_Provider extends ContentProvider {
         logMap.put(Aware_Log.LOG_ID, Aware_Log.LOG_ID);
         logMap.put(Aware_Log.LOG_TIMESTAMP, Aware_Log.LOG_TIMESTAMP);
         logMap.put(Aware_Log.LOG_DEVICE_ID, Aware_Log.LOG_DEVICE_ID);
+        logMap.put(Aware_Log.LOG_TYPE, Aware_Log.LOG_TYPE);
         logMap.put(Aware_Log.LOG_MESSAGE, Aware_Log.LOG_MESSAGE);
 
         syncMarkersMap = new HashMap<>();

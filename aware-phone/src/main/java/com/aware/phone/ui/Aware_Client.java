@@ -2164,10 +2164,10 @@ private void enableAccessibilityService(final Runnable onResolved) {
         if (!isFinishing) {
             if (isBatteryOptimizationIgnored(this, "com.aware.phone")) {
                 Log.d("AWARE-Client", "AWARE stopped from background: may be caused by battery optimization");
-                Aware.debug(this, "AWARE stopped from background: may be caused by battery optimization");
+                Aware.debug(this, Aware.LogType.LIFECYCLE, "AWARE stopped from background: may be caused by battery optimization");
             } else {
                 Log.d("AWARE-Client", "AWARE stopped from background: may be caused by system settings");
-                Aware.debug(this, "AWARE stopped from background: may be caused by system settings");
+                Aware.debug(this, Aware.LogType.LIFECYCLE, "AWARE stopped from background: may be caused by system settings");
             }
         }
         super.onStop();
@@ -2182,7 +2182,7 @@ private void enableAccessibilityService(final Runnable onResolved) {
         // Handle based on whether it's user-initiated or system-initiated closure
         if (isFinishing) {
             // User initiated closure
-            Aware.debug(this, "AWARE interface cleaned from the list of frequently used apps");
+            Aware.debug(this, Aware.LogType.LIFECYCLE, "AWARE interface cleaned from the list of frequently used apps");
         }
         Log.d("AWARE_Client", "AWARE interface cleaned from the list of frequently used apps");
         super.onDestroy();
