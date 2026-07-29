@@ -838,6 +838,18 @@ public class Aware_Client extends Aware_Activity {
         return super.onPreferenceTreeClick(preferenceScreen, preference);
     }
 
+    /**
+     * A millisecond timestamp as time elapsed since it, or {@code absent} when there is no such
+     * timestamp. Android time formatting lives here so the status-text helpers stay pure.
+     *
+     * @param absent what to render for a missing timestamp; null lets the caller's own wording apply
+     */
+    private static CharSequence relativeTimeOr(long timestampMs, String absent) {
+        if (timestampMs <= 0) return absent;
+        return DateUtils.getRelativeTimeSpanString(
+                timestampMs, System.currentTimeMillis(), DateUtils.MINUTE_IN_MILLIS);
+    }
+
     /** Shows whether the given sensor is currently collecting data, and if not, why + what to do. */
     private void showSensorCollectionDialog(PreferenceScreen sensor) {
         boolean accessibilityOn = isAccessibilityServiceEnabled(this, Applications.class);
@@ -851,12 +863,11 @@ public class Aware_Client extends Aware_Activity {
                 SensorCollection.heldConsentsForCategory(
                         getApplicationContext(), activeConfigs, sensor.getKey());
 
-        CharSequence lastData = status.lastDataMs > 0
-                ? DateUtils.getRelativeTimeSpanString(status.lastDataMs, System.currentTimeMillis(),
-                        DateUtils.MINUTE_IN_MILLIS)
-                : "never";
-        StringBuilder msg = new StringBuilder(
-                SensorCollection.statusSummary(status, lastData));
+        StringBuilder msg = new StringBuilder(SensorCollection.statusSummary(
+                status,
+                relativeTimeOr(status.lastDataMs, "never"),
+                relativeTimeOr(SensorCollection.lastDeliveredMs(
+                        getApplicationContext(), sensor.getKey()), null)));
 
         AlertDialog.Builder builder = new AlertDialog.Builder(this)
                 .setTitle(sensor.getTitle())
@@ -914,12 +925,13 @@ public class Aware_Client extends Aware_Activity {
         boolean accessibilityOn = isAccessibilityServiceEnabled(this, Applications.class);
         SensorCollection.Status status =
                 SensorCollection.getStatus(getApplicationContext(), screen.getKey(), accessibilityOn);
-        CharSequence lastData = status.lastDataMs > 0
-                ? DateUtils.getRelativeTimeSpanString(status.lastDataMs, System.currentTimeMillis(),
-                        DateUtils.MINUTE_IN_MILLIS)
-                : "never";
         row.setTitle(SensorCollection.statusHeadline(status));
-        row.setSummary(SensorCollection.statusDetail(status.reason, lastData, status.fixHint));
+        row.setSummary(SensorCollection.statusDetail(
+                status.reason,
+                relativeTimeOr(status.lastDataMs, "never"),
+                relativeTimeOr(SensorCollection.lastDeliveredMs(
+                        getApplicationContext(), screen.getKey()), null),
+                status.fixHint));
 
         // A physical sensor that does not exist can never collect, so its Activate checkbox must not
         // imply otherwise. Keep the screen open for the explanatory status row and other information,

@@ -17,6 +17,7 @@ import androidx.core.content.ContextCompat;
 import com.aware.Applications;
 import com.aware.Aware;
 import com.aware.Aware_Preferences;
+import com.aware.providers.Aware_Provider;
 import com.aware.utils.SensorAvailability;
 import com.aware.utils.SensorFreshness;
 
@@ -191,7 +192,11 @@ public final class SensorCollection {
     }
 
     private static void sampled(
-            String category, String frequencySetting, long defaultValue, SensorFreshness.Unit unit) {
+        String category,
+        String frequencySetting,
+        long defaultValue,
+        SensorFreshness.Unit unit
+    ) {
         SAMPLED.put(category, new SampleDef(frequencySetting, defaultValue, unit));
     }
 
@@ -213,26 +218,40 @@ public final class SensorCollection {
     }
 
     /**
-     * The detail block: why, last data, and what to do. {@code lastData} is the pre-formatted relative
-     * time (or "never"), passed in so this stays free of Android time formatting; {@code fixHint} may
-     * be null.
+     * The detail block: why, what was captured, how much of it has reached the research database,
+     * and what to do.
+     *
+     * {@code lastData} and {@code lastDelivered} are pre-formatted relative times, passed in so this
+     * stays free of Android time formatting. They answer different questions and are shown together
+     * because the gap between them is the interesting part: capture is local, delivery is not, and a
+     * sensor can be collecting perfectly while nothing has left the device. A null
+     * {@code lastDelivered} means nothing has been delivered yet; {@code fixHint} may also be null.
      */
-    public static String statusDetail(String reason, CharSequence lastData, String fixHint) {
+    public static String statusDetail(
+        String reason, CharSequence lastData,
+        CharSequence lastDelivered,
+        String fixHint
+    ) {
         StringBuilder msg = new StringBuilder();
         msg.append(reason);
         msg.append("\n\nLast data: ").append(lastData);
+        msg.append("\nDelivered: ")
+                .append(lastDelivered == null ? "nothing yet" : "up to " + lastDelivered);
         if (fixHint != null) msg.append("\n\nWhat to do: ").append(fixHint);
         return msg.toString();
     }
 
     /** Full multi-line status text (headline + detail), as shown in the sensor status dialog. */
-    public static String statusSummary(boolean collecting, String reason, CharSequence lastData, String fixHint) {
-        return statusHeadline(collecting) + "\n\n" + statusDetail(reason, lastData, fixHint);
+    public static String statusSummary(boolean collecting, String reason, CharSequence lastData,
+                                       CharSequence lastDelivered, String fixHint) {
+        return statusHeadline(collecting) + "\n\n"
+                + statusDetail(reason, lastData, lastDelivered, fixHint);
     }
 
-    public static String statusSummary(Status status, CharSequence lastData) {
+    public static String statusSummary(Status status, CharSequence lastData,
+                                       CharSequence lastDelivered) {
         return statusHeadline(status) + "\n\n"
-                + statusDetail(status.reason, lastData, status.fixHint);
+                + statusDetail(status.reason, lastData, lastDelivered, status.fixHint);
     }
 
     /**
@@ -379,6 +398,39 @@ public final class SensorCollection {
             // Provider missing / not readable — treat as no data.
         } finally {
             if (c != null) c.close();
+        }
+        return 0;
+    }
+
+    /**
+     * How far this sensor's data has reached the research database: the timestamp of the newest row
+     * the server has acknowledged, or 0 when none has been.
+     *
+     * Read from the upload bookmark rather than from the sensor's own table, so it reports what the
+     * server holds and not what the phone captured. The bookmark stores the timestamp of the last
+     * delivered row, not the clock time of the upload, which is why the value is the point the
+     * database has been brought up to.
+     *
+     * @param categoryKey the sensor preference key (e.g. "battery")
+     */
+    public static long lastDeliveredMs(Context context, String categoryKey) {
+        Def def = REGISTRY.get(categoryKey);
+        if (def == null) return 0;
+
+        Cursor marker = null;
+        try {
+            marker = context.getContentResolver().query(
+                    Aware_Provider.Aware_Sync_Markers.CONTENT_URI,
+                    new String[]{Aware_Provider.Aware_Sync_Markers.MARKER_LAST_SYNCED},
+                    Aware_Provider.Aware_Sync_Markers.MARKER_TABLE + "=?",
+                    new String[]{def.table}, null);
+            if (marker != null && marker.moveToFirst()) {
+                return (long) marker.getDouble(0);
+            }
+        } catch (Exception e) {
+            // No bookmark for this table yet — treat as nothing delivered.
+        } finally {
+            if (marker != null) marker.close();
         }
         return 0;
     }
