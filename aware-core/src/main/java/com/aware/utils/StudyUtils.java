@@ -268,30 +268,6 @@ public class StudyUtils extends IntentService {
     private static final int STUDY_PROBE_TIMEOUT_SECONDS = 8;
 
     /**
-     * Returns true when the active password-join study's stored password is being rejected by the
-     * database (an authentication failure, not an unreachable server) — i.e. the researcher rotated
-     * the password and the participant must re-enter it. Only applies to
-     * {@code config_without_password=true} studies; a false-mode config carries its own password.
-     *
-     * @param context   application context
-     * @param newConfig the freshly downloaded study configuration
-     * @return true if a participant re-authentication is required
-     */
-    private static boolean needsPasswordReauth(Context context, JSONObject newConfig) {
-        if (!requiresParticipantPassword(newConfig)) return false;
-        JSONObject dbInfo = newConfig.optJSONObject("database");
-
-        Jdbc.ConnectionResult result = Jdbc.probeConnection(context,
-                dbInfo.optString("database_host", ""),
-                dbInfo.optString("database_port", ""),
-                dbInfo.optString("database_name", ""),
-                dbInfo.optString("database_username", ""),
-                Aware.getSetting(context, Aware_Preferences.DB_PASSWORD),
-                STUDY_PROBE_TIMEOUT_SECONDS);
-        return result == Jdbc.ConnectionResult.AUTH_FAILED;
-    }
-
-    /**
      * Attempts to re-authenticate the active study with a participant-entered password.
      * <p>
      * On {@link Jdbc.ConnectionResult#OK} the password is stored, the pending re-auth flag is
@@ -1196,13 +1172,14 @@ public class StudyUtils extends IntentService {
                 JSONObject localConfig = new JSONObject(study.getString(
                         study.getColumnIndex(Aware_Provider.Aware_Studies.STUDY_CONFIG)));
                 JSONObject newConfig = getStudyConfig(studyUrl);
-                boolean valid = validateStudyConfig(context, newConfig, Aware.getSetting(context, Aware_Preferences.DB_PASSWORD));
-                if (!valid) {
-                    // A password-join study whose stored password is now rejected (an auth failure,
-                    // not an unreachable server) means the researcher rotated the password: flag the
-                    // participant for re-authentication instead of reporting a dead-end config error,
-                    // and skip applying the config until they re-authenticate.
-                    if (needsPasswordReauth(context, newConfig)) {
+                StudyConfigValidation validation = validateStudyConfigDetailed(
+                        context, newConfig, Aware.getSetting(context, Aware_Preferences.DB_PASSWORD));
+                if (!configIsApplicable(validation)) {
+                    // A password-join study whose stored password is rejected or missing means the
+                    // researcher rotated the password: flag the participant for re-authentication
+                    // instead of reporting a dead-end config error, and skip applying the config
+                    // until they re-authenticate.
+                    if (needsParticipantReauth(validation) && requiresParticipantPassword(newConfig)) {
                         Aware.setSetting(context, Aware_Preferences.PENDING_STUDY_REAUTH, studyUrl);
                         Log.w(Aware.TAG, "Study database password rejected; participant re-authentication required.");
                         // Nudge an open UI to prompt immediately instead of only on next app open.
@@ -1210,7 +1187,9 @@ public class StudyUtils extends IntentService {
                         return;
                     }
 
-                    String msg = "Failed to sync study, something is wrong with the config.";
+                    String msg = validation == StudyConfigValidation.AUTH_FAILED
+                            ? "Failed to sync study, the database rejected the study's credentials."
+                            : "Failed to sync study, something is wrong with the config.";
                     Log.e(Aware.TAG, msg);
                     if (toast) {
                         new Handler(Looper.getMainLooper()).post(new Runnable() {
@@ -1238,6 +1217,15 @@ public class StudyUtils extends IntentService {
                 boolean approvalMatches = approved
                         && pendingApprovalMatches(context, newConfig);
                 if (shouldPreviewManualConfigUpdate(
+                if (validation == StudyConfigValidation.UNREACHABLE) {
+                    // Config retrieval and upload connectivity are separate operations, so an
+                    // out-of-reach database does not stop the config applying; the sync adapter
+                    // retries the upload on its own schedule. Recorded as upload health, not as a
+                    // config failure, and deliberately not toasted — the sync runs every minute.
+                    Aware.debug(context, Aware.LogType.STUDY,
+                            "Study config applied while the upload database is unreachable");
+                }
+
                         editable, manual, noActionableDiff, approvalMatches)) {
                     publishConfigUpdatePreview(context, localConfig, newConfig);
                     if (toast) {
@@ -1620,21 +1608,10 @@ public class StudyUtils extends IntentService {
     }
 
     /**
-     * Validates that the study config has the correct JSON schema for AWARE.
-     * It needs to have the keys: "database", "sensors" and "study_info".
-     *
-     * @param context application context
-     * @param config JSON representing a study configuration
-     * @return true if the study config is valid, false otherwise
-     */
-    public static boolean validateStudyConfig(Context context, JSONObject config, String input_password) {
-        return validateStudyConfigDetailed(context, config, input_password) == StudyConfigValidation.OK;
-    }
-
-    /**
-     * Why a study configuration was rejected. A join screen has to tell the participant what to do
-     * about the failure — re-type the password, try again later, or contact the researcher — and the
-     * boolean {@link #validateStudyConfig} returns cannot distinguish those.
+     * Why a study configuration was rejected. Both callers — the join screen and the config sync —
+     * need to tell the failures apart: the join screen has to say what the participant should do
+     * about it (re-type the password, try again later, contact the researcher), and config sync has
+     * to decide whether the configuration is still applicable.
      */
     public enum StudyConfigValidation {
         /** Required schema is present and the database credentials authenticate. */
@@ -1748,6 +1725,26 @@ public class StudyUtils extends IntentService {
      * @param obj1 First JSON object
      * @param obj2 Second JSON object
      * @return true if the objects are equal, false otherwise
+    /**
+     * Whether a downloaded configuration can be applied despite this validation outcome.
+     * {@link StudyConfigValidation#UNREACHABLE} concerns the upload database, not the configuration,
+     * so it does not block. Pure and Context-free so it can be unit-tested without a device.
+     */
+    static boolean configIsApplicable(StudyConfigValidation validation) {
+        return validation == StudyConfigValidation.OK
+                || validation == StudyConfigValidation.UNREACHABLE;
+    }
+
+    /**
+     * Whether this outcome means the participant has to supply a password again, as opposed to a
+     * failure they cannot act on. Both values are reported only after the schema checked out; the
+     * caller still confirms the study expects a participant-supplied password.
+     */
+    static boolean needsParticipantReauth(StudyConfigValidation validation) {
+        return validation == StudyConfigValidation.AUTH_FAILED
+                || validation == StudyConfigValidation.PASSWORD_REQUIRED;
+    }
+
      */
     // Package-private rather than private so StudyUtilsTest (same package, src/test) can call this
     // directly and lock in the NON_EXTENSIBLE regression above without reflection.
