@@ -131,4 +131,68 @@ public class StudyConfigValidationTest {
     public void configWithoutDatabaseNeverRequiresAPassword() {
         assertFalse(StudyUtils.requiresParticipantPassword(new JSONObject()));
     }
+
+    // --- Which outcomes still let a downloaded config be applied ---
+    //
+    // Config retrieval and upload connectivity are separate operations, so a database outage must
+    // not report a valid downloaded config as broken, nor hold every phone on a stale config for
+    // the length of the outage.
+
+    @Test
+    public void aValidConfigIsApplied() {
+        assertTrue(StudyUtils.configIsApplicable(StudyUtils.StudyConfigValidation.OK));
+    }
+
+    @Test
+    public void anUnreachableDatabaseDoesNotBlockApplyingTheConfig() {
+        assertTrue(StudyUtils.configIsApplicable(StudyUtils.StudyConfigValidation.UNREACHABLE));
+    }
+
+    @Test
+    public void aBrokenConfigIsNotApplied() {
+        assertFalse(StudyUtils.configIsApplicable(StudyUtils.StudyConfigValidation.INVALID_CONFIG));
+    }
+
+    @Test
+    public void aRejectedPasswordDoesNotApplyTheConfig() {
+        // The credentials in the config are the ones the upload will use; adopting a config whose
+        // password is actively refused would replace a working stored password with a dead one.
+        assertFalse(StudyUtils.configIsApplicable(StudyUtils.StudyConfigValidation.AUTH_FAILED));
+        assertFalse(StudyUtils.configIsApplicable(StudyUtils.StudyConfigValidation.PASSWORD_REQUIRED));
+    }
+
+    @Test
+    public void everyOutcomeIsClassifiedAsApplicableOrNot() {
+        // A new enum value must be a deliberate decision here rather than silently falling into
+        // "not applicable" and blocking config sync for a reason nobody chose.
+        for (StudyUtils.StudyConfigValidation value : StudyUtils.StudyConfigValidation.values()) {
+            boolean known = value == StudyUtils.StudyConfigValidation.OK
+                    || value == StudyUtils.StudyConfigValidation.UNREACHABLE
+                    || value == StudyUtils.StudyConfigValidation.INVALID_CONFIG
+                    || value == StudyUtils.StudyConfigValidation.AUTH_FAILED
+                    || value == StudyUtils.StudyConfigValidation.PASSWORD_REQUIRED;
+            assertTrue("Unclassified validation outcome: " + value, known);
+        }
+    }
+
+    // --- Which outcomes send the participant back to the password prompt ---
+
+    @Test
+    public void aRejectedOrMissingPasswordPromptsForReauthentication() {
+        assertTrue(StudyUtils.needsParticipantReauth(StudyUtils.StudyConfigValidation.AUTH_FAILED));
+        assertTrue(StudyUtils.needsParticipantReauth(StudyUtils.StudyConfigValidation.PASSWORD_REQUIRED));
+    }
+
+    @Test
+    public void anOutageDoesNotPromptForReauthentication() {
+        // Getting UNREACHABLE wrong here asks the participant to re-type a password that was never
+        // the problem.
+        assertFalse(StudyUtils.needsParticipantReauth(StudyUtils.StudyConfigValidation.UNREACHABLE));
+    }
+
+    @Test
+    public void aBrokenConfigDoesNotPromptForReauthentication() {
+        assertFalse(StudyUtils.needsParticipantReauth(StudyUtils.StudyConfigValidation.INVALID_CONFIG));
+        assertFalse(StudyUtils.needsParticipantReauth(StudyUtils.StudyConfigValidation.OK));
+    }
 }
