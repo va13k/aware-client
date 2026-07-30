@@ -421,7 +421,33 @@ public final class SensorDiagnostics {
         return "";
     }
 
+    /**
+     * The most recent moment this sensor is known to have produced data.
+     *
+     * Taken as the later of the newest local row and the point the upload bookmark says was
+     * delivered. The local table alone is not enough: with {@code webservice_remove_data} on,
+     * acknowledged rows are deleted after upload, so a sensor that is collecting and delivering
+     * normally can hold no local rows at all. Reading only the table then reports 0, which
+     * {@link #stateFor} turns into {@code waiting_first_sample} — a sensor that has been working for
+     * hours described as never having started, in the participant's status text and in the
+     * diagnostics uploaded to the researcher.
+     *
+     * The bookmark is a truthful lower bound: if data up to T reached the database, data existed
+     * at T. It recovers exactly the fact deletion destroyed.
+     */
     private static long latestTimestamp(Context context, Source source) {
+        return observedLatest(newestLocalRow(context, source), deliveredUpTo(context, source.table));
+    }
+
+    /**
+     * Reconciles the two records of when a sensor last produced data. Pure, so the case that caused
+     * the bug — nothing local, something delivered — is covered by a unit test.
+     */
+    static long observedLatest(long newestLocalRow, long deliveredUpTo) {
+        return Math.max(newestLocalRow, deliveredUpTo);
+    }
+
+    private static long newestLocalRow(Context context, Source source) {
         Uri uri = Uri.parse("content://" + context.getPackageName()
                 + source.authoritySuffix + "/" + source.table);
         Cursor cursor = null;
@@ -433,6 +459,28 @@ public final class SensorDiagnostics {
             // Missing/unreadable provider is represented as no sample yet.
         } finally {
             if (cursor != null) cursor.close();
+        }
+        return 0;
+    }
+
+    /**
+     * The timestamp this table's upload bookmark reports as delivered, or 0 when there is none.
+     * A bookmark keyed by a name no longer in use simply yields 0, leaving the local row as the
+     * only evidence — the behaviour before this lookup existed.
+     */
+    private static long deliveredUpTo(Context context, String table) {
+        Cursor marker = null;
+        try {
+            marker = context.getContentResolver().query(
+                    Aware_Provider.Aware_Sync_Markers.CONTENT_URI,
+                    new String[]{Aware_Provider.Aware_Sync_Markers.MARKER_LAST_SYNCED},
+                    Aware_Provider.Aware_Sync_Markers.MARKER_TABLE + "=?",
+                    new String[]{table}, null);
+            if (marker != null && marker.moveToFirst()) return (long) marker.getDouble(0);
+        } catch (Exception ignored) {
+            // No bookmark yet — nothing delivered.
+        } finally {
+            if (marker != null) marker.close();
         }
         return 0;
     }

@@ -384,7 +384,22 @@ public final class SensorCollection {
         return hours + (hours == 1 ? " hour" : " hours");
     }
 
+    /**
+     * The most recent moment this sensor is known to have produced data.
+     *
+     * The later of the newest local row and the point the upload bookmark says was delivered. The
+     * local table alone is not enough: with {@code webservice_remove_data} on, acknowledged rows are
+     * deleted after upload, so a sensor that is collecting and delivering normally can hold no local
+     * rows. Reading only the table then reports "never" beside a delivery time, and drives the status
+     * to "waiting for the first sample" for a sensor that has been working for hours.
+     *
+     * The bookmark is a truthful lower bound: if data up to T reached the database, data existed at T.
+     */
     private static long latestTimestamp(Context context, Def def) {
+        return Math.max(newestLocalRow(context, def), deliveredUpTo(context, def.table));
+    }
+
+    private static long newestLocalRow(Context context, Def def) {
         Uri uri = Uri.parse("content://" + context.getPackageName() + def.authoritySuffix + "/" + def.table);
         Cursor c = null;
         try {
@@ -416,14 +431,18 @@ public final class SensorCollection {
     public static long lastDeliveredMs(Context context, String categoryKey) {
         Def def = REGISTRY.get(categoryKey);
         if (def == null) return 0;
+        return deliveredUpTo(context, def.table);
+    }
 
+    /** The timestamp this table's upload bookmark reports as delivered, or 0 when there is none. */
+    private static long deliveredUpTo(Context context, String table) {
         Cursor marker = null;
         try {
             marker = context.getContentResolver().query(
                     Aware_Provider.Aware_Sync_Markers.CONTENT_URI,
                     new String[]{Aware_Provider.Aware_Sync_Markers.MARKER_LAST_SYNCED},
                     Aware_Provider.Aware_Sync_Markers.MARKER_TABLE + "=?",
-                    new String[]{def.table}, null);
+                    new String[]{table}, null);
             if (marker != null && marker.moveToFirst()) {
                 return (long) marker.getDouble(0);
             }
