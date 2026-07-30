@@ -1,6 +1,7 @@
 package com.aware.utils;
 
 import static org.junit.Assert.assertEquals;
+import static org.junit.Assert.assertFalse;
 import static org.junit.Assert.assertTrue;
 
 import org.junit.Test;
@@ -62,5 +63,39 @@ public class MysqlTlsTest {
     public void storeNameIsAValidFileNameForPrivateStorage() {
         String name = MysqlTls.trustStoreName("7ee0a4481f6b5227d1de4a41424bacab");
         assertTrue(name.matches("[a-z0-9_]+\\.p12"));
+    }
+
+    @Test
+    public void aStudyWithoutAnAuthorityStillEncryptsTheConnection() {
+        // No authority means the server cannot be identified, but the traffic must not travel in the
+        // clear on that account — and the study's account may require TLS regardless.
+        String parameters = MysqlTls.unverifiedParameters();
+        assertTrue(parameters.contains("useSSL=true"));
+        assertTrue(parameters.contains("requireSSL=true"));
+    }
+
+    @Test
+    public void aStudyWithoutAnAuthorityDoesNotClaimToVerify() {
+        assertTrue(MysqlTls.unverifiedParameters().contains("verifyServerCertificate=false"));
+    }
+
+    @Test
+    public void theUnverifiedFragmentNamesNoTrustStore() {
+        // Naming a store while verification is off reads as though the store were being honoured.
+        assertFalse(MysqlTls.unverifiedParameters().contains("trustCertificateKeyStore"));
+    }
+
+    @Test
+    public void bothFragmentsAppendToAUrlThatAlreadyHasAQuery() {
+        assertTrue(MysqlTls.unverifiedParameters().startsWith("&"));
+        assertTrue(MysqlTls.sslParameters(STORE).startsWith("&"));
+    }
+
+    @Test
+    public void theTwoModesDisagreeOnlyOnVerification() {
+        // The difference between a study that publishes an authority and one that does not has to be
+        // verification alone; a fragment that also dropped useSSL would send data in the clear.
+        assertTrue(MysqlTls.sslParameters(STORE).contains("verifyServerCertificate=true"));
+        assertTrue(MysqlTls.unverifiedParameters().contains("verifyServerCertificate=false"));
     }
 }
