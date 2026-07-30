@@ -466,6 +466,11 @@ public class StudyUtils extends IntentService {
                     Aware.setSetting(context, Aware_Preferences.DB_PORT, dbConfig.optInt("database_port", 3306));
                     Aware.setSetting(context, Aware_Preferences.DB_NAME, dbConfig.optString("database_name", ""));
                     Aware.setSetting(context, Aware_Preferences.DB_USERNAME, dbConfig.optString("database_username", ""));
+                    // The authority that signed the research database's certificate, when the study
+                    // publishes one. It belongs to the study rather than to the app, so it arrives
+                    // with the rest of the study's database settings.
+                    Aware.setSetting(context, Aware_Preferences.DB_CA,
+                            dbConfig.optString(Aware_Preferences.DB_CA, ""));
 
                     boolean configWithoutPassword = dbConfig.optBoolean("config_without_password", false);
                     if (!configWithoutPassword) {
