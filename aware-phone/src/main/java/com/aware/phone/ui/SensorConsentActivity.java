@@ -11,6 +11,7 @@ import android.os.Build;
 import android.os.Bundle;
 import android.provider.Settings;
 import android.text.TextUtils;
+import android.util.Log;
 import android.view.LayoutInflater;
 import android.view.View;
 import android.view.ViewGroup;
@@ -524,6 +525,7 @@ public class SensorConsentActivity extends AppCompatActivity {
 
         @Override
         protected void onPreExecute() {
+            if (isFinishing()) return;
             mLoading = new ProgressDialog(SensorConsentActivity.this);
             mLoading.setMessage("Joining study, please wait.");
             mLoading.setCancelable(false);
@@ -548,11 +550,29 @@ public class SensorConsentActivity extends AppCompatActivity {
 
         @Override
         protected void onPostExecute(Void aVoid) {
-            mLoading.dismiss();
+            dismissLoading();
+            // The study is applied by this point regardless of this screen's state. Only navigate
+            // while this screen is still the current one.
+            if (isFinishing()) return;
             Intent mainUI = new Intent(getApplicationContext(), Aware_Client.class);
             mainUI.setFlags(Intent.FLAG_ACTIVITY_NEW_TASK | Intent.FLAG_ACTIVITY_CLEAR_TASK);
             startActivity(mainUI);
             finish();
+        }
+
+        /**
+         * Dismisses the progress dialog if it is still attached. The dialog belongs to the Activity
+         * that started this task, which can be destroyed while the study is being applied;
+         * dismissing a window whose Activity is gone throws IllegalArgumentException.
+         */
+        private void dismissLoading() {
+            if (mLoading == null || !mLoading.isShowing()) return;
+            try {
+                mLoading.dismiss();
+            } catch (IllegalArgumentException e) {
+                Log.d(Aware.TAG, "Consent loader's window was already gone: " + e.getMessage());
+            }
+            mLoading = null;
         }
     }
 }

@@ -113,6 +113,7 @@
             android:name=".ui.SensorConsentActivity"
             android:label="Study permissions"
             android:theme="@style/Theme.Aware"
+            android:configChanges="keyboardHidden|orientation|screenSize"
             android:exported="false">
         </activity>
         <receiver
