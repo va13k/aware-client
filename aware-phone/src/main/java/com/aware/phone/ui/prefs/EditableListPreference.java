@@ -21,7 +21,7 @@ import com.aware.phone.R;
  * which opens a numeric-input dialog, so a value can either be picked from the recommended
  * options or typed by hand.
  *
- * <p>The optional unit shown next to a custom value (e.g. "seconds") comes from the custom
+ * The optional unit shown next to a custom value (e.g. "seconds") comes from the custom
  * {@code customUnit} XML attribute. It deliberately does not use {@code android:dialogMessage}:
  * legacy preference dialogs render a message instead of their choice list, which would hide every
  * preset and the Custom row.</p>

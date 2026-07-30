@@ -45,7 +45,7 @@ public class Jdbc {
     /**
      * Classifies a {@link SQLException} from a connection attempt as an authentication failure or a
      * reachability failure. Pure and side-effect free so it can be unit-tested without a database.
-     * <p>
+     *
      * MySQL signals access-denied with SQLState {@code 28000} and vendor error code {@code 1045};
      * anything else (connect/socket timeout, communications link failure, unknown host, driver
      * errors) is treated as {@link ConnectionResult#UNREACHABLE}. The safe default is
@@ -93,7 +93,7 @@ public class Jdbc {
     /**
      * Probes whether the given credentials can authenticate against the database, on a short-lived
      * connection that fails fast when the host is unreachable.
-     * <p>
+     *
      * Returns a three-state {@link ConnectionResult} so callers can tell a rejected password
      * ({@link ConnectionResult#AUTH_FAILED}) from a down/unreachable server
      * ({@link ConnectionResult#UNREACHABLE}). Connects on its own short-lived connection with
@@ -167,7 +167,7 @@ public class Jdbc {
     /**
      * Best-effort, single-shot insert on a short-lived connection that fails fast when the host is
      * unreachable.
-     * <p>
+     *
      * Unlike {@link #insertData}, this does NOT reuse the shared sync connection and adds bounded
      * {@code connectTimeout}/{@code socketTimeout} query parameters, so an unreachable database
      * fails within roughly {@code timeoutSeconds} instead of hanging on the default TCP timeout.

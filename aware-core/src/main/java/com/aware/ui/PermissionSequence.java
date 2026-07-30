@@ -10,7 +10,7 @@ import java.util.List;
  * another (e.g. COARSE once FINE is allowed) — and, once finished, whether the requesting service may
  * be restarted.
  *
- * <p>Extracted from the Activity so the two rules that matter can be unit-tested without the framework:
+ * Extracted from the Activity so the two rules that matter can be unit-tested without the framework:
  * every permission is prompted at most once and already-granted ones never again, and a denial never
  * asks the caller to restart — the restart-after-denial is exactly what spins the unbreakable "Allow ..."
  * prompt loop this guards against.</p>

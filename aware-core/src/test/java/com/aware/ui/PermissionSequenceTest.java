@@ -19,7 +19,7 @@ import org.junit.Test;
  * most once and in order; and the guard behind the "Allow ..." dialog loop bug — a declined permission
  * must never ask the caller service to restart, since that just relaunches the prompt forever.
  *
- * <p>The OS is faked with a mutable set of granted permissions. Granting a group (e.g. FINE together
+ * The OS is faked with a mutable set of granted permissions. Granting a group (e.g. FINE together
  * with COARSE) is modelled by adding both to that set at once, exactly as the platform reports it.</p>
  */
 public class PermissionSequenceTest {

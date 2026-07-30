@@ -7,7 +7,7 @@ import java.util.regex.Pattern;
  * the log. It does NOT change how credentials are stored or transported (the study configuration
  * still embeds the database password); it only prevents that password from leaking into Logcat,
  * crash reports, support bundles, or connected-device tooling.
- * <p>
+ *
  * The study configuration is logged in several shapes — pretty-printed JSON
  * ({@code JSONObject.toString(indent)}), compact JSON, {@code ContentValues.toString()}, and
  * {@code DatabaseUtils.dumpCursorToString()} — but in every case the secret appears as a JSON

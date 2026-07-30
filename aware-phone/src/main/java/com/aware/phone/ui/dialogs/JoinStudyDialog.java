@@ -88,7 +88,7 @@ public class JoinStudyDialog extends DialogFragment {
 
     /**
      * Everything {@link ValidateStudyConfig} needs to validate one study, in a single object.
-     * <p>
+     *
      * Replaces the old {@code String...} varargs contract: the deeplink and QR-code entry points
      * started the task with the URL alone while the task unconditionally read {@code strings[1]} for
      * the password, so those paths died with {@code ArrayIndexOutOfBoundsException}. A participant
@@ -125,7 +125,7 @@ public class JoinStudyDialog extends DialogFragment {
      * {@code getStudyConfig}, and a scheme-less string would throw {@code IllegalArgumentException}
      * out of OkHttp. {@code aware://} links are rewritten to {@code https://} by
      * {@code Aware_Join_Study} before they reach here.
-     * <p>
+     *
      * Uses {@code java.net.URI} rather than {@code android.net.Uri} so it stays unit-testable, and
      * reads the authority rather than the host because {@code URI} reports a null host for
      * hostnames containing an underscore, which internal study servers do use.

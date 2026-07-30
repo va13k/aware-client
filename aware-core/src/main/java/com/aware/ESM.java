@@ -208,7 +208,7 @@ public class ESM extends Aware_Sensor {
 
     /**
      * Required String extra for displaying an ESM. It should contain the JSON string that defines the ESM dialog.
-     * Examples:<p>
+     * Examples:
      * Free text: [{'esm':{'esm_type':1,'esm_title':'ESM Freetext','esm_instructions':'The user can answer an open ended question.','esm_submit':'Next','esm_expiration_threshold':20,'esm_trigger':'esm trigger example'}}]
      * Radio: [{'esm':{'esm_type':2,'esm_title':'ESM Radio','esm_instructions':'The user can only choose one option','esm_radios':['Option one','Option two','Other'],'esm_submit':'Next','esm_expiration_threshold':30,'esm_trigger':'esm trigger example'}}]
      * Checkbox: [{'esm':{'esm_type':3,'esm_title':'ESM Checkbox','esm_instructions':'The user can choose multiple options','esm_checkboxes':['One','Two','Other'],'esm_submit':'Next','esm_expiration_threshold':40,'esm_trigger':'esm trigger example'}}]

@@ -236,7 +236,7 @@ public class StudyUtils extends IntentService {
     /**
      * Best-effort, fast-failing upload of a single study-exit compliance row to the research
      * database, so the researcher is notified when the database is reachable.
-     * <p>
+     *
      * Leaving a study must never depend on this succeeding: callers un-enroll locally regardless of
      * the result. A {@code false} return means "could not notify" (e.g. the database is gone), not
      * "leave failed".
@@ -268,7 +268,7 @@ public class StudyUtils extends IntentService {
 
     /**
      * Attempts to re-authenticate the active study with a participant-entered password.
-     * <p>
+     *
      * On {@link Jdbc.ConnectionResult#OK} the password is stored, the pending re-auth flag is
      * cleared, and a config sync is triggered so collection resumes with no re-join. On any other
      * result nothing is changed and the outcome is returned so the UI can tell the participant
@@ -1678,7 +1678,7 @@ public class StudyUtils extends IntentService {
 
     /**
      * Validates a study configuration's schema and database credentials, classifying the failure.
-     * <p>
+     *
      * Credentials are checked with {@link Jdbc#probeConnection}, which reports a rejected password
      * separately from an unreachable host, is bounded by {@link #STUDY_PROBE_TIMEOUT_SECONDS} so a
      * dead host cannot stall a join indefinitely, and works on its own short-lived connection.
@@ -1752,7 +1752,7 @@ public class StudyUtils extends IntentService {
     /**
      * Returns the name of the first required study-config field that is absent or empty, or null when
      * the configuration carries everything needed to attempt a database connection.
-     * <p>
+     *
      * Package-private and free of logging, network and Context so it can be unit-tested directly —
      * same reasoning as {@link Jdbc#classify}. Checking the database fields here rather than letting
      * a connection attempt fail on them keeps "the researcher's config is broken" distinguishable
