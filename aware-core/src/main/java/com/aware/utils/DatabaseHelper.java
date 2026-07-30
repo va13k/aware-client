@@ -64,9 +64,22 @@ public class DatabaseHelper extends SQLiteOpenHelper {
         if (DEBUG) Log.w(TAG, "Creating database: " + db.getPath());
         for (int i = 0; i < databaseTables.length; i++) {
             db.execSQL("CREATE TABLE IF NOT EXISTS " + databaseTables[i] + " (" + tableFields[i] + ");");
-            db.execSQL("CREATE INDEX IF NOT EXISTS time_device ON " + databaseTables[i] + " (timestamp, device_id);");
+            createTimeDeviceIndex(db, i);
         }
         db.setVersion(newVersion);
+    }
+
+    /**
+     * Creates the (timestamp, device_id) lookup index for one table, when that table declares both
+     * columns. Tables that declare neither — aware_settings, aware_plugins, aware_sync_markers —
+     * are skipped: indexing a column a table does not have throws, and inside an upgrade that
+     * aborts the whole migration transaction.
+     */
+    private void createTimeDeviceIndex(SQLiteDatabase db, int table) {
+        List<String> declared = declaredColumns(tableFields[table]);
+        if (!declared.contains("timestamp") || !declared.contains("device_id")) return;
+        db.execSQL("CREATE INDEX IF NOT EXISTS time_device ON " + databaseTables[table]
+                + " (timestamp, device_id);");
     }
 
     /**
@@ -126,7 +139,7 @@ public class DatabaseHelper extends SQLiteOpenHelper {
             db.execSQL("ALTER TABLE " + databaseTables[i] + " RENAME TO temp_" + databaseTables[i] + ";");
 
             db.execSQL("CREATE TABLE " + databaseTables[i] + " (" + tableFields[i] + ");");
-            db.execSQL("CREATE INDEX IF NOT EXISTS time_device ON " + databaseTables[i] + " (timestamp, device_id);");
+            createTimeDeviceIndex(db, i);
 
             // The new table is empty at this point, so its shape comes from the definition that
             // created it. Carrying over only the columns both shapes share is what lets a column be
@@ -240,6 +253,21 @@ public class DatabaseHelper extends SQLiteOpenHelper {
             }
             return database;
         } catch (Exception e) {
+            // A rolled-back migration leaves the old schema and version in place, so later callers
+            // read a database that disagrees with the provider's columns.
+            Log.e(TAG, "Failed to open " + databaseName + " at version " + newVersion
+                    + "; the schema migration was rolled back: "
+                    + e.getClass().getName() + ": " + e.getMessage());
+            // The cache check at the top returns without consulting the version, so this handle has
+            // to go: it points at the un-migrated schema.
+            if (database != null) {
+                try {
+                    database.close();
+                } catch (Exception ignored) {
+                    // Already unusable.
+                }
+                database = null;
+            }
             return null;
         }
     }
