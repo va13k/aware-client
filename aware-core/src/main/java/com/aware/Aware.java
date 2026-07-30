@@ -252,6 +252,17 @@ public class Aware extends Service {
     public static final int AWARE_BATTERY_OPTIMIZATION_ID = 567567;
 
     /**
+     * "The study needs your password" notification. Its own id, so re-authenticating cancels it
+     * without disturbing any other AWARE notification.
+     */
+    public static final int AWARE_STUDY_REAUTH_NOTIFICATION_ID = 567568;
+
+    /**
+     * "The study changed" notification. Its own id: notifications sharing one id replace each other.
+     */
+    public static final int AWARE_STUDY_UPDATE_NOTIFICATION_ID = 567569;
+
+    /**
      * Holds a reference to the AWARE account, automatically restore in each plugin.
      */
     private static Account aware_account;

@@ -23,7 +23,6 @@ import android.os.Looper;
 import android.util.Log;
 import android.widget.Toast;
 
-import com.aware.Applications;
 import com.aware.Aware;
 import com.aware.Aware_Preferences;
 import com.aware.ESM;
@@ -338,6 +337,9 @@ public class StudyUtils extends IntentService {
         if (result == Jdbc.ConnectionResult.OK) {
             Aware.setSetting(context, Aware_Preferences.DB_PASSWORD, newPassword);
             Aware.setSetting(context, Aware_Preferences.PENDING_STUDY_REAUTH, "");
+            // Re-authenticated inside the app, so the notification was never tapped and
+            // setAutoCancel did not fire. Collection has resumed; clear it.
+            cancelStudyNotification(context, Aware.AWARE_STUDY_REAUTH_NOTIFICATION_ID);
             // Audit the recovery for the researcher: the data gap was the live signal; this row is
             // the record, uploaded now that the credentials are valid again.
             if (resumedRow != null) {
@@ -1184,6 +1186,14 @@ public class StudyUtils extends IntentService {
                         Log.w(Aware.TAG, "Study database password rejected; participant re-authentication required.");
                         // Nudge an open UI to prompt immediately instead of only on next app open.
                         context.sendBroadcast(new Intent(Aware.ACTION_AWARE_STUDY_REAUTH_REQUIRED));
+                        // The broadcast only reaches a running Aware_Client, and syncs run on their
+                        // own schedule with the app closed. The notification is what tells the
+                        // participant collection is paused while they are not in the app.
+                        postStudyNotification(context, Aware.AWARE_STUDY_REAUTH_NOTIFICATION_ID,
+                                R.string.aware_notif_study_reauth_title,
+                                R.string.aware_notif_study_reauth);
+                        Aware.debug(context, Aware.LogType.STUDY,
+                                "Notified the participant that the study password is required");
                         return;
                     }
 
@@ -1202,6 +1212,15 @@ public class StudyUtils extends IntentService {
                     return;
                 }
 
+                if (validation == StudyConfigValidation.UNREACHABLE) {
+                    // Config retrieval and upload connectivity are separate operations, so an
+                    // out-of-reach database does not stop the config applying; the sync adapter
+                    // retries the upload on its own schedule. Recorded as upload health, not as a
+                    // config failure, and deliberately not toasted — the sync runs every minute.
+                    Aware.debug(context, Aware.LogType.STUDY,
+                            "Study config applied while the upload database is unreachable");
+                }
+
                 boolean configsEqual = jsonEquals(localConfig, newConfig);
                 // A server change the participant can never act on — one confined to sensors whose
                 // hardware this device lacks — must not keep re-triggering the manual "study update
@@ -1217,15 +1236,6 @@ public class StudyUtils extends IntentService {
                 boolean approvalMatches = approved
                         && pendingApprovalMatches(context, newConfig);
                 if (shouldPreviewManualConfigUpdate(
-                if (validation == StudyConfigValidation.UNREACHABLE) {
-                    // Config retrieval and upload connectivity are separate operations, so an
-                    // out-of-reach database does not stop the config applying; the sync adapter
-                    // retries the upload on its own schedule. Recorded as upload health, not as a
-                    // config failure, and deliberately not toasted — the sync runs every minute.
-                    Aware.debug(context, Aware.LogType.STUDY,
-                            "Study config applied while the upload database is unreachable");
-                }
-
                         editable, manual, noActionableDiff, approvalMatches)) {
                     publishConfigUpdatePreview(context, localConfig, newConfig);
                     if (toast) {
@@ -1363,29 +1373,64 @@ public class StudyUtils extends IntentService {
 
                 // TODO RIO: Update last sync date
 
-                // Notify the user that study config has been updated
-                Intent intent = new Intent()
-                        .setComponent(new ComponentName("com.aware.phone", "com.aware.phone.ui.Aware_Client"))
-                        .setFlags(Intent.FLAG_ACTIVITY_NEW_TASK | Intent.FLAG_ACTIVITY_CLEAR_TASK);
-                PendingIntent clickIntent = PendingIntent.getActivity(context, 0, intent, 0);
-
-                NotificationCompat.Builder builder = new NotificationCompat.Builder(context, Aware.AWARE_NOTIFICATION_CHANNEL_GENERAL)
-                        .setChannelId(Aware.AWARE_NOTIFICATION_CHANNEL_GENERAL)
-                        .setContentIntent(clickIntent)
-                        .setSmallIcon(R.drawable.ic_stat_aware_accessibility)
-                        .setAutoCancel(true)
-                        .setContentTitle(context.getResources().getString(R.string.aware_notif_study_sync_title))
-                        .setContentText(context.getResources().getString(R.string.aware_notif_study_sync));
-                builder = Aware.setNotificationProperties(builder, Aware.AWARE_NOTIFICATION_IMPORTANCE_GENERAL);
-
-                NotificationManager notManager = (NotificationManager) context.getSystemService(Context.NOTIFICATION_SERVICE);
-                notManager.notify(Applications.ACCESSIBILITY_NOTIFICATION_ID, builder.build());
+                // Notify only for a change the participant can act on. Frequency- and
+                // threshold-only updates produce no entry in the curated diff, so a notification
+                // about them would open an empty summary. Newly added consent sensors get their own
+                // wording: they stay uncollected until the participant agrees.
+                if (hasCuratedChanges) {
+                    postStudyNotification(context, Aware.AWARE_STUDY_UPDATE_NOTIFICATION_ID,
+                            R.string.aware_notif_study_update_title,
+                            added.isEmpty()
+                                    ? R.string.aware_notif_study_update_sensors
+                                    : R.string.aware_notif_study_update_consent);
+                }
             } catch (JSONException e) {
                 e.printStackTrace();
             } finally {
                 study.close();
             }
         }
+    }
+
+    /**
+     * Posts a study notification that opens the app when tapped. Shared by every participant-facing
+     * study alert so channel, importance and tap target stay consistent; each caller passes its own
+     * notification id. {@code setAutoCancel} clears it on tap — an alert resolved inside the app is
+     * cleared by {@link #cancelStudyNotification} instead.
+     */
+    private static void postStudyNotification(Context context, int notificationId,
+                                              int titleRes, int textRes) {
+        Intent open = new Intent()
+                .setComponent(new ComponentName("com.aware.phone", "com.aware.phone.ui.Aware_Client"))
+                .setFlags(Intent.FLAG_ACTIVITY_NEW_TASK | Intent.FLAG_ACTIVITY_CLEAR_TASK);
+        // A distinct request code per notification: PendingIntents matching on everything but extras
+        // are deduplicated, so a shared code would give both alerts one tap target.
+        PendingIntent clickIntent = PendingIntent.getActivity(context, notificationId, open,
+                PendingIntent.FLAG_UPDATE_CURRENT | PendingIntent.FLAG_IMMUTABLE);
+
+        NotificationCompat.Builder builder =
+                new NotificationCompat.Builder(context, Aware.AWARE_NOTIFICATION_CHANNEL_GENERAL)
+                        .setChannelId(Aware.AWARE_NOTIFICATION_CHANNEL_GENERAL)
+                        .setContentIntent(clickIntent)
+                        .setSmallIcon(R.drawable.ic_stat_aware_accessibility)
+                        .setAutoCancel(true)
+                        .setContentTitle(context.getResources().getString(titleRes))
+                        .setContentText(context.getResources().getString(textRes))
+                        .setStyle(new NotificationCompat.BigTextStyle()
+                                .bigText(context.getResources().getString(textRes)));
+        builder = Aware.setNotificationProperties(
+                builder, Aware.AWARE_NOTIFICATION_IMPORTANCE_GENERAL);
+
+        NotificationManager notManager =
+                (NotificationManager) context.getSystemService(Context.NOTIFICATION_SERVICE);
+        if (notManager != null) notManager.notify(notificationId, builder.build());
+    }
+
+    /** Removes a study notification whose condition has been resolved inside the app. */
+    private static void cancelStudyNotification(Context context, int notificationId) {
+        NotificationManager notManager =
+                (NotificationManager) context.getSystemService(Context.NOTIFICATION_SERVICE);
+        if (notManager != null) notManager.cancel(notificationId);
     }
 
     static boolean shouldSkipAutomaticConfigSync(boolean editable, boolean manual) {
@@ -1675,6 +1720,26 @@ public class StudyUtils extends IntentService {
         }
     }
 
+    /**
+     * Whether a downloaded configuration can be applied despite this validation outcome.
+     * {@link StudyConfigValidation#UNREACHABLE} concerns the upload database, not the configuration,
+     * so it does not block. Pure and Context-free so it can be unit-tested without a device.
+     */
+    static boolean configIsApplicable(StudyConfigValidation validation) {
+        return validation == StudyConfigValidation.OK
+                || validation == StudyConfigValidation.UNREACHABLE;
+    }
+
+    /**
+     * Whether this outcome means the participant has to supply a password again, as opposed to a
+     * failure they cannot act on. Both values are reported only after the schema checked out; the
+     * caller still confirms the study expects a participant-supplied password.
+     */
+    static boolean needsParticipantReauth(StudyConfigValidation validation) {
+        return validation == StudyConfigValidation.AUTH_FAILED
+                || validation == StudyConfigValidation.PASSWORD_REQUIRED;
+    }
+
     /** Database fields that must be present before a connection attempt is even worth making. */
     private static final String[] REQUIRED_DATABASE_FIELDS = {
             "database_host", "database_port", "database_name", "database_username"};
@@ -1725,26 +1790,6 @@ public class StudyUtils extends IntentService {
      * @param obj1 First JSON object
      * @param obj2 Second JSON object
      * @return true if the objects are equal, false otherwise
-    /**
-     * Whether a downloaded configuration can be applied despite this validation outcome.
-     * {@link StudyConfigValidation#UNREACHABLE} concerns the upload database, not the configuration,
-     * so it does not block. Pure and Context-free so it can be unit-tested without a device.
-     */
-    static boolean configIsApplicable(StudyConfigValidation validation) {
-        return validation == StudyConfigValidation.OK
-                || validation == StudyConfigValidation.UNREACHABLE;
-    }
-
-    /**
-     * Whether this outcome means the participant has to supply a password again, as opposed to a
-     * failure they cannot act on. Both values are reported only after the schema checked out; the
-     * caller still confirms the study expects a participant-supplied password.
-     */
-    static boolean needsParticipantReauth(StudyConfigValidation validation) {
-        return validation == StudyConfigValidation.AUTH_FAILED
-                || validation == StudyConfigValidation.PASSWORD_REQUIRED;
-    }
-
      */
     // Package-private rather than private so StudyUtilsTest (same package, src/test) can call this
     // directly and lock in the NON_EXTENSIBLE regression above without reflection.

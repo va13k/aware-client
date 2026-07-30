@@ -24,6 +24,11 @@
     <string name="aware_battery_recharge">Please, recharge your phone as soon as possible.</string>
     <string name="aware_notif_study_sync_title">Study Sync</string>
     <string name="aware_notif_study_sync">Your study configuration was updated.</string>
+    <string name="aware_notif_study_reauth_title">Study password required</string>
+    <string name="aware_notif_study_reauth">Data collection is paused. Tap to enter the study password.</string>
+    <string name="aware_notif_study_update_title">Your study changed</string>
+    <string name="aware_notif_study_update_consent">New sensors need your consent. Tap to review what the study collects.</string>
+    <string name="aware_notif_study_update_sensors">Tap to see which sensors changed.</string>
     <string name="aware_join_study_link">Join Study by link</string>
     <string name="aware_team">Team</string>
     <string name="aware_qrcode">QRCode</string>
