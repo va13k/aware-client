@@ -80,4 +80,56 @@ public class DatabaseHelperColumnsTest {
             assertFalse(column + " carries more than a name", column.contains(" "));
         }
     }
+
+    // --- Which tables can carry the (timestamp, device_id) index ---
+    //
+    // Indexing a column a table does not declare throws, and inside an upgrade that aborts the
+    // whole migration transaction, leaving the schema a version behind the code querying it.
+
+    /** Mirrors the guard in DatabaseHelper.createTimeDeviceIndex. */
+    private static boolean indexable(String fields) {
+        List<String> declared = DatabaseHelper.declaredColumns(fields);
+        return declared.contains("timestamp") && declared.contains("device_id");
+    }
+
+    @Test
+    public void tablesWithoutTimestampOrDeviceIdAreNotIndexed() {
+        // Named individually so that giving one of them a timestamp is a deliberate decision here
+        // rather than a silent flip.
+        for (String table : new String[]{"aware_settings", "aware_plugins", "aware_sync_markers"}) {
+            int i = indexOf(table);
+            assertFalse(table + " declares no timestamp/device_id and must not be indexed",
+                    indexable(Aware_Provider.TABLES_FIELDS[i]));
+        }
+    }
+
+    @Test
+    public void tablesWithBothColumnsAreStillIndexed() {
+        // The guard must not cost the tables that do benefit from the index.
+        for (String table : new String[]{"aware_device", "aware_studies", "aware_log"}) {
+            int i = indexOf(table);
+            assertTrue(table + " declares both columns and should be indexed",
+                    indexable(Aware_Provider.TABLES_FIELDS[i]));
+        }
+    }
+
+    @Test
+    public void noTableIsIndexedOnAColumnItDoesNotDeclare() {
+        // The general invariant, so a table added later cannot reintroduce the failure.
+        for (int i = 0; i < Aware_Provider.TABLES_FIELDS.length; i++) {
+            if (!indexable(Aware_Provider.TABLES_FIELDS[i])) continue;
+            List<String> declared = DatabaseHelper.declaredColumns(Aware_Provider.TABLES_FIELDS[i]);
+            assertTrue(Aware_Provider.DATABASE_TABLES[i] + " missing timestamp",
+                    declared.contains("timestamp"));
+            assertTrue(Aware_Provider.DATABASE_TABLES[i] + " missing device_id",
+                    declared.contains("device_id"));
+        }
+    }
+
+    private static int indexOf(String table) {
+        for (int i = 0; i < Aware_Provider.DATABASE_TABLES.length; i++) {
+            if (Aware_Provider.DATABASE_TABLES[i].equals(table)) return i;
+        }
+        throw new IllegalArgumentException("No such declared table: " + table);
+    }
 }
