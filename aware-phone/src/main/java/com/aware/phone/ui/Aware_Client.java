@@ -65,6 +65,7 @@ import com.aware.ui.PermissionsHandler;
 import com.aware.utils.SensorAvailability;
 import com.aware.utils.Jdbc;
 import com.aware.utils.StudyUtils;
+import com.aware.utils.UploadHealth;
 import com.aware.ScreenShot;
 
 import org.json.JSONArray;
@@ -1502,6 +1503,28 @@ private void enableAccessibilityService(final Runnable onResolved) {
     }
 
     /**
+     * Fills in the Device section's delivery line: how far the research database has been brought up
+     * to, and whether delivery is currently failing.
+     *
+     * Shown here because the per-sensor delivery detail is one tap into each sensor, so a phone that
+     * has stopped delivering everything looks normal from the list. The pending-record count is not
+     * passed: it would mean counting rows in every provider on the main thread, and the line reads
+     * correctly without it.
+     */
+    private void showDataDeliveryStatus() {
+        Preference delivery = findPreference("data_delivery");
+        if (delivery == null) return;
+
+        long deliveredUpTo = UploadHealth.deliveredUpToMs(this);
+        boolean failing = UploadHealth.outageSince(this) > 0;
+        CharSequence relative = deliveredUpTo > 0
+                ? DateUtils.getRelativeTimeSpanString(deliveredUpTo, System.currentTimeMillis(),
+                        DateUtils.MINUTE_IN_MILLIS)
+                : null;
+        delivery.setSummary(UploadHealth.statusLine(relative, failing, 0));
+    }
+
+    /**
      * Prompts for the accessibility service and the OS-level Location toggle the joined study needs,
      * one dialog at a time. When both are needed the accessibility prompt is shown first and the
      * Location prompt follows only once it is dismissed, so the two non-cancelable dialogs are never
@@ -2050,6 +2073,8 @@ private void enableAccessibilityService(final Runnable onResolved) {
             } catch (PackageManager.NameNotFoundException e) {
                 e.printStackTrace();
             }
+
+            showDataDeliveryStatus();
 
             // Prompt for the accessibility service and the OS-level Location toggle the joined study
             // needs. Shown as in-app dialogs (no tray notification) so the request is contextual and

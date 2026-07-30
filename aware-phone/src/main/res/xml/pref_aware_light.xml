@@ -23,6 +23,11 @@
             android:selectable="false"
             android:summary="%s"
             android:title="AWARE version" />
+        <Preference
+            android:key="data_delivery"
+            android:persistent="false"
+            android:selectable="false"
+            android:title="Data delivery" />
 <!--        <CheckBoxPreference-->
 <!--            android:defaultValue="false"-->
 <!--            android:key="aware_donate_usage"-->
