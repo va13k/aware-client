@@ -263,6 +263,12 @@ public class Aware extends Service {
     public static final int AWARE_STUDY_UPDATE_NOTIFICATION_ID = 567569;
 
     /**
+     * "Data has not been delivered for a long time" notification. Posted once per outage and
+     * cancelled when delivery recovers, so it needs an id of its own.
+     */
+    public static final int AWARE_UPLOAD_HEALTH_NOTIFICATION_ID = 567570;
+
+    /**
      * Holds a reference to the AWARE account, automatically restore in each plugin.
      */
     private static Account aware_account;

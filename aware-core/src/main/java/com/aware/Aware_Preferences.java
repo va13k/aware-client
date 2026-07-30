@@ -665,6 +665,18 @@ public class Aware_Preferences {
     public static final String PENDING_STUDY_REAUTH = "pending_study_reauth";
 
     /**
+     * When the current delivery outage began, or 0 while delivery is healthy. Held as a start time
+     * rather than a failure count so one outage is one fact however many tables report it.
+     */
+    public static final String UPLOAD_OUTAGE_SINCE = "upload_outage_since";
+
+    /** Short, non-sensitive reason the current outage was first recorded with; empty when healthy. */
+    public static final String UPLOAD_OUTAGE_REASON = "upload_outage_reason";
+
+    /** Whether the participant has already been notified about the current outage. */
+    public static final String UPLOAD_OUTAGE_NOTIFIED = "upload_outage_notified";
+
+    /**
      * Signature of the last detected mismatch between live sensor settings and the study config
      * that StudyUtils.syncStudyConfig() attempted to self-heal (empty string = none). Used to avoid
      * re-applying settings on every sync poll when the drift can't actually be fixed (e.g. a sensor

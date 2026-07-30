@@ -1403,8 +1403,8 @@ public class StudyUtils extends IntentService {
      * notification id. {@code setAutoCancel} clears it on tap — an alert resolved inside the app is
      * cleared by {@link #cancelStudyNotification} instead.
      */
-    private static void postStudyNotification(Context context, int notificationId,
-                                              int titleRes, int textRes) {
+    static void postStudyNotification(Context context, int notificationId,
+                                      int titleRes, int textRes) {
         Intent open = new Intent()
                 .setComponent(new ComponentName("com.aware.phone", "com.aware.phone.ui.Aware_Client"))
                 .setFlags(Intent.FLAG_ACTIVITY_NEW_TASK | Intent.FLAG_ACTIVITY_CLEAR_TASK);
@@ -1432,7 +1432,7 @@ public class StudyUtils extends IntentService {
     }
 
     /** Removes a study notification whose condition has been resolved inside the app. */
-    private static void cancelStudyNotification(Context context, int notificationId) {
+    static void cancelStudyNotification(Context context, int notificationId) {
         NotificationManager notManager =
                 (NotificationManager) context.getSystemService(Context.NOTIFICATION_SERVICE);
         if (notManager != null) notManager.cancel(notificationId);
