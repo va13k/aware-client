@@ -55,14 +55,15 @@
                 android:summary="%s"
                 android:title="Sampling rate" />
 
-            <EditTextPreference
+            <ListPreference
                 android:defaultValue="0"
                 android:dependency="status_accelerometer"
-                android:inputType="numberDecimal"
+                android:entries="@array/motion_threshold_readable"
+                android:entryValues="@array/motion_threshold_values"
                 android:key="threshold_accelerometer"
                 android:persistent="true"
-                android:summary="e.g., log only if [x,y,z] >= 0.01"
-                android:title="Sensitivity (0 = disabled)" />
+                android:summary="%s"
+                android:title="Sensitivity" />
 
             <CheckBoxPreference
                 android:defaultValue="false"
@@ -162,14 +163,15 @@
                 android:summary="%s"
                 android:title="Sampling rate" />
 
-            <EditTextPreference
+            <ListPreference
                 android:defaultValue="0"
                 android:dependency="status_barometer"
-                android:inputType="numberDecimal"
+                android:entries="@array/barometer_threshold_readable"
+                android:entryValues="@array/barometer_threshold_values"
                 android:key="threshold_barometer"
                 android:persistent="true"
-                android:summary="e.g., log only if [x,y,z] >= 0.01"
-                android:title="Sensitivity (0 = disabled)" />
+                android:summary="%s"
+                android:title="Sensitivity" />
 
             <CheckBoxPreference
                 android:defaultValue="false"
@@ -267,14 +269,15 @@
                 android:summary="%s"
                 android:title="Sampling rate" />
 
-            <EditTextPreference
+            <ListPreference
                 android:defaultValue="0"
                 android:dependency="status_gravity"
-                android:inputType="numberDecimal"
+                android:entries="@array/gravity_threshold_readable"
+                android:entryValues="@array/gravity_threshold_values"
                 android:key="threshold_gravity"
                 android:persistent="true"
-                android:summary="e.g., log only if [x,y,z] >= 0.01"
-                android:title="Sensitivity (0 = disabled)" />
+                android:summary="%s"
+                android:title="Sensitivity" />
 
             <CheckBoxPreference
                 android:defaultValue="false"
@@ -306,14 +309,15 @@
                 android:summary="%s"
                 android:title="Sampling rate" />
 
-            <EditTextPreference
+            <ListPreference
                 android:defaultValue="0"
                 android:dependency="status_gyroscope"
-                android:inputType="numberDecimal"
+                android:entries="@array/gyroscope_threshold_readable"
+                android:entryValues="@array/gyroscope_threshold_values"
                 android:key="threshold_gyroscope"
                 android:persistent="true"
-                android:summary="e.g., log only if [x,y,z] >= 0.01"
-                android:title="Sensitivity (0 = disabled)" />
+                android:summary="%s"
+                android:title="Sensitivity" />
 
             <CheckBoxPreference
                 android:defaultValue="false"
@@ -425,14 +429,15 @@
                 android:summary="%s"
                 android:title="Sampling rate" />
 
-            <EditTextPreference
+            <ListPreference
                 android:defaultValue="0"
                 android:dependency="status_light"
-                android:inputType="numberDecimal"
+                android:entries="@array/light_threshold_readable"
+                android:entryValues="@array/light_threshold_values"
                 android:key="threshold_light"
                 android:persistent="true"
-                android:summary="e.g., log only if [x,y,z] >= 0.01"
-                android:title="Sensitivity (0 = disabled)" />
+                android:summary="%s"
+                android:title="Sensitivity" />
 
             <CheckBoxPreference
                 android:defaultValue="false"
@@ -464,14 +469,15 @@
                 android:summary="%s"
                 android:title="Sampling rate" />
 
-            <EditTextPreference
+            <ListPreference
                 android:defaultValue="0"
                 android:dependency="status_linear_accelerometer"
-                android:inputType="numberDecimal"
+                android:entries="@array/motion_threshold_readable"
+                android:entryValues="@array/motion_threshold_values"
                 android:key="threshold_linear_accelerometer"
                 android:persistent="true"
-                android:summary="e.g., log only if [x,y,z] >= 0.01"
-                android:title="Sensitivity (0 = disabled)" />
+                android:summary="%s"
+                android:title="Sensitivity" />
 
             <CheckBoxPreference
                 android:defaultValue="false"
@@ -524,14 +530,15 @@
                 android:summary="%s"
                 android:title="Sampling rate" />
 
-            <EditTextPreference
+            <ListPreference
                 android:defaultValue="0"
                 android:dependency="status_magnetometer"
-                android:inputType="numberDecimal"
+                android:entries="@array/magnetometer_threshold_readable"
+                android:entryValues="@array/magnetometer_threshold_values"
                 android:key="threshold_magnetometer"
                 android:persistent="true"
-                android:summary="e.g., log only if [x,y,z] >= 0.01"
-                android:title="Sensitivity (0 = disabled)" />
+                android:summary="%s"
+                android:title="Sensitivity" />
 
             <CheckBoxPreference
                 android:defaultValue="false"
@@ -597,14 +604,15 @@
                 android:summary="%s"
                 android:title="Sampling rate" />
 
-            <EditTextPreference
+            <ListPreference
                 android:defaultValue="0"
                 android:dependency="status_proximity"
-                android:inputType="numberDecimal"
+                android:entries="@array/proximity_threshold_readable"
+                android:entryValues="@array/proximity_threshold_values"
                 android:key="threshold_proximity"
                 android:persistent="true"
-                android:summary="e.g., log only if [x,y,z] >= 0.01"
-                android:title="Sensitivity (0 = disabled)" />
+                android:summary="%s"
+                android:title="Sensitivity" />
 
             <CheckBoxPreference
                 android:defaultValue="false"
@@ -636,14 +644,15 @@
                 android:summary="%s"
                 android:title="Sampling rate" />
 
-            <EditTextPreference
+            <ListPreference
                 android:defaultValue="0"
                 android:dependency="status_rotation"
-                android:inputType="numberDecimal"
+                android:entries="@array/rotation_threshold_readable"
+                android:entryValues="@array/rotation_threshold_values"
                 android:key="threshold_rotation"
                 android:persistent="true"
-                android:summary="e.g., log only if [x,y,z] >= 0.01"
-                android:title="Sensitivity (0 = disabled)" />
+                android:summary="%s"
+                android:title="Sensitivity" />
 
             <CheckBoxPreference
                 android:defaultValue="false"
@@ -718,14 +727,15 @@
                 android:summary="%s"
                 android:title="Sampling rate" />
 
-            <EditTextPreference
+            <ListPreference
                 android:defaultValue="0"
                 android:dependency="status_temperature"
-                android:inputType="numberDecimal"
+                android:entries="@array/temperature_threshold_readable"
+                android:entryValues="@array/temperature_threshold_values"
                 android:key="threshold_temperature"
                 android:persistent="true"
-                android:summary="e.g., log only if [x,y,z] >= 0.01"
-                android:title="Sensitivity (0 = disabled)" />
+                android:summary="%s"
+                android:title="Sensitivity" />
 
             <CheckBoxPreference
                 android:defaultValue="false"

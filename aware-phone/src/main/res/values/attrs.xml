@@ -8,6 +8,10 @@
         <attr name="customValueFormat">
             <enum name="storedValue" value="0" />
             <enum name="samplingRateHz" value="1" />
+            <!-- A decimal value stored as typed, validated against the usable range of the
+                 preference's setting key. Used by the sensitivity thresholds, whose values are
+                 fractions of a unit and whose upper limit differs per sensor. -->
+            <enum name="sensorThreshold" value="2" />
         </attr>
     </declare-styleable>
 </resources>

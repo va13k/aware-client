@@ -15,6 +15,7 @@ import android.widget.LinearLayout;
 import android.widget.TextView;
 
 import com.aware.phone.R;
+import com.aware.utils.SensorThresholds;
 
 /**
  * A {@link ListPreference} that offers the curated preset values AND a "Custom…" entry
@@ -31,6 +32,7 @@ public class EditableListPreference extends ListPreference {
     private static final String CUSTOM_LABEL = "Custom value…";
     private static final int FORMAT_STORED_VALUE = 0;
     private static final int FORMAT_SAMPLING_RATE_HZ = 1;
+    private static final int FORMAT_SENSOR_THRESHOLD = 2;
     private final String customUnit;
     private final int customValueFormat;
 
@@ -44,7 +46,15 @@ public class EditableListPreference extends ListPreference {
         values.recycle();
     }
 
+    /**
+     * A threshold's unit comes from its setting key rather than the XML, so the unit and the
+     * usable range are stated in one place instead of once per sensor in two preference files.
+     */
     private CharSequence unit() {
+        if (customValueFormat == FORMAT_SENSOR_THRESHOLD) {
+            SensorThresholds.Spec spec = SensorThresholds.of(getKey());
+            if (spec != null) return spec.unit;
+        }
         return customUnit;
     }
 
@@ -81,9 +91,9 @@ public class EditableListPreference extends ListPreference {
 
     private void showCustomDialog() {
         final EditText input = new EditText(getContext());
-        input.setInputType(customValueFormat == FORMAT_SAMPLING_RATE_HZ
-                ? InputType.TYPE_CLASS_NUMBER | InputType.TYPE_NUMBER_FLAG_DECIMAL
-                : InputType.TYPE_CLASS_NUMBER);
+        input.setInputType(customValueFormat == FORMAT_STORED_VALUE
+                ? InputType.TYPE_CLASS_NUMBER
+                : InputType.TYPE_CLASS_NUMBER | InputType.TYPE_NUMBER_FLAG_DECIMAL);
         if (!TextUtils.isEmpty(unit())) input.setHint(unit());
         String current = displayValue(getValue());
         if (!TextUtils.isEmpty(current)) {
@@ -95,6 +105,8 @@ public class EditableListPreference extends ListPreference {
                 .setTitle(getDialogTitle() != null ? getDialogTitle() : getTitle());
         if (customValueFormat == FORMAT_SAMPLING_RATE_HZ) {
             customDialog.setView(samplingRateInput(input));
+        } else if (customValueFormat == FORMAT_SENSOR_THRESHOLD) {
+            customDialog.setView(thresholdInput(input));
         } else {
             customDialog.setView(input);
         }
@@ -115,6 +127,35 @@ public class EditableListPreference extends ListPreference {
     }
 
     private LinearLayout samplingRateInput(final EditText input) {
+        return annotatedInput(input, "Hz means samples per second.", new Annotation() {
+            @Override
+            public void describe(TextView target, String value) {
+                updateSamplingRateConversion(target, value);
+            }
+        });
+    }
+
+    private LinearLayout thresholdInput(final EditText input) {
+        SensorThresholds.Spec spec = SensorThresholds.of(getKey());
+        String intro = spec == null
+                ? "A reading is stored only when it changed by at least this much."
+                : "A reading is stored only when it differs from the last stored reading by at"
+                        + " least this much, in " + spec.unit + ".";
+        return annotatedInput(input, intro, new Annotation() {
+            @Override
+            public void describe(TextView target, String value) {
+                updateThresholdExplanation(target, value);
+            }
+        });
+    }
+
+    /** The live line under a custom value, restating what the entered number will do. */
+    private interface Annotation {
+        void describe(TextView target, String value);
+    }
+
+    private LinearLayout annotatedInput(final EditText input, String intro,
+                                        final Annotation annotation) {
         LinearLayout content = new LinearLayout(getContext());
         content.setOrientation(LinearLayout.VERTICAL);
         int horizontalPadding = (int) (24 * getContext().getResources()
@@ -122,13 +163,13 @@ public class EditableListPreference extends ListPreference {
         content.setPadding(horizontalPadding, 0, horizontalPadding, 0);
 
         TextView explanation = new TextView(getContext());
-        explanation.setText("Hz means samples per second.");
+        explanation.setText(intro);
         content.addView(explanation);
         content.addView(input);
 
-        final TextView conversion = new TextView(getContext());
-        content.addView(conversion);
-        updateSamplingRateConversion(conversion, input.getText().toString());
+        final TextView annotated = new TextView(getContext());
+        content.addView(annotated);
+        annotation.describe(annotated, input.getText().toString());
         input.addTextChangedListener(new TextWatcher() {
             @Override
             public void beforeTextChanged(CharSequence value, int start, int count, int after) {
@@ -136,7 +177,7 @@ public class EditableListPreference extends ListPreference {
 
             @Override
             public void onTextChanged(CharSequence value, int start, int before, int count) {
-                updateSamplingRateConversion(conversion, value.toString());
+                annotation.describe(annotated, value.toString());
             }
 
             @Override
@@ -159,6 +200,18 @@ public class EditableListPreference extends ListPreference {
         }
     }
 
+    private void updateThresholdExplanation(TextView explanation, String threshold) {
+        if (TextUtils.isEmpty(threshold)) {
+            explanation.setText("0 stores every sample, with no filtering.");
+            return;
+        }
+        try {
+            explanation.setText(SensorThresholds.explain(getKey(), Double.parseDouble(threshold)));
+        } catch (NumberFormatException ignored) {
+            explanation.setText("Enter a number.");
+        }
+    }
+
     /**
      * The readable label for the current value: the matching preset entry, or a
      * "Custom: <value> <unit>" label when the value isn't one of the presets. Feeds both the
@@ -176,13 +229,41 @@ public class EditableListPreference extends ListPreference {
             return "Custom: " + value + " " + unit() + " ("
                     + FrequencyValueConverter.samplingRateHzInterval(value) + ")";
         }
+        if (customValueFormat == FORMAT_SENSOR_THRESHOLD) {
+            // The dialog rejects an out-of-range threshold, but a study config can still push one
+            // — and did: a deployed config set 120 m/s². Say so here, because the summary is the
+            // only place that value is ever shown.
+            return "Custom: " + value + " " + unit()
+                    + (isOutOfRange(value) ? " — too high, this sensor records nothing" : "");
+        }
         return TextUtils.isEmpty(unit())
                 ? "Custom: " + value
                 : "Custom: " + value + " " + unit();
     }
 
+    private boolean isOutOfRange(String threshold) {
+        try {
+            return !SensorThresholds.isWithinRange(getKey(), Double.parseDouble(threshold));
+        } catch (NumberFormatException ignored) {
+            return false;
+        }
+    }
+
     private String storedValue(String displayedValue) {
         if (TextUtils.isEmpty(displayedValue)) return null;
+        if (customValueFormat == FORMAT_SENSOR_THRESHOLD) {
+            // A threshold past the sensor's range filters out every sample, so it is rejected
+            // rather than stored: it would leave the sensor reporting itself as enabled while
+            // recording nothing, which is indistinguishable from the sensor being broken.
+            try {
+                double threshold = Double.parseDouble(displayedValue);
+                return SensorThresholds.isWithinRange(getKey(), threshold)
+                        ? displayedValue
+                        : null;
+            } catch (NumberFormatException ignored) {
+                return null;
+            }
+        }
         if (customValueFormat != FORMAT_SAMPLING_RATE_HZ) return displayedValue;
         try {
             return FrequencyValueConverter.samplingRateHzToPeriodUs(displayedValue);
