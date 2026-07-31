@@ -690,7 +690,7 @@ public class AwareSyncAdapter extends AbstractThreadedSyncAdapter {
                 // Records the outage once rather than once per table per tick, and notifies the
                 // participant only if it lasts. The table name is the reason: which one first failed
                 // is the useful part, and it carries no credentials.
-                UploadHealth.recordFailure(mContext, "batch for " + DATABASE_TABLE + " not acknowledged");
+                UploadHealth.recordFailure(mContext, DATABASE_TABLE, "batch not acknowledged");
                 return null;
             } else {
                 // The batch was committed (acknowledged) by the database: report the highest _id so
@@ -700,7 +700,7 @@ public class AwareSyncAdapter extends AbstractThreadedSyncAdapter {
                 outMaxId[0] = maxId;
                 outRowCount[0] = rows.length();
                 setLatestRecordSynched(DATABASE_TABLE, lastSynced);
-                UploadHealth.recordSuccess(mContext);
+                UploadHealth.recordSuccess(mContext, DATABASE_TABLE);
 
                 if (DEBUG)
                     Log.d(Aware.TAG, "Sync OK into " + DATABASE_TABLE + " [ " + rows.length() + " rows ]");

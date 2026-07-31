@@ -673,6 +673,17 @@ public class Aware_Preferences {
     /** Short, non-sensitive reason the current outage was first recorded with; empty when healthy. */
     public static final String UPLOAD_OUTAGE_REASON = "upload_outage_reason";
 
+    /**
+     * Which tables are currently failing to deliver, as {@code table:sinceMs} pairs separated by
+     * commas; empty when every table is delivering.
+     *
+     * Per table rather than one flag for the whole upload, because a single table can fail while its
+     * neighbours succeed — a column the server lacks, or a sensor that has stopped collecting. One
+     * shared flag is cleared by the next table's success, so that case reported itself as healthy.
+     * Held in one setting rather than one per table so adding a sensor needs no new key.
+     */
+    public static final String UPLOAD_OUTAGE_TABLES = "upload_outage_tables";
+
     /** Whether the participant has already been notified about the current outage. */
     public static final String UPLOAD_OUTAGE_NOTIFIED = "upload_outage_notified";
 

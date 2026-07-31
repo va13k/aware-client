@@ -1516,12 +1516,12 @@ private void enableAccessibilityService(final Runnable onResolved) {
         if (delivery == null) return;
 
         long deliveredUpTo = UploadHealth.deliveredUpToMs(this);
-        boolean failing = UploadHealth.outageSince(this) > 0;
         CharSequence relative = deliveredUpTo > 0
                 ? DateUtils.getRelativeTimeSpanString(deliveredUpTo, System.currentTimeMillis(),
                         DateUtils.MINUTE_IN_MILLIS)
                 : null;
-        delivery.setSummary(UploadHealth.statusLine(relative, failing, 0));
+        delivery.setSummary(UploadHealth.statusLine(
+                relative, UploadHealth.failingTables(this), 0));
     }
 
     /**

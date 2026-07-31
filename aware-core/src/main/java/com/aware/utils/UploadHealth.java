@@ -8,13 +8,24 @@ import com.aware.Aware_Preferences;
 import com.aware.R;
 import com.aware.providers.Aware_Provider;
 
+import java.util.ArrayList;
+import java.util.List;
+import java.util.Map;
+import java.util.TreeMap;
+
 /**
  * Whether data is reaching the research database, and what the participant is told about it.
  *
- * Upload health is kept as state rather than as a stream of events. {@code onPerformSync} runs once
- * per table, so a single outage produces a failure for every table on every tick; recording each one
- * would fill aware_log with the same fact. Instead the outage is recorded when it *starts* and
- * cleared when a batch is next acknowledged, so one outage leaves one entry however long it lasts.
+ * Upload health is kept as state rather than as a stream of events, and **per table**.
+ * {@code onPerformSync} runs once per table, so a single outage produces a failure for every table on
+ * every tick; recording each one would fill aware_log with the same fact. Instead each table's outage
+ * is recorded when it starts and cleared when that table is next acknowledged, so one outage leaves
+ * one entry however long it lasts.
+ *
+ * Per table because the failures seen in the field were per table: a column the server lacked, and a
+ * sensor that had silently stopped collecting. With one shared flag, the next table's success cleared
+ * the broken table's outage, so both reported themselves healthy — for two hours and twenty-one hours
+ * respectively.
  *
  * The participant is told two things. The app always shows how far delivery has reached, which costs
  * no attention. A notification is posted as soon as delivery starts failing, so a phone that has
@@ -26,32 +37,46 @@ public final class UploadHealth {
     private UploadHealth() {
     }
 
-    /** Records that a batch was acknowledged: ends any outage and clears its notification. */
-    public static void recordSuccess(Context context) {
-        boolean wasFailing = outageSince(context) > 0;
-        Aware.setSetting(context, Aware_Preferences.UPLOAD_OUTAGE_SINCE, 0);
-        Aware.setSetting(context, Aware_Preferences.UPLOAD_OUTAGE_REASON, "");
+    /**
+     * Records that a table's batch was acknowledged: ends that table's outage, and clears the
+     * notification once no table is failing.
+     *
+     * Clearing only the named table is the whole point. Roughly 30 sync adapters run in parallel and
+     * each calls this for its own table, so a version that cleared everything let the next successful
+     * table erase a broken one's outage — which is how a table with a missing server column reported
+     * itself healthy for two hours.
+     */
+    public static void recordSuccess(Context context, String table) {
+        Map<String, Long> outages = outages(context);
+        if (!outages.containsKey(table)) return;
 
-        if (wasFailing) {
-            Aware.debug(context, Aware.LogType.SYNC, "Upload recovered; data is reaching the database again");
+        Map<String, Long> remaining = withSuccess(outages, table);
+        saveOutages(context, remaining);
+        Aware.debug(context, Aware.LogType.SYNC,
+                "Upload recovered for " + table + "; its data is reaching the database again");
+
+        if (remaining.isEmpty()) {
             StudyUtils.cancelStudyNotification(context, Aware.AWARE_UPLOAD_HEALTH_NOTIFICATION_ID);
             Aware.setSetting(context, Aware_Preferences.UPLOAD_OUTAGE_NOTIFIED, "false");
+            Aware.debug(context, Aware.LogType.SYNC,
+                    "Upload recovered; every table is reaching the database again");
         }
     }
 
     /**
-     * Records that a batch was not acknowledged.
+     * Records that a table's batch was not acknowledged.
      *
+     * @param table  the table that failed
      * @param reason short, non-sensitive description of why — never a connection string or password
      */
-    public static void recordFailure(Context context, String reason) {
-        long now = System.currentTimeMillis();
-        if (outageSince(context) == 0) {
-            // Edge-triggered: the first failure of an outage is the one worth recording. Later
-            // failures say the same thing about the same outage.
-            Aware.setSetting(context, Aware_Preferences.UPLOAD_OUTAGE_SINCE, now);
-            Aware.setSetting(context, Aware_Preferences.UPLOAD_OUTAGE_REASON, reason);
-            Aware.debug(context, Aware.LogType.SYNC, "Upload failing: " + reason);
+    public static void recordFailure(Context context, String table, String reason) {
+        Map<String, Long> outages = outages(context);
+
+        if (!outages.containsKey(table)) {
+            // Edge-triggered per table: the first failure of this table's outage is the one worth
+            // recording. Later failures of the same table say the same thing.
+            saveOutages(context, withFailure(outages, table, System.currentTimeMillis()));
+            Aware.debug(context, Aware.LogType.SYNC, "Upload failing for " + table + ": " + reason);
         }
 
         if (shouldNotify(outageSince(context), alreadyNotified(context))) {
@@ -62,6 +87,93 @@ public final class UploadHealth {
             Aware.debug(context, Aware.LogType.SYNC,
                     "Notified the participant that data is not reaching the database");
         }
+    }
+
+    /** Whether this table specifically is failing to deliver. */
+    public static boolean isFailing(Context context, String table) {
+        return outages(context).containsKey(table);
+    }
+
+    /** The tables currently failing to deliver, alphabetically; empty when delivery is healthy. */
+    public static List<String> failingTables(Context context) {
+        return new ArrayList<>(outages(context).keySet());
+    }
+
+    private static Map<String, Long> outages(Context context) {
+        return parseOutages(Aware.getSetting(context, Aware_Preferences.UPLOAD_OUTAGE_TABLES));
+    }
+
+    private static void saveOutages(Context context, Map<String, Long> outages) {
+        Aware.setSetting(context, Aware_Preferences.UPLOAD_OUTAGE_TABLES, formatOutages(outages));
+        // Kept in step for the screens and for any researcher reading the settings: the oldest
+        // failing table's start time is when delivery stopped being wholly healthy.
+        Aware.setSetting(context, Aware_Preferences.UPLOAD_OUTAGE_SINCE, earliestOutage(outages));
+        Aware.setSetting(context, Aware_Preferences.UPLOAD_OUTAGE_REASON,
+                outages.isEmpty() ? "" : describeFailing(new ArrayList<>(outages.keySet()))
+                        + " not acknowledged");
+    }
+
+    // --- Pure outage-set operations. Separated from the Context work so the behaviour that actually
+    // masked a broken table can be unit-tested rather than only reasoned about.
+
+    /** Parses {@code table:sinceMs} pairs; unparseable or empty entries are skipped, not guessed. */
+    static Map<String, Long> parseOutages(String raw) {
+        Map<String, Long> outages = new TreeMap<>();
+        if (raw == null || raw.trim().isEmpty()) return outages;
+        for (String entry : raw.split(",")) {
+            int split = entry.lastIndexOf(':');
+            if (split <= 0 || split == entry.length() - 1) continue;
+            try {
+                long since = Long.parseLong(entry.substring(split + 1).trim());
+                if (since > 0) outages.put(entry.substring(0, split).trim(), since);
+            } catch (NumberFormatException ignored) {
+            }
+        }
+        return outages;
+    }
+
+    static String formatOutages(Map<String, Long> outages) {
+        StringBuilder formatted = new StringBuilder();
+        for (Map.Entry<String, Long> outage : outages.entrySet()) {
+            if (formatted.length() > 0) formatted.append(',');
+            formatted.append(outage.getKey()).append(':').append(outage.getValue());
+        }
+        return formatted.toString();
+    }
+
+    /** Adds a table's outage, keeping the start time of one already recorded. */
+    static Map<String, Long> withFailure(Map<String, Long> outages, String table, long now) {
+        Map<String, Long> updated = new TreeMap<>(outages);
+        if (!updated.containsKey(table)) updated.put(table, now);
+        return updated;
+    }
+
+    /** Removes only the named table's outage, leaving every other table's untouched. */
+    static Map<String, Long> withSuccess(Map<String, Long> outages, String table) {
+        Map<String, Long> updated = new TreeMap<>(outages);
+        updated.remove(table);
+        return updated;
+    }
+
+    /** When delivery first stopped being wholly healthy, or 0 when no table is failing. */
+    static long earliestOutage(Map<String, Long> outages) {
+        long earliest = 0;
+        for (long since : outages.values()) {
+            if (since > 0 && (earliest == 0 || since < earliest)) earliest = since;
+        }
+        return earliest;
+    }
+
+    /** Names the failing tables for a participant: {@code "bluetooth"}, {@code "a and b"}, {@code "a, b and c"}. */
+    static String describeFailing(List<String> tables) {
+        if (tables == null || tables.isEmpty()) return "";
+        if (tables.size() == 1) return tables.get(0);
+        StringBuilder described = new StringBuilder();
+        for (int i = 0; i < tables.size() - 1; i++) {
+            if (i > 0) described.append(", ");
+            described.append(tables.get(i));
+        }
+        return described.append(" and ").append(tables.get(tables.size() - 1)).toString();
     }
 
     /**
@@ -88,15 +200,20 @@ public final class UploadHealth {
      * reads differently from a delivery that has fallen behind — on a new enrolment there is no gap
      * to explain yet.
      */
-    public static String statusLine(CharSequence deliveredUpToRelative, boolean failing, int pendingRecords) {
+    public static String statusLine(CharSequence deliveredUpToRelative, List<String> failingTables,
+                                    int pendingRecords) {
         StringBuilder line = new StringBuilder();
         if (deliveredUpToRelative == null) {
             line.append("Nothing delivered yet");
         } else {
             line.append("Delivered up to ").append(deliveredUpToRelative);
         }
-        if (failing) {
-            line.append(" — not delivering right now");
+        if (failingTables != null && !failingTables.isEmpty()) {
+            // Naming them is the point: "not delivering" alone reads as a whole-study outage, when
+            // the common case is one sensor failing while the rest are fine.
+            line.append(" — ").append(describeFailing(failingTables))
+                    .append(failingTables.size() == 1 ? " is" : " are")
+                    .append(" not delivering right now");
             if (pendingRecords > 0) {
                 line.append("; ").append(pendingRecords).append(" record")
                         .append(pendingRecords == 1 ? "" : "s").append(" waiting");
