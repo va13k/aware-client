@@ -38,6 +38,7 @@ Change log for AWARE
 - New: the participant is told when data stops reaching the research database, and told once rather than repeatedly. Data continues to be collected and kept on the device until it can be sent. Researchers see when delivery started failing, why, and when it recovered
 - Fixed sensors reporting that they had never collected anything once their data had been uploaded and cleared from the device; the status and the researcher diagnostics now count delivered data as data the sensor collected
 - Fixed the magnetometer comparing one axis against the wrong two when deciding whether a reading changed enough to record, which made any magnetometer threshold keep and drop readings unpredictably
+- Sensor sensitivity settings (accelerometer, barometer, gravity, gyroscope, light, linear accelerometer, magnetometer, proximity, rotation, temperature) changed from raw numeric entry to descriptive presets stated in each sensor's own unit, with recommended values per sensor. A sensitivity larger than the sensor's readings ever change by is refused, and one already set that way now says the sensor is recording nothing instead of showing the number alone
 
 4.8.0.beta
 - Sensor sampling-rate settings (accelerometer, barometer, gravity, gyroscope, light, magnetometer, proximity, rotation, temperature, location, Wi-Fi/Bluetooth scanning, processor, Ambient Noise, OpenWeather) changed from raw numeric entry to descriptive dropdown presets, with more sensible default frequencies per sensor
