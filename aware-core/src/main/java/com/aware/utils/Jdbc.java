@@ -28,6 +28,34 @@ public class Jdbc {
     private static Connection connection;
     private static int transactionCount = 0;
 
+    /**
+     * Bounds on the shared sync connection. Without them the driver inherits Java's defaults, where
+     * a read timeout of 0 means wait forever: a server that accepts the connection and then stops
+     * answering holds {@link #insertBatch}'s lock until TCP keepalive gives up, which is hours. Every
+     * other table's upload waits behind that, and because the call never returns, the sync adapter
+     * records neither success nor failure, so nothing reports the stall.
+     *
+     * The socket timeout applies per read rather than to the batch as a whole, so a large upload on
+     * a slow link is not at risk unless the link itself stalls for this long. A timeout that does
+     * trip is safe: the batch rolls back, the rows stay on the device, and the sync marker does not
+     * advance, so the same rows are retried on the next sync.
+     */
+    static final int SYNC_CONNECT_TIMEOUT_MS = 30_000;
+    static final int SYNC_SOCKET_TIMEOUT_MS = 60_000;
+
+    /**
+     * How long a connection-level failure suppresses further upload attempts.
+     *
+     * The timeouts above bound a single attempt, not a sync cycle: roughly 40 tables across 30 sync
+     * adapters each take their own turn on the shared connection, so a dead server would still cost
+     * 40 timeouts serially. One connection failure means the next table will fail the same way, so
+     * the remaining attempts are skipped instead of re-proved. The window is far shorter than the
+     * sync interval (30 minutes by default), so it delays no scheduled retry.
+     */
+    static final long BREAKER_COOLDOWN_MS = 60_000L;
+
+    private static volatile long connectionFailedAt = 0;
+
     private static class JdbcConnectionException extends Exception {
         private JdbcConnectionException(String message) {
             super(message);
@@ -60,6 +88,62 @@ public class Jdbc {
             return ConnectionResult.AUTH_FAILED;
         }
         return ConnectionResult.UNREACHABLE;
+    }
+
+    /**
+     * Whether a failure is with the connection itself rather than with the statement, i.e. whether
+     * every other table is about to fail the same way.
+     *
+     * SQLState class {@code 08} is the standard connection-exception class, which MySQL uses for a
+     * communications link failure including a tripped socket timeout; {@code 28000} is access
+     * denied, where no table can succeed either.
+     *
+     * Deliberately conservative: anything else is treated as statement-level. Misreading a
+     * statement error as a connection error would suppress every other table's upload for the
+     * cooldown, which is exactly how one broken table (a column the server lacks) could hide the
+     * rest. Misreading it the other way only costs the redundant attempts this check exists to
+     * avoid, so the cheaper mistake is the one it makes. Pure, so it is unit-testable without a
+     * database.
+     *
+     * @param e the exception thrown while uploading a batch
+     * @return true if the shared connection is the problem
+     */
+    static boolean isConnectionLevel(SQLException e) {
+        if (e == null) return false;
+        String state = e.getSQLState();
+        if (state == null) return false;
+        return state.startsWith("08") || "28000".equals(state);
+    }
+
+    /**
+     * Whether upload attempts are currently suppressed after a connection-level failure.
+     *
+     * Pure, so the cooldown can be unit-tested without waiting on a clock.
+     *
+     * A clock that has stepped backwards since the failure — an NTP correction, or the participant
+     * changing the time — reads as a negative elapsed time. That resolves to closed rather than open:
+     * the alternative is suppressing uploads until the clock catches up, which for a correction of
+     * any size is the silent multi-hour stall this cooldown exists to prevent.
+     *
+     * @param failedAt when the connection last failed, or 0 if it has not
+     * @param now current time
+     * @param cooldownMs how long a failure suppresses attempts
+     */
+    static boolean breakerOpen(long failedAt, long now, long cooldownMs) {
+        if (failedAt <= 0) return false;
+        long elapsed = now - failedAt;
+        return elapsed >= 0 && elapsed < cooldownMs;
+    }
+
+    /**
+     * The shared sync connection's URL. Pure, so the timeout parameters can be verified without a
+     * database or an Android context.
+     */
+    static String syncConnectionUrl(String host, String port, String name, String tlsParameters) {
+        return String.format(
+                "jdbc:mysql://%s:%s/%s?rewriteBatchedStatements=true&connectTimeout=%d&socketTimeout=%d%s",
+                host, port, name, SYNC_CONNECT_TIMEOUT_MS, SYNC_SOCKET_TIMEOUT_MS,
+                tlsParameters == null ? "" : tlsParameters);
     }
 
     /**
@@ -146,6 +230,16 @@ public class Jdbc {
     public static boolean insertData(Context context, String table, JSONArray rows) {
         if (rows.length() == 0) return true;
 
+        // A recent connection-level failure means this attempt would block for the socket timeout to
+        // learn what the last one already established. Reported as a failure rather than a success,
+        // so the table keeps its rows and the outage stays recorded.
+        if (breakerOpen(connectionFailedAt, System.currentTimeMillis(), BREAKER_COOLDOWN_MS)) {
+            Log.i(TAG, "Skipping upload of '" + table
+                    + "': the database failed to respond within the last "
+                    + (BREAKER_COOLDOWN_MS / 1000) + "s.");
+            return false;
+        }
+
         try {
             List<String> fields = new ArrayList<>();
             Iterator<String> fieldIterator = rows.getJSONObject(0).keys();
@@ -157,11 +251,29 @@ public class Jdbc {
             // referenced by a caller that has gone away, and never closed.
             Jdbc.transactionCount++;
             Jdbc.insertBatch(context, table, fields, rows);
-        } catch (JSONException | SQLException | JdbcConnectionException e) {
+        } catch (SQLException e) {
+            if (isConnectionLevel(e)) openBreaker("upload of '" + table + "' failed: "
+                    + e.getSQLState() + " " + e.getMessage());
+            e.printStackTrace();
+            return false;
+        } catch (JdbcConnectionException e) {
+            // connect() could not establish the connection at all, so no table will fare better.
+            openBreaker("could not connect: " + e.getMessage());
+            e.printStackTrace();
+            return false;
+        } catch (JSONException e) {
+            // Malformed rows for this table only; the connection is fine.
             e.printStackTrace();
             return false;
         }
+
+        connectionFailedAt = 0;
         return true;
+    }
+
+    private static void openBreaker(String reason) {
+        connectionFailedAt = System.currentTimeMillis();
+        Log.w(TAG, "Pausing uploads for " + (BREAKER_COOLDOWN_MS / 1000) + "s — " + reason);
     }
 
     /**
@@ -251,8 +363,7 @@ public class Jdbc {
         Log.i(TAG, "Establishing connection to remote database...");
 
         try {
-            String connectionUrl = String.format(
-                    "jdbc:mysql://%s:%s/%s?rewriteBatchedStatements=true%s",
+            String connectionUrl = syncConnectionUrl(
                     Aware.getSetting(context, Aware_Preferences.DB_HOST),
                     Aware.getSetting(context, Aware_Preferences.DB_PORT),
                     Aware.getSetting(context, Aware_Preferences.DB_NAME),
