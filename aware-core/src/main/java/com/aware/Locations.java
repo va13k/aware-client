@@ -292,6 +292,15 @@ public class Locations extends Aware_Sensor implements LocationListener {
         if (PERMISSIONS_OK) locationManager.removeUpdates(this);
         locationManager.removeGpsStatusListener(gps_status_listener);
 
+        // removeUpdates cancels all three providers, so these frequencies no longer describe a live
+        // registration. They are static and outlive the service, and onStartCommand only calls
+        // requestLocationUpdates when the configured frequency differs from them — so leaving them
+        // set makes a restarted service skip registration entirely and collect nothing for the rest
+        // of the process's life, while still logging itself as active.
+        FREQUENCY_GPS = -1;
+        FREQUENCY_NETWORK = -1;
+        FREQUENCY_PASSIVE = -1;
+
         ContentResolver.setSyncAutomatically(Aware.getAWAREAccount(this), Locations_Provider.getAuthority(this), false);
         ContentResolver.removePeriodicSync(
                 Aware.getAWAREAccount(this),
