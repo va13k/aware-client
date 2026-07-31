@@ -64,9 +64,62 @@ public class DatabaseHelper extends SQLiteOpenHelper {
         if (DEBUG) Log.w(TAG, "Creating database: " + db.getPath());
         for (int i = 0; i < databaseTables.length; i++) {
             db.execSQL("CREATE TABLE IF NOT EXISTS " + databaseTables[i] + " (" + tableFields[i] + ");");
-            db.execSQL("CREATE INDEX IF NOT EXISTS time_device ON " + databaseTables[i] + " (timestamp, device_id);");
+            createTimeDeviceIndex(db, i);
         }
         db.setVersion(newVersion);
+    }
+
+    /**
+     * Creates the (timestamp, device_id) lookup index for one table, when that table declares both
+     * columns. Tables that declare neither — aware_settings, aware_plugins, aware_sync_markers —
+     * are skipped: indexing a column a table does not have throws, and inside an upgrade that
+     * aborts the whole migration transaction.
+     */
+    private void createTimeDeviceIndex(SQLiteDatabase db, int table) {
+        List<String> declared = declaredColumns(tableFields[table]);
+        if (!declared.contains("timestamp") || !declared.contains("device_id")) return;
+        db.execSQL("CREATE INDEX IF NOT EXISTS time_device ON " + databaseTables[table]
+                + " (timestamp, device_id);");
+    }
+
+    /**
+     * The column names declared by a table's field definition.
+     *
+     * Read from the definition rather than from the table it creates, because the carry-over below
+     * needs the new column set before the new table holds any rows, and a table's shape is fully
+     * described by the definition already in hand.
+     *
+     * Splits on the commas between column definitions, which means stepping over the commas inside a
+     * trailing table constraint such as {@code UNIQUE(a, b)}; a constraint contributes no column and
+     * is skipped.
+     *
+     * @param fields one entry of the table-fields array, as handed to the constructor
+     * @return the column names, in declaration order
+     */
+    static List<String> declaredColumns(String fields) {
+        List<String> columns = new ArrayList<>();
+        int depth = 0;
+        StringBuilder current = new StringBuilder();
+        for (int i = 0; i <= fields.length(); i++) {
+            char c = i < fields.length() ? fields.charAt(i) : ',';
+            if (c == '(') depth++;
+            if (c == ')') depth--;
+            if (c == ',' && depth == 0) {
+                String definition = current.toString().trim();
+                current.setLength(0);
+                if (definition.isEmpty()) continue;
+                String name = definition.split("\\s+")[0];
+                // A table constraint (UNIQUE(...), PRIMARY KEY(...), FOREIGN KEY ...) names no column.
+                if (name.indexOf('(') >= 0) continue;
+                String upper = name.toUpperCase();
+                if (upper.equals("UNIQUE") || upper.equals("PRIMARY") || upper.equals("FOREIGN")
+                        || upper.equals("CHECK") || upper.equals("CONSTRAINT")) continue;
+                columns.add(name);
+            } else {
+                current.append(c);
+            }
+        }
+        return columns;
     }
 
     @Override
@@ -79,12 +132,19 @@ public class DatabaseHelper extends SQLiteOpenHelper {
             //Modify existing tables if there are changes, while retaining old data. This also works for brand new tables, where nothing is changed.
             List<String> columns = getColumns(db, databaseTables[i]);
 
+            // An upgrade runs in a transaction, so an attempt that fails rolls back and leaves the
+            // original table in place — but a temp_ table created outside that transaction's reach
+            // would survive and collide with the rename below.
+            db.execSQL("DROP TABLE IF EXISTS temp_" + databaseTables[i] + ";");
             db.execSQL("ALTER TABLE " + databaseTables[i] + " RENAME TO temp_" + databaseTables[i] + ";");
 
             db.execSQL("CREATE TABLE " + databaseTables[i] + " (" + tableFields[i] + ");");
-            db.execSQL("CREATE INDEX IF NOT EXISTS time_device ON " + databaseTables[i] + " (timestamp, device_id);");
+            createTimeDeviceIndex(db, i);
 
-            columns.retainAll(getColumns(db, databaseTables[i]));
+            // The new table is empty at this point, so its shape comes from the definition that
+            // created it. Carrying over only the columns both shapes share is what lets a column be
+            // dropped: it stays behind with the temp table.
+            columns.retainAll(declaredColumns(tableFields[i]));
 
             String cols = TextUtils.join(",", columns);
             String new_cols = cols;
@@ -193,6 +253,21 @@ public class DatabaseHelper extends SQLiteOpenHelper {
             }
             return database;
         } catch (Exception e) {
+            // A rolled-back migration leaves the old schema and version in place, so later callers
+            // read a database that disagrees with the provider's columns.
+            Log.e(TAG, "Failed to open " + databaseName + " at version " + newVersion
+                    + "; the schema migration was rolled back: "
+                    + e.getClass().getName() + ": " + e.getMessage());
+            // The cache check at the top returns without consulting the version, so this handle has
+            // to go: it points at the un-migrated schema.
+            if (database != null) {
+                try {
+                    database.close();
+                } catch (Exception ignored) {
+                    // Already unusable.
+                }
+                database = null;
+            }
             return null;
         }
     }

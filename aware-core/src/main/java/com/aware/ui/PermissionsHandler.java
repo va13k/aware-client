@@ -128,7 +128,7 @@ public class PermissionsHandler extends Activity {
         rationaleDialog = new AlertDialog.Builder(this)
                 .setTitle(permissionTitle(permission))
                 .setMessage(permissionRationale(permission))
-                .setCancelable(false)
+                .setCancelable(true)
                 .setPositiveButton("Continue", new DialogInterface.OnClickListener() {
                     @Override
                     public void onClick(DialogInterface dialog, int which) {
@@ -141,6 +141,13 @@ public class PermissionsHandler extends Activity {
                         Log.d(Aware.TAG, permission + " was skipped");
                         sequence.onSkipped();
                         requestNextPermission();
+                    }
+                })
+                .setOnCancelListener(new DialogInterface.OnCancelListener() {
+                    @Override
+                    public void onCancel(DialogInterface dialog) {
+                        sequence.cancelRemaining();
+                        finishWithResult();
                     }
                 })
                 .show();
@@ -192,7 +199,7 @@ public class PermissionsHandler extends Activity {
                 .setMessage("AWARE can't ask for the " + humanLabel(permission) + " permission again because "
                         + "it was blocked. Enable it in Settings > Permissions for the sensor to work, or "
                         + "choose Not now to skip it.")
-                .setCancelable(false)
+                .setCancelable(true)
                 .setPositiveButton("Open settings", new DialogInterface.OnClickListener() {
                     @Override
                     public void onClick(DialogInterface dialog, int which) {
@@ -209,6 +216,13 @@ public class PermissionsHandler extends Activity {
                         Log.d(Aware.TAG, permission + " is blocked; skipped");
                         sequence.onResult(false);
                         requestNextPermission();
+                    }
+                })
+                .setOnCancelListener(new DialogInterface.OnCancelListener() {
+                    @Override
+                    public void onCancel(DialogInterface dialog) {
+                        sequence.cancelRemaining();
+                        finishWithResult();
                     }
                 })
                 .show();
@@ -276,10 +290,13 @@ public class PermissionsHandler extends Activity {
             Log.d(TAG, "Not restarting " + redirect_service.getComponent().toString()
                     + ": user declined a required permission, so no re-prompt loop.");
         }
-        if (redirect_activity != null) {
+        if (redirect_activity != null && sequence != null && sequence.shouldRestartService()) {
             Log.d(TAG, "Redirecting to Activity: " + redirect_activity.getComponent().toString());
             setResult(Activity.RESULT_OK, redirect_activity);
             startActivity(redirect_activity);
+        } else if (redirect_activity != null) {
+            Log.d(TAG, "Not redirecting to " + redirect_activity.getComponent().toString()
+                    + ": a denied permission would immediately reopen this handler.");
         }
         Log.d("Permissions", "Handled permissions for " + getPackageName());
     }

@@ -656,6 +656,38 @@ public class Aware_Preferences {
     public static final String PENDING_STUDY_CONFIG_APPROVAL = "pending_study_config_approval";
 
     /**
+     * Study URL awaiting participant re-authentication: set by StudyUtils.syncStudyConfig() when a
+     * password-join study (config_without_password=true) rejects the stored database password
+     * (auth failure, not an unreachable server). Aware_Client shows a password prompt while this is
+     * non-empty; cleared once the participant enters a password the database accepts. Empty means
+     * no re-authentication is pending.
+     */
+    public static final String PENDING_STUDY_REAUTH = "pending_study_reauth";
+
+    /**
+     * When the current delivery outage began, or 0 while delivery is healthy. Held as a start time
+     * rather than a failure count so one outage is one fact however many tables report it.
+     */
+    public static final String UPLOAD_OUTAGE_SINCE = "upload_outage_since";
+
+    /** Short, non-sensitive reason the current outage was first recorded with; empty when healthy. */
+    public static final String UPLOAD_OUTAGE_REASON = "upload_outage_reason";
+
+    /**
+     * Which tables are currently failing to deliver, as {@code table:sinceMs} pairs separated by
+     * commas; empty when every table is delivering.
+     *
+     * Per table rather than one flag for the whole upload, because a single table can fail while its
+     * neighbours succeed — a column the server lacks, or a sensor that has stopped collecting. One
+     * shared flag is cleared by the next table's success, so that case reported itself as healthy.
+     * Held in one setting rather than one per table so adding a sensor needs no new key.
+     */
+    public static final String UPLOAD_OUTAGE_TABLES = "upload_outage_tables";
+
+    /** Whether the participant has already been notified about the current outage. */
+    public static final String UPLOAD_OUTAGE_NOTIFIED = "upload_outage_notified";
+
+    /**
      * Signature of the last detected mismatch between live sensor settings and the study config
      * that StudyUtils.syncStudyConfig() attempted to self-heal (empty string = none). Used to avoid
      * re-applying settings on every sync poll when the drift can't actually be fixed (e.g. a sensor

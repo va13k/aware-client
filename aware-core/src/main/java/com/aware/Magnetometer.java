@@ -100,8 +100,8 @@ public class Magnetometer extends Aware_Sensor implements SensorEventListener {
             return;
         if (LAST_VALUES != null && THRESHOLD > 0 &&
                 Math.abs(event.values[0] - LAST_VALUES[0]) < THRESHOLD &&
-                Math.abs(event.values[0] - LAST_VALUES[1]) < THRESHOLD &&
-                Math.abs(event.values[0] - LAST_VALUES[2]) < THRESHOLD) {
+                Math.abs(event.values[1] - LAST_VALUES[1]) < THRESHOLD &&
+                Math.abs(event.values[2] - LAST_VALUES[2]) < THRESHOLD) {
             return;
         }
 

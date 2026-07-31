@@ -11,6 +11,7 @@ import android.os.AsyncTask;
 import android.os.Build;
 import android.os.Bundle;
 import android.os.IBinder;
+import android.os.SystemClock;
 import android.util.Log;
 import android.widget.Toast;
 import androidx.core.app.NotificationCompat;
@@ -207,7 +208,7 @@ public class ESM extends Aware_Sensor {
 
     /**
      * Required String extra for displaying an ESM. It should contain the JSON string that defines the ESM dialog.
-     * Examples:<p>
+     * Examples:
      * Free text: [{'esm':{'esm_type':1,'esm_title':'ESM Freetext','esm_instructions':'The user can answer an open ended question.','esm_submit':'Next','esm_expiration_threshold':20,'esm_trigger':'esm trigger example'}}]
      * Radio: [{'esm':{'esm_type':2,'esm_title':'ESM Radio','esm_instructions':'The user can only choose one option','esm_radios':['Option one','Option two','Other'],'esm_submit':'Next','esm_expiration_threshold':30,'esm_trigger':'esm trigger example'}}]
      * Checkbox: [{'esm':{'esm_type':3,'esm_title':'ESM Checkbox','esm_instructions':'The user can choose multiple options','esm_checkboxes':['One','Two','Other'],'esm_submit':'Next','esm_expiration_threshold':40,'esm_trigger':'esm trigger example'}}]
@@ -414,8 +415,15 @@ public class ESM extends Aware_Sensor {
                     if (notification_timeout > 0) {
                         try {
                             ESM_Question question = new ESM_Question().rebuild(new JSONObject(pendingESM.getString(pendingESM.getColumnIndex(ESM_Data.JSON))));
+                            // Only one queue-expiration timer may exist. Hourly schedules can replace
+                            // a still-pending ESM before its timeout; retaining every old AsyncTask
+                            // created a long-lived timer backlog.
+                            if (esm_notif_expire != null) esm_notif_expire.cancel(true);
                             esm_notif_expire = new ESMNotificationTimeout(context, System.currentTimeMillis(), notification_timeout, question.getNotificationRetry(), pendingESM.getInt(pendingESM.getColumnIndex(ESM_Data._ID)));
-                            esm_notif_expire.execute();
+                            // This timer can sleep for hours. AsyncTask.execute() uses the process-wide
+                            // serial executor, which made unrelated work (including study join after
+                            // consent) wait behind the timer forever. Keep the timer off that queue.
+                            esm_notif_expire.executeOnExecutor(AsyncTask.THREAD_POOL_EXECUTOR);
                         } catch (JSONException e) {
                             e.printStackTrace();
                         }
@@ -487,16 +495,16 @@ public class ESM extends Aware_Sensor {
         protected Void doInBackground(Void... params) {
             if (mRetries == 0) {
                 while ((System.currentTimeMillis() - display_timestamp) / 1000 <= expires_in_seconds) {
-                    if (isCancelled()) {
-                        return null;
-                    }
+                    if (isCancelled()) return null;
+                    // This used to spin continuously for the full ESM timeout (often hours),
+                    // consuming a CPU core for every queued notification.
+                    SystemClock.sleep(1000);
                 }
             } else {
                 while (mRetries > 0) {
                     while ((System.currentTimeMillis() - display_timestamp) / 1000 <= expires_in_seconds) {
-                        if (isCancelled()) {
-                            return null;
-                        }
+                        if (isCancelled()) return null;
+                        SystemClock.sleep(1000);
                     }
                     mRetries--;
                     display_timestamp = System.currentTimeMillis(); //move forward time and try again

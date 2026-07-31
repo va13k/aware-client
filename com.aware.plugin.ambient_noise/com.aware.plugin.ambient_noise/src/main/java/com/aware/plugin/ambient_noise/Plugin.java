@@ -9,12 +9,10 @@ import android.content.Intent;
 import android.content.SyncRequest;
 import android.os.Build;
 import android.os.Bundle;
-import android.widget.Toast;
 import android.util.Log;
 
 import com.aware.Aware;
 import com.aware.Aware_Preferences;
-import com.aware.ui.PermissionsHandler;
 import com.aware.utils.Aware_Plugin;
 import com.aware.utils.PluginsManager;
 import com.aware.utils.Scheduler;
@@ -39,25 +37,9 @@ public class Plugin extends Aware_Plugin {
         REQUIRED_PERMISSIONS.add(Manifest.permission.RECORD_AUDIO);
         REQUIRED_PERMISSIONS.add(Manifest.permission.WRITE_EXTERNAL_STORAGE);
         REQUIRED_PERMISSIONS.add(Manifest.permission.READ_EXTERNAL_STORAGE);
-
-        if (checkAndRequestPermissions()) {
-            Log.d(TAG, "Permissions OK, initializing plugin");
-            initializePlugin();
-        } else {
-            Log.d(TAG, "Permissions not granted yet");
-        }
-    }
-
-    private boolean checkAndRequestPermissions() {
-        if (!PERMISSIONS_OK) {
-            Log.d(TAG, "Requesting permissions...");
-            Intent permissions = new Intent(this, PermissionsHandler.class);
-            permissions.putExtra(PermissionsHandler.EXTRA_REQUIRED_PERMISSIONS, REQUIRED_PERMISSIONS);
-            permissions.setFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
-            startActivity(permissions);
-            return false;
-        }
-        return true;
+        // Runtime permission prompts belong to the visible consent flow. Launching an Activity
+        // from this background plugin caused one more dialog/restart loop during all-sensor updates.
+        initializePlugin();
     }
 
     @Override

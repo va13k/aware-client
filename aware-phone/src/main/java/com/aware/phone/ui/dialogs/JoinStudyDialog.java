@@ -20,10 +20,14 @@ import com.aware.Aware;
 import com.aware.Aware_Preferences;
 import com.aware.phone.R;
 import com.aware.phone.ui.Aware_Join_Study;
+import com.aware.phone.ui.SensorConsentActivity;
 import com.aware.utils.StudyUtils;
 
 import org.json.JSONException;
 import org.json.JSONObject;
+
+import java.net.URI;
+import java.net.URISyntaxException;
 
 
 /**
@@ -65,7 +69,9 @@ public class JoinStudyDialog extends DialogFragment {
                     public void onClick(DialogInterface dialog, int id) {
                         EditText etStudyConfigUrl = dialogView.findViewById(R.id.et_join_study_url);
                         EditText dbPassword = dialogView.findViewById(R.id.db_password); // manually input password
-                        new ValidateStudyConfig().execute(etStudyConfigUrl.getText().toString(), dbPassword.getText().toString());
+                        validateStudy(new ValidationRequest(
+                                etStudyConfigUrl.getText().toString(),
+                                dbPassword.getText().toString()));
                     }
                 })
                 .setNegativeButton("Cancel", new DialogInterface.OnClickListener() {
@@ -80,83 +86,205 @@ public class JoinStudyDialog extends DialogFragment {
         this.show(mActivity.getFragmentManager(), "dialog");
     }
 
-    public void validateStudy(String studyUrl) {
-        new ValidateStudyConfig().execute(studyUrl);
+    /**
+     * Everything {@link ValidateStudyConfig} needs to validate one study, in a single object.
+     *
+     * Replaces the old {@code String...} varargs contract: the deeplink and QR-code entry points
+     * started the task with the URL alone while the task unconditionally read {@code strings[1]} for
+     * the password, so those paths died with {@code ArrayIndexOutOfBoundsException}. A participant
+     * who supplied no password is now represented explicitly by an empty string, never by a missing
+     * array element, and there is no constructor that lets a caller omit either field.
+     */
+    public static final class ValidationRequest {
+        private final String studyUrl;
+        private final String inputPassword;
+
+        public ValidationRequest(String studyUrl, String inputPassword) {
+            this.studyUrl = studyUrl == null ? "" : studyUrl.trim();
+            this.inputPassword = inputPassword == null ? "" : inputPassword;
+        }
     }
 
-    public class ValidateStudyConfig extends AsyncTask<String, Void, String> {
+    /**
+     * Starts validation for a study whose config has not been fetched yet and for which the
+     * participant has supplied no password — the {@code aware://} deeplink and QR-code entry points.
+     */
+    public void validateStudy(String studyUrl) {
+        validateStudy(new ValidationRequest(studyUrl, ""));
+    }
+
+    public void validateStudy(ValidationRequest request) {
+        new ValidateStudyConfig(request).executeOnExecutor(AsyncTask.THREAD_POOL_EXECUTOR);
+    }
+
+    /**
+     * Accepts an http or https URL with a host — which is exactly what {@link
+     * StudyUtils#getStudyConfig} can fetch, since OkHttp's {@code Request.Builder#url} rejects every
+     * other scheme. So this narrows nothing: it only converts crashes into messages. A null or blank
+     * URL (reachable whenever the launching intent carried no study URL) would NPE inside
+     * {@code getStudyConfig}, and a scheme-less string would throw {@code IllegalArgumentException}
+     * out of OkHttp. {@code aware://} links are rewritten to {@code https://} by
+     * {@code Aware_Join_Study} before they reach here.
+     *
+     * Uses {@code java.net.URI} rather than {@code android.net.Uri} so it stays unit-testable, and
+     * reads the authority rather than the host because {@code URI} reports a null host for
+     * hostnames containing an underscore, which internal study servers do use.
+     */
+    static boolean isValidStudyUrl(String url) {
+        if (url == null || url.trim().isEmpty()) return false;
+        try {
+            URI uri = new URI(url.trim());
+            String scheme = uri.getScheme();
+            if (!"http".equalsIgnoreCase(scheme) && !"https".equalsIgnoreCase(scheme)) return false;
+            String authority = uri.getAuthority();
+            return authority != null && !authority.isEmpty();
+        } catch (URISyntaxException e) {
+            return false;
+        }
+    }
+
+    /** One validation attempt's outcome; {@code studyConfig} is set only when the result is OK. */
+    private static final class Outcome {
+        final StudyUtils.StudyConfigValidation result;
+        final String studyConfig;
+
+        Outcome(StudyUtils.StudyConfigValidation result, String studyConfig) {
+            this.result = result;
+            this.studyConfig = studyConfig;
+        }
+
+        static Outcome of(StudyUtils.StudyConfigValidation result) {
+            return new Outcome(result, null);
+        }
+    }
+
+    public class ValidateStudyConfig extends AsyncTask<Void, Void, Outcome> {
+        private final ValidationRequest request;
         private ProgressDialog mLoader;
-        private String url;
-        private String input_password;
-        private Boolean validPassword;
-        private Boolean validURL;
+
+        public ValidateStudyConfig(ValidationRequest request) {
+            if (request == null) throw new IllegalArgumentException("Validation request is required");
+            this.request = request;
+        }
 
         @Override
         protected void onPreExecute() {
+            if (mActivity == null || mActivity.isFinishing()) return;
+            // mActivity.getString, not Fragment#getResources(): the deeplink and QR-code entry points
+            // run this task from a JoinStudyDialog that is never shown, so the fragment has no host
+            // and getResources() would throw IllegalStateException before validation even starts.
             mLoader = new ProgressDialog(mActivity);
             mLoader.setTitle(R.string.loading_join_study_title);
-            mLoader.setMessage(getResources().getString(R.string.loading_join_study_msg));
+            mLoader.setMessage(mActivity.getString(R.string.loading_join_study_msg));
             mLoader.setCancelable(true);
             mLoader.setIndeterminate(true);
             mLoader.show();
         }
 
+        /** No UI work here — this runs off the main thread. Results are typed, never a bare null. */
         @Override
-        protected String doInBackground(String... strings) {
-            Log.i(TAG, "Joining study with URL " + url);
+        protected Outcome doInBackground(Void... unused) {
+            if (!isValidStudyUrl(request.studyUrl)) {
+                Log.d(TAG, "Rejected study URL before fetching: missing or malformed");
+                return Outcome.of(StudyUtils.StudyConfigValidation.INVALID_CONFIG);
+            }
 
-            JSONObject studyConfig;
-
-            url = strings[0];
-            input_password = strings[1];
-
+            Log.i(TAG, "Joining study with URL " + request.studyUrl);
             try {
-                studyConfig = StudyUtils.getStudyConfig(url);
-                JoinStudyDialog.this.dismiss();
-
-                if (studyConfig == null){
-                    validURL = false;
-                }else{
-                    validURL = true;
+                JSONObject studyConfig = StudyUtils.getStudyConfig(request.studyUrl);
+                if (studyConfig == null) {
+                    Log.d(TAG, "No usable study config at: " + request.studyUrl);
+                    return Outcome.of(StudyUtils.StudyConfigValidation.INVALID_CONFIG);
                 }
 
-                validPassword = StudyUtils.validateStudyConfig(mActivity, studyConfig, input_password);
-
-                if (studyConfig == null || !validPassword) {
-                    Log.d(TAG, "Failed to join study with URL: " + url);
-                } else {
-                    return studyConfig.toString();
+                // The application context, not mActivity: validation probes the database, and the
+                // trust store it reads for that outlives whichever screen started the join.
+                StudyUtils.StudyConfigValidation result = StudyUtils.validateStudyConfigDetailed(
+                        mActivity.getApplicationContext(), studyConfig, request.inputPassword);
+                if (result != StudyUtils.StudyConfigValidation.OK) {
+                    Log.d(TAG, "Failed to join study with URL: " + request.studyUrl
+                            + ", reason: " + result);
+                    return Outcome.of(result);
                 }
+                return new Outcome(result, studyConfig.toString());
 
             } catch (JSONException e) {
-                Log.d(TAG, "Failed to join study with URL: " + url + ", reason: " + e.getMessage());
+                Log.d(TAG, "Failed to join study with URL: " + request.studyUrl
+                        + ", reason: " + e.getMessage());
+                return Outcome.of(StudyUtils.StudyConfigValidation.INVALID_CONFIG);
+            } catch (Exception e) {
+                // A controlled failure rather than a crash on the participant's screen. The message
+                // is a diagnostic only; the request's password is never part of it.
+                Log.e(TAG, "Unexpected failure validating study config: " + e.getClass().getName()
+                        + ": " + e.getMessage());
+                return Outcome.of(StudyUtils.StudyConfigValidation.UNREACHABLE);
             }
-            return null;
         }
 
         @Override
-        protected void onPostExecute(String studyConfig) {
-            mLoader.dismiss();
-            JoinStudyDialog.this.dismiss();
-            Log.d(TAG, "URL: " + validURL);
-            if (validURL == null || !validURL) {
-                Toast.makeText(mActivity, "Invalid study config or no internet. Please contact the " +
-                                "administrator of this study or enter a different study URL.",
-                        Toast.LENGTH_LONG).show();
-            }
-            else if (!validPassword){
-                Toast.makeText(mActivity, "Password not correct",
-                        Toast.LENGTH_LONG).show();
-            }
-            else {
+        protected void onPostExecute(Outcome outcome) {
+            dismissLoader();
+            if (isAdded()) JoinStudyDialog.this.dismiss();
+            if (mActivity == null || mActivity.isFinishing()) return;
 
-                Intent studyInfo = new Intent(mActivity, Aware_Join_Study.class);
-                studyInfo.putExtra(Aware_Join_Study.EXTRA_STUDY_URL, url);
-                studyInfo.putExtra(Aware_Join_Study.EXTRA_STUDY_CONFIG, studyConfig);
-                studyInfo.putExtra(Aware_Join_Study.INPUT_PASSWORD, input_password);
-                studyInfo.setFlags(Intent.FLAG_ACTIVITY_CLEAR_TOP | Intent.FLAG_ACTIVITY_NEW_TASK);
-                mActivity.startActivity(studyInfo);
+            Log.d(TAG, "Study validation result: " + outcome.result);
+            switch (outcome.result) {
+                case OK:
+                    // Show the sensor consent screen first (it reviews what the study collects and
+                    // collects any permission grants), then it hands off to the identifier / sign-up
+                    // step. Runs before enrolment — nothing is applied until the participant signs up.
+                    Intent consent = new Intent(mActivity, SensorConsentActivity.class);
+                    consent.putExtra(Aware_Join_Study.EXTRA_STUDY_URL, request.studyUrl);
+                    consent.putExtra(Aware_Join_Study.EXTRA_STUDY_CONFIG, outcome.studyConfig);
+                    consent.putExtra(Aware_Join_Study.INPUT_PASSWORD, request.inputPassword);
+                    consent.putExtra(SensorConsentActivity.EXTRA_PRE_JOIN, true);
+                    consent.setFlags(Intent.FLAG_ACTIVITY_CLEAR_TOP | Intent.FLAG_ACTIVITY_NEW_TASK);
+                    mActivity.startActivity(consent);
+                    break;
+
+                case PASSWORD_REQUIRED:
+                    // Reached from the entry points that have no password field: return the
+                    // participant to an interactive screen instead of a dead end, with the URL
+                    // already filled in so they only have to type the password.
+                    Toast.makeText(mActivity, "This study needs a password. Please enter the "
+                            + "password you received from the study administrator.",
+                            Toast.LENGTH_LONG).show();
+                    new JoinStudyDialog(mActivity).setStudyUrl(request.studyUrl).showDialog();
+                    break;
+
+                case AUTH_FAILED:
+                    Toast.makeText(mActivity, "Password not correct", Toast.LENGTH_LONG).show();
+                    break;
+
+                case UNREACHABLE:
+                    Toast.makeText(mActivity, "Could not reach the study database. Check your "
+                            + "internet connection and try again, or contact the administrator of "
+                            + "this study.", Toast.LENGTH_LONG).show();
+                    break;
+
+                default:
+                    Toast.makeText(mActivity, "Invalid study config or no internet. Please contact "
+                            + "the administrator of this study or enter a different study URL.",
+                            Toast.LENGTH_LONG).show();
+                    break;
             }
+        }
+
+        /**
+         * The loader belongs to an Activity that may already be gone — dismissing a dialog whose
+         * window has been torn down throws {@code IllegalArgumentException: View not attached to
+         * window manager}. The guards keep the common cases quiet; the catch covers Activity
+         * recreation, where {@code isFinishing()} is false but the window is already detached. The
+         * real fix is to move progress into the Activity's own layout (plan item 2).
+         */
+        private void dismissLoader() {
+            if (mLoader == null || !mLoader.isShowing()) return;
+            try {
+                mLoader.dismiss();
+            } catch (IllegalArgumentException e) {
+                Log.d(TAG, "Loader's window was already gone: " + e.getMessage());
+            }
+            mLoader = null;
         }
     }
 }

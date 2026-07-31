@@ -55,11 +55,20 @@ public class Aware_Join_Study extends Aware_Activity {
     public static final String EXTRA_STUDY_CONFIG = "study_config";
     public static final String INPUT_PASSWORD = "input_password";
 
+    /**
+     * Set when the participant already reviewed the consent on {@link SensorConsentActivity}
+     * before reaching this screen (the pre-join onboarding order). Skips re-launching the consent
+     * screen from Sign up — the grants and declined set are already recorded and applySettings honours
+     * them.
+     */
+    public static final String EXTRA_CONSENT_DONE = "consent_done";
+
 
 
     private static String study_url;
     private JSONArray study_configs;
     private static String input_password;
+    private boolean consentDone;
 
 
 
@@ -101,6 +110,7 @@ public class Aware_Join_Study extends Aware_Activity {
         study_url = getIntent().getStringExtra(EXTRA_STUDY_URL);
         String studyConfigStr = getIntent().getStringExtra(EXTRA_STUDY_CONFIG);
         input_password = getIntent().getStringExtra(INPUT_PASSWORD);
+        consentDone = getIntent().getBooleanExtra(EXTRA_CONSENT_DONE, false);
 
         //If we are getting here from an AWARE study link (deeplink)
         String scheme = getIntent().getScheme();
@@ -120,7 +130,8 @@ public class Aware_Join_Study extends Aware_Activity {
         } else {
             Cursor qry = Aware.getStudy(this, study_url);
             if (qry == null || !qry.moveToFirst()) {
-                new PopulateStudy().execute(study_url, studyConfigStr);
+                new PopulateStudy().executeOnExecutor(
+                        AsyncTask.THREAD_POOL_EXECUTOR, study_url, studyConfigStr);
             } else {
                 initView(qry, studyConfigStr);
             }
@@ -180,6 +191,7 @@ public class Aware_Join_Study extends Aware_Activity {
                         ContentValues studyData = new ContentValues();
                         studyData.put(Aware_Provider.Aware_Studies.STUDY_JOINED, System.currentTimeMillis());
                         studyData.put(Aware_Provider.Aware_Studies.STUDY_EXIT, 0);
+                        studyData.put(Aware_Provider.Aware_Studies.STUDY_COMPLIANCE, "joined study");
                         getContentResolver().update(Aware_Provider.Aware_Studies.CONTENT_URI, studyData,
                                 Aware_Provider.Aware_Studies.STUDY_ID + "=" + activeId, null);
                     } else {
@@ -193,7 +205,7 @@ public class Aware_Join_Study extends Aware_Activity {
                         studyData.put(Aware_Provider.Aware_Studies.STUDY_TIMESTAMP, System.currentTimeMillis());
                         studyData.put(Aware_Provider.Aware_Studies.STUDY_JOINED, System.currentTimeMillis());
                         studyData.put(Aware_Provider.Aware_Studies.STUDY_EXIT, 0);
-                        studyData.put(Aware_Provider.Aware_Studies.STUDY_COMPLIANCE, "");
+                        studyData.put(Aware_Provider.Aware_Studies.STUDY_COMPLIANCE, "rejoined study");
                         getContentResolver().insert(Aware_Provider.Aware_Studies.CONTENT_URI, studyData);
                     }
                 }
@@ -207,8 +219,10 @@ public class Aware_Join_Study extends Aware_Activity {
                 boolean nothingToShow = SensorCollection.enabledConsentsForConfig(study_configs).isEmpty();
                 boolean alreadyConsented = !SensorCollection.hasPendingConsents(getApplicationContext(), study_configs)
                         && SensorCollection.hasMatchingConsentRecord(getApplicationContext(), study_url, study_configs);
-                if (nothingToShow || alreadyConsented) {
-                    new JoinStudyAsync().execute();
+                // consentDone: the participant already reviewed the sensor consent before this screen,
+                // so the grants and declined set are recorded — go straight to applying, don't re-ask.
+                if (consentDone || nothingToShow || alreadyConsented) {
+                    new JoinStudyAsync().executeOnExecutor(AsyncTask.THREAD_POOL_EXECUTOR);
                 } else {
                     Intent consent = new Intent(getApplicationContext(), SensorConsentActivity.class);
                     consent.putExtra(EXTRA_STUDY_URL, study_url);
@@ -238,7 +252,6 @@ public class Aware_Join_Study extends Aware_Activity {
                     complianceEntry.put(Aware_Provider.Aware_Studies.STUDY_API, dbStudy.getString(dbStudy.getColumnIndex(Aware_Provider.Aware_Studies.STUDY_API)));
                     complianceEntry.put(Aware_Provider.Aware_Studies.STUDY_URL, dbStudy.getString(dbStudy.getColumnIndex(Aware_Provider.Aware_Studies.STUDY_URL)));
                     complianceEntry.put(Aware_Provider.Aware_Studies.STUDY_PI, dbStudy.getString(dbStudy.getColumnIndex(Aware_Provider.Aware_Studies.STUDY_PI)));
-                    complianceEntry.put(Aware_Provider.Aware_Studies.STUDY_CONFIG, dbStudy.getString(dbStudy.getColumnIndex(Aware_Provider.Aware_Studies.STUDY_CONFIG)));
                     complianceEntry.put(Aware_Provider.Aware_Studies.STUDY_JOINED, dbStudy.getLong(dbStudy.getColumnIndex(Aware_Provider.Aware_Studies.STUDY_JOINED)));
                     complianceEntry.put(Aware_Provider.Aware_Studies.STUDY_EXIT, dbStudy.getLong(dbStudy.getColumnIndex(Aware_Provider.Aware_Studies.STUDY_EXIT)));
                     complianceEntry.put(Aware_Provider.Aware_Studies.STUDY_TITLE, dbStudy.getString(dbStudy.getColumnIndex(Aware_Provider.Aware_Studies.STUDY_TITLE)));
@@ -261,15 +274,15 @@ public class Aware_Join_Study extends Aware_Activity {
                                 btnAction.setAlpha(1f);
 
                                 Cursor dbStudy = Aware.getActiveStudy(getApplicationContext());
+                                ContentValues complianceEntry = null;
                                 if (dbStudy != null && dbStudy.moveToFirst()) {
-                                    ContentValues complianceEntry = new ContentValues();
+                                    complianceEntry = new ContentValues();
                                     complianceEntry.put(Aware_Provider.Aware_Studies.STUDY_TIMESTAMP, System.currentTimeMillis());
                                     complianceEntry.put(Aware_Provider.Aware_Studies.STUDY_DEVICE_ID, Aware.getSetting(getApplicationContext(), Aware_Preferences.DEVICE_ID));
                                     complianceEntry.put(Aware_Provider.Aware_Studies.STUDY_KEY, dbStudy.getInt(dbStudy.getColumnIndex(Aware_Provider.Aware_Studies.STUDY_KEY)));
                                     complianceEntry.put(Aware_Provider.Aware_Studies.STUDY_API, dbStudy.getString(dbStudy.getColumnIndex(Aware_Provider.Aware_Studies.STUDY_API)));
                                     complianceEntry.put(Aware_Provider.Aware_Studies.STUDY_URL, dbStudy.getString(dbStudy.getColumnIndex(Aware_Provider.Aware_Studies.STUDY_URL)));
                                     complianceEntry.put(Aware_Provider.Aware_Studies.STUDY_PI, dbStudy.getString(dbStudy.getColumnIndex(Aware_Provider.Aware_Studies.STUDY_PI)));
-                                    complianceEntry.put(Aware_Provider.Aware_Studies.STUDY_CONFIG, dbStudy.getString(dbStudy.getColumnIndex(Aware_Provider.Aware_Studies.STUDY_CONFIG)));
                                     complianceEntry.put(Aware_Provider.Aware_Studies.STUDY_JOINED, dbStudy.getLong(dbStudy.getColumnIndex(Aware_Provider.Aware_Studies.STUDY_JOINED)));
                                     complianceEntry.put(Aware_Provider.Aware_Studies.STUDY_EXIT, System.currentTimeMillis());
                                     complianceEntry.put(Aware_Provider.Aware_Studies.STUDY_TITLE, dbStudy.getString(dbStudy.getColumnIndex(Aware_Provider.Aware_Studies.STUDY_TITLE)));
@@ -282,7 +295,8 @@ public class Aware_Join_Study extends Aware_Activity {
 
                                 dialogInterface.dismiss();
 
-                                new QuitStudyAsync().execute();
+                                // Best-effort notify the researcher (if reachable); leaving proceeds regardless.
+                                new QuitStudyAsync(complianceEntry).executeOnExecutor(AsyncTask.THREAD_POOL_EXECUTOR);
                             }
                         })
                         .setNegativeButton("No", new DialogInterface.OnClickListener() {
@@ -297,7 +311,6 @@ public class Aware_Join_Study extends Aware_Activity {
                                     complianceEntry.put(Aware_Provider.Aware_Studies.STUDY_API, dbStudy.getString(dbStudy.getColumnIndex(Aware_Provider.Aware_Studies.STUDY_API)));
                                     complianceEntry.put(Aware_Provider.Aware_Studies.STUDY_URL, dbStudy.getString(dbStudy.getColumnIndex(Aware_Provider.Aware_Studies.STUDY_URL)));
                                     complianceEntry.put(Aware_Provider.Aware_Studies.STUDY_PI, dbStudy.getString(dbStudy.getColumnIndex(Aware_Provider.Aware_Studies.STUDY_PI)));
-                                    complianceEntry.put(Aware_Provider.Aware_Studies.STUDY_CONFIG, dbStudy.getString(dbStudy.getColumnIndex(Aware_Provider.Aware_Studies.STUDY_CONFIG)));
                                     complianceEntry.put(Aware_Provider.Aware_Studies.STUDY_JOINED, dbStudy.getLong(dbStudy.getColumnIndex(Aware_Provider.Aware_Studies.STUDY_JOINED)));
                                     complianceEntry.put(Aware_Provider.Aware_Studies.STUDY_EXIT, dbStudy.getLong(dbStudy.getColumnIndex(Aware_Provider.Aware_Studies.STUDY_EXIT)));
                                     complianceEntry.put(Aware_Provider.Aware_Studies.STUDY_TITLE, dbStudy.getString(dbStudy.getColumnIndex(Aware_Provider.Aware_Studies.STUDY_TITLE)));
@@ -395,7 +408,7 @@ public class Aware_Join_Study extends Aware_Activity {
                     JSONObject studyInfo = result.getJSONObject("study_info");
 
                     if (Aware.DEBUG)
-                        Log.d(Aware.TAG, DatabaseUtils.dumpCursorToString(dbStudy));
+                        Log.d(Aware.TAG, LogRedactor.redact(DatabaseUtils.dumpCursorToString(dbStudy)));
 
                     if (dbStudy == null || !dbStudy.moveToFirst()) {
                         ContentValues studyData = new ContentValues();
@@ -412,7 +425,7 @@ public class Aware_Join_Study extends Aware_Activity {
                         getContentResolver().insert(Aware_Provider.Aware_Studies.CONTENT_URI, studyData);
 
                         if (Aware.DEBUG) {
-                            Log.d(Aware.TAG, "New study data: " + studyData.toString());
+                            Log.d(Aware.TAG, LogRedactor.redact("New study data: " + studyData.toString()));
                         }
                     } else {
                         //Update the information to the latest
@@ -432,7 +445,7 @@ public class Aware_Join_Study extends Aware_Activity {
                         getContentResolver().insert(Aware_Provider.Aware_Studies.CONTENT_URI, studyData);
 
                         if (Aware.DEBUG) {
-                            Log.d(Aware.TAG, "Re-scanned study data: " + studyData.toString());
+                            Log.d(Aware.TAG, LogRedactor.redact("Re-scanned study data: " + studyData.toString()));
                         }
                     }
 
@@ -454,6 +467,11 @@ public class Aware_Join_Study extends Aware_Activity {
 
     private class QuitStudyAsync extends AsyncTask<Void, Void, Void> {
         ProgressDialog mQuitting;
+        private final ContentValues exitEntry;
+
+        QuitStudyAsync(ContentValues exitEntry) {
+            this.exitEntry = exitEntry;
+        }
 
         @Override
         protected void onPreExecute() {
@@ -479,6 +497,11 @@ public class Aware_Join_Study extends Aware_Activity {
 
         @Override
         protected Void doInBackground(Void... params) {
+            // Best-effort: notify the researcher if the database is reachable, but never block
+            // leaving on it. A participant must always be able to withdraw.
+            if (exitEntry != null) {
+                StudyUtils.uploadStudyExit(getApplicationContext(), exitEntry);
+            }
             Aware.reset(getApplicationContext());
             return null;
         }
@@ -602,6 +625,13 @@ public class Aware_Join_Study extends Aware_Activity {
 
         mSensorsAdapter = new SensorsAdapter(active_sensors);
         sensorsRecyclerView.setAdapter(mSensorsAdapter);
+
+        // When the participant arrived via the sensor consent screen, it already reviewed the full
+        // sensor list in a friendly form — so hide this duplicate "Sensors needed" list and keep the
+        // sign-up step focused on entering the study identifier.
+        if (consentDone) {
+            findViewById(R.id.ll_sensors_required).setVisibility(View.GONE);
+        }
 
         //Show the plugins' information
         active_plugins = new ArrayList<>();

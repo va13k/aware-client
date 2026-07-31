@@ -42,9 +42,11 @@ import android.provider.Settings;
 import android.text.TextUtils;
 import android.text.format.DateUtils;
 import android.util.Log;
+import android.text.InputType;
 import android.view.View;
 import android.view.ViewGroup;
 import android.widget.ListAdapter;
+import android.widget.EditText;
 import android.widget.Toast;
 
 import com.aware.Applications;
@@ -61,7 +63,9 @@ import com.aware.phone.utils.AwareUtil;
 import com.aware.providers.Aware_Provider;
 import com.aware.ui.PermissionsHandler;
 import com.aware.utils.SensorAvailability;
+import com.aware.utils.Jdbc;
 import com.aware.utils.StudyUtils;
+import com.aware.utils.UploadHealth;
 import com.aware.ScreenShot;
 
 import org.json.JSONArray;
@@ -125,7 +129,9 @@ public class Aware_Client extends Aware_Activity {
         @Override
         public void onReceive(Context context, Intent intent) {
             if (ScreenShot.ACTION_SCREENSHOT_SERVICE_STOPPED.equals(intent.getAction())) {
-                checkAndStartScreenshotService();
+                // A stopped/invalid MediaProjection cannot safely be restarted with the old token.
+                // Re-entering here created a stop -> broadcast -> restart loop.
+                Log.w(TAG, "Screenshot capture stopped; waiting for a visible user-initiated restart");
             }
         }
     };
@@ -193,8 +199,10 @@ public class Aware_Client extends Aware_Activity {
         if ((added == null || added.isEmpty()) && (removed == null || removed.isEmpty())) {
             message.append("\n\nThe update changes sensor frequencies or other study settings.");
         }
-        if (configUpdateAllowedNewValue != null && !configUpdateAllowedNewValue) {
-            message.append("\n\nThis update also disables editable mode.");
+        if (configUpdateAllowedNewValue != null) {
+            message.append(configUpdateAllowedNewValue
+                    ? "\n\nAfter this update you can adjust the sensor settings for this study yourself."
+                    : "\n\nAfter this update, the researcher manages the sensor settings for this study.");
         }
         message.append("\n\nAgreeing replaces your local sensor configuration. "
                 + "If new sensors need permission, you will review consent next.");
@@ -289,7 +297,7 @@ public class Aware_Client extends Aware_Activity {
         }
     }
 
-    private static Set<String> activeSensorNames(JSONObject config) {
+    private Set<String> activeSensorNames(JSONObject config) {
         Set<String> active = new HashSet<>();
         JSONArray sensors = config == null ? null : config.optJSONArray("sensors");
         if (sensors == null) return active;
@@ -297,6 +305,13 @@ public class Aware_Client extends Aware_Activity {
             JSONObject sensor = sensors.optJSONObject(i);
             if (sensor == null) continue;
             String setting = sensor.optString("setting", "");
+            // Skip sensors whose hardware this device lacks: the participant can never turn them on,
+            // so they must not appear in the "activate/deactivate" preview as an actionable change.
+            // Mirrors StudyUtils, which now excludes the same sensors from the update decision.
+            if (setting.startsWith("status_")
+                    && !SensorAvailability.isHardwareAvailable(getApplicationContext(), setting)) {
+                continue;
+            }
             if (setting.startsWith("status_") && sensor.optBoolean("value", false)) {
                 active.add(setting.substring("status_".length()).replace('_', ' '));
             }
@@ -354,6 +369,115 @@ public class Aware_Client extends Aware_Activity {
         } catch (JSONException e) {
             e.printStackTrace();
             Aware.setSetting(getApplicationContext(), Aware_Preferences.PENDING_STUDY_UPDATE_NOTICE, "");
+        }
+    }
+
+    /** Guards against stacking the re-auth dialog on repeated onResume() calls. */
+    private boolean reauthDialogShowing = false;
+
+    /** Live trigger: shows the re-auth prompt as soon as a background sync detects a rotated password. */
+    private final BroadcastReceiver reauthRequiredReceiver = new BroadcastReceiver() {
+        @Override
+        public void onReceive(Context context, Intent intent) {
+            showPendingReauthIfAny();
+        }
+    };
+
+    /**
+     * If a password-join study's stored database password was rejected during a background sync
+     * (the researcher rotated it), prompt the participant to re-enter it now. Background sync sets
+     * {@link Aware_Preferences#PENDING_STUDY_REAUTH} but cannot prompt, so the request waits here
+     * until the app is open. A successful re-auth resumes collection with no re-join.
+     */
+    private void showPendingReauthIfAny() {
+        String studyUrl = Aware.getSetting(getApplicationContext(), Aware_Preferences.PENDING_STUDY_REAUTH);
+        if (studyUrl == null || studyUrl.trim().length() == 0) return;
+        if (reauthDialogShowing) return;
+
+        final EditText input = new EditText(this);
+        input.setInputType(InputType.TYPE_CLASS_TEXT | InputType.TYPE_TEXT_VARIATION_PASSWORD);
+        input.setHint("Study password");
+
+        reauthDialogShowing = true;
+        final AlertDialog dialog = new AlertDialog.Builder(this)
+                .setTitle("Study password required")
+                .setMessage("This study now requires you to enter its password to keep contributing "
+                        + "data. Please enter the password provided by the researcher.\n\n"
+                        + "If you tap Later, data collection is paused until you enter the password. "
+                        + "You'll be asked again the next time the study updates or you open the app. "
+                        + "You can also leave the study at any time.")
+                .setView(input)
+                .setCancelable(false)
+                .setPositiveButton("Submit", null) // overridden in onShow so a wrong password keeps the dialog open
+                .setNegativeButton("Later", new DialogInterface.OnClickListener() {
+                    @Override
+                    public void onClick(DialogInterface d, int which) {
+                        reauthDialogShowing = false;
+                        d.dismiss();
+                        Toast.makeText(Aware_Client.this,
+                                "Data collection paused until you enter the study password.",
+                                Toast.LENGTH_LONG).show();
+                    }
+                })
+                .create();
+
+        dialog.setOnShowListener(new DialogInterface.OnShowListener() {
+            @Override
+            public void onShow(DialogInterface d) {
+                dialog.getButton(AlertDialog.BUTTON_POSITIVE).setOnClickListener(new View.OnClickListener() {
+                    @Override
+                    public void onClick(View v) {
+                        String entered = input.getText().toString();
+                        if (entered.length() == 0) {
+                            input.setError("Enter a password");
+                            return;
+                        }
+                        new ReauthTask(dialog, entered).executeOnExecutor(AsyncTask.THREAD_POOL_EXECUTOR);
+                    }
+                });
+            }
+        });
+        dialog.show();
+    }
+
+    /** Verifies a participant-entered study password off the main thread and reports the outcome. */
+    private class ReauthTask extends AsyncTask<Void, Void, Jdbc.ConnectionResult> {
+        private final AlertDialog dialog;
+        private final String password;
+
+        ReauthTask(AlertDialog dialog, String password) {
+            this.dialog = dialog;
+            this.password = password;
+        }
+
+        @Override
+        protected void onPreExecute() {
+            dialog.getButton(AlertDialog.BUTTON_POSITIVE).setEnabled(false);
+        }
+
+        @Override
+        protected Jdbc.ConnectionResult doInBackground(Void... voids) {
+            return StudyUtils.reauthenticateStudy(getApplicationContext(), password);
+        }
+
+        @Override
+        protected void onPostExecute(Jdbc.ConnectionResult result) {
+            if (isFinishing()) {
+                reauthDialogShowing = false;
+                return;
+            }
+            if (result == Jdbc.ConnectionResult.OK) {
+                reauthDialogShowing = false;
+                dialog.dismiss();
+                Toast.makeText(Aware_Client.this, "Study password updated.", Toast.LENGTH_LONG).show();
+            } else if (result == Jdbc.ConnectionResult.AUTH_FAILED) {
+                dialog.getButton(AlertDialog.BUTTON_POSITIVE).setEnabled(true);
+                Toast.makeText(Aware_Client.this, "Password still incorrect.", Toast.LENGTH_LONG).show();
+            } else {
+                dialog.getButton(AlertDialog.BUTTON_POSITIVE).setEnabled(true);
+                Toast.makeText(Aware_Client.this, "Can't reach the server. Try again later.",
+                        Toast.LENGTH_LONG).show();
+            }
         }
     }
 
@@ -426,8 +550,8 @@ public class Aware_Client extends Aware_Activity {
         }
         if (configUpdateAllowedNewValue != null) {
             msg.append("\n\n").append(configUpdateAllowedNewValue
-                    ? "You can now change your own settings for this study."
-                    : "Your settings are locked to the researcher's configuration again.");
+                    ? "You can now adjust the sensor settings for this study yourself."
+                    : "The researcher now manages the sensor settings for this study.");
         }
         if (hasHeld) {
             msg.append("\n\nSome added sensors need your permission before they can collect. Review them now?");
@@ -647,6 +771,8 @@ public class Aware_Client extends Aware_Activity {
                 new IntentFilter(Aware.ACTION_AWARE_STUDY_CONFIG_UPDATED);
         studyConfigUpdates.addAction(Aware.ACTION_AWARE_STUDY_CONFIG_UPDATE_AVAILABLE);
         registerReceiver(studyConfigUpdatedReceiver, studyConfigUpdates);
+        registerReceiver(reauthRequiredReceiver,
+                new IntentFilter(Aware.ACTION_AWARE_STUDY_REAUTH_REQUIRED));
         checkAndStartScreenshotService();
         checkAndStartPlugin();
     }
@@ -713,6 +839,18 @@ public class Aware_Client extends Aware_Activity {
         return super.onPreferenceTreeClick(preferenceScreen, preference);
     }
 
+    /**
+     * A millisecond timestamp as time elapsed since it, or {@code absent} when there is no such
+     * timestamp. Android time formatting lives here so the status-text helpers stay pure.
+     *
+     * @param absent what to render for a missing timestamp; null lets the caller's own wording apply
+     */
+    private static CharSequence relativeTimeOr(long timestampMs, String absent) {
+        if (timestampMs <= 0) return absent;
+        return DateUtils.getRelativeTimeSpanString(
+                timestampMs, System.currentTimeMillis(), DateUtils.MINUTE_IN_MILLIS);
+    }
+
     /** Shows whether the given sensor is currently collecting data, and if not, why + what to do. */
     private void showSensorCollectionDialog(PreferenceScreen sensor) {
         boolean accessibilityOn = isAccessibilityServiceEnabled(this, Applications.class);
@@ -726,12 +864,11 @@ public class Aware_Client extends Aware_Activity {
                 SensorCollection.heldConsentsForCategory(
                         getApplicationContext(), activeConfigs, sensor.getKey());
 
-        CharSequence lastData = status.lastDataMs > 0
-                ? DateUtils.getRelativeTimeSpanString(status.lastDataMs, System.currentTimeMillis(),
-                        DateUtils.MINUTE_IN_MILLIS)
-                : "never";
-        StringBuilder msg = new StringBuilder(
-                SensorCollection.statusSummary(status, lastData));
+        StringBuilder msg = new StringBuilder(SensorCollection.statusSummary(
+                status,
+                relativeTimeOr(status.lastDataMs, "never"),
+                relativeTimeOr(SensorCollection.lastDeliveredMs(
+                        getApplicationContext(), sensor.getKey()), null)));
 
         AlertDialog.Builder builder = new AlertDialog.Builder(this)
                 .setTitle(sensor.getTitle())
@@ -789,12 +926,13 @@ public class Aware_Client extends Aware_Activity {
         boolean accessibilityOn = isAccessibilityServiceEnabled(this, Applications.class);
         SensorCollection.Status status =
                 SensorCollection.getStatus(getApplicationContext(), screen.getKey(), accessibilityOn);
-        CharSequence lastData = status.lastDataMs > 0
-                ? DateUtils.getRelativeTimeSpanString(status.lastDataMs, System.currentTimeMillis(),
-                        DateUtils.MINUTE_IN_MILLIS)
-                : "never";
         row.setTitle(SensorCollection.statusHeadline(status));
-        row.setSummary(SensorCollection.statusDetail(status.reason, lastData, status.fixHint));
+        row.setSummary(SensorCollection.statusDetail(
+                status.reason,
+                relativeTimeOr(status.lastDataMs, "never"),
+                relativeTimeOr(SensorCollection.lastDeliveredMs(
+                        getApplicationContext(), screen.getKey()), null),
+                status.fixHint));
 
         // A physical sensor that does not exist can never collect, so its Activate checkbox must not
         // imply otherwise. Keep the screen open for the explanatory status row and other information,
@@ -834,7 +972,8 @@ public class Aware_Client extends Aware_Activity {
         // Un-decline this consent group so the config sync won't force it back off.
         Set<String> declined = new HashSet<>(Arrays.asList(
                 Aware.getSetting(getApplicationContext(), Aware_Preferences.STUDY_DECLINED_SENSORS).split(",")));
-        declined.removeAll(Arrays.asList(consent.statusSettings));
+        List<String> controlled = SensorCollection.controlledSettings(consent);
+        declined.removeAll(controlled);
         declined.remove("");
         Aware.setSetting(getApplicationContext(), Aware_Preferences.STUDY_DECLINED_SENSORS,
                 TextUtils.join(",", declined));
@@ -842,7 +981,8 @@ public class Aware_Client extends Aware_Activity {
         // Turn on only the sub-settings the study config enables (fall back to the whole group if the
         // config can't be read), so enabling "Calls & messages" doesn't switch on more than the study wants.
         List<String> toEnable = SensorCollection.configEnabledSettings(
-                Aware.getActiveStudyConfig(getApplicationContext()), consent.statusSettings);
+                Aware.getActiveStudyConfig(getApplicationContext()),
+                controlled.toArray(new String[controlled.size()]));
         if (toEnable.isEmpty()) toEnable = Arrays.asList(consent.statusSettings);
         for (String setting : toEnable) {
             Aware.setSetting(getApplicationContext(), setting, true);
@@ -1218,23 +1358,11 @@ public class Aware_Client extends Aware_Activity {
             if (ScreenShot.ACTION_SCREENSHOT_STATUS.equals(intent.getAction())) {
                 String status = intent.getStringExtra(ScreenShot.EXTRA_SCREENSHOT_STATUS);
                 if (ScreenShot.STATUS_RETRY_COUNT_EXCEEDED.equals(status)) {
-                    Log.d(TAG, "Screenshot service retry count exceeded. Restarting service...");
-                    restartScreenshotService();
+                    Log.w(TAG, "Screenshot capture retry limit reached; not auto-restarting");
                 }
             }
         }
     };
-
-    private void restartScreenshotService() {
-        stopScreenshotService();
-        // Optionally wait for a few seconds before restarting the service to avoid rapid restarts
-        new Handler().postDelayed(new Runnable() {
-            @Override
-            public void run() {
-                checkAndStartScreenshotService();
-            }
-        }, 2000); // Wait for 2 seconds before restarting
-    }
 
     private void checkAndStartScreenshotService() {
         // Only act when the active study actually enabled screenshot. Outside a study, or in a
@@ -1325,7 +1453,7 @@ private void enableAccessibilityService(final Runnable onResolved) {
             }
         })
         .setNegativeButton("Not now", null)
-        .setCancelable(false)
+        .setCancelable(true)
         .setOnDismissListener(new DialogInterface.OnDismissListener() {
             @Override
             public void onDismiss(DialogInterface dialog) {
@@ -1364,8 +1492,36 @@ private void enableAccessibilityService(final Runnable onResolved) {
                 }
             })
             .setNegativeButton("Not now", null)
-            .setCancelable(false)
+            .setCancelable(true)
+            .setOnDismissListener(new DialogInterface.OnDismissListener() {
+                @Override
+                public void onDismiss(DialogInterface dialog) {
+                    locationServicesDialog = null;
+                }
+            })
             .show();
+    }
+
+    /**
+     * Fills in the Device section's delivery line: how far the research database has been brought up
+     * to, and whether delivery is currently failing.
+     *
+     * Shown here because the per-sensor delivery detail is one tap into each sensor, so a phone that
+     * has stopped delivering everything looks normal from the list. The pending-record count is not
+     * passed: it would mean counting rows in every provider on the main thread, and the line reads
+     * correctly without it.
+     */
+    private void showDataDeliveryStatus() {
+        Preference delivery = findPreference("data_delivery");
+        if (delivery == null) return;
+
+        long deliveredUpTo = UploadHealth.deliveredUpToMs(this);
+        CharSequence relative = deliveredUpTo > 0
+                ? DateUtils.getRelativeTimeSpanString(deliveredUpTo, System.currentTimeMillis(),
+                        DateUtils.MINUTE_IN_MILLIS)
+                : null;
+        delivery.setSummary(UploadHealth.statusLine(
+                relative, UploadHealth.failingTables(this), 0));
     }
 
     /**
@@ -1719,11 +1875,34 @@ private void enableAccessibilityService(final Runnable onResolved) {
         if (requestCode == REQUEST_CODE_SCREENSHOT) {
 
             if (resultCode == RESULT_OK) {
+                updateDeclinedSensor(Aware_Preferences.STATUS_SCREENSHOT, false);
                 startScreenshotService(resultCode, data);
             } else {
+                // Persist this as a participant decline. Otherwise the study drift reconciler sees
+                // server=true/local=false and repeatedly re-enables screenshot, causing the capture
+                // consent Activity to return on later launches.
+                Aware.setSetting(getApplicationContext(),
+                        Aware_Preferences.STATUS_SCREENSHOT, false);
+                updateDeclinedSensor(Aware_Preferences.STATUS_SCREENSHOT, true);
                 Toast.makeText(this, "Screen capture permission denied", Toast.LENGTH_SHORT).show();
             }
         }
+    }
+
+    private void updateDeclinedSensor(String statusSetting, boolean declined) {
+        Set<String> settings = new HashSet<>();
+        String raw = Aware.getSetting(
+                getApplicationContext(), Aware_Preferences.STUDY_DECLINED_SENSORS);
+        if (raw != null) {
+            for (String setting : raw.split(",")) {
+                if (!setting.trim().isEmpty()) settings.add(setting.trim());
+            }
+        }
+        if (declined) settings.add(statusSetting);
+        else settings.remove(statusSetting);
+        Aware.setSetting(getApplicationContext(),
+                Aware_Preferences.STUDY_DECLINED_SENSORS,
+                TextUtils.join(",", settings));
     }
 
     private boolean isAccessibilityServiceEnabled(Context context, Class<?> accessibilityServiceClass) {
@@ -1824,6 +2003,10 @@ private void enableAccessibilityService(final Runnable onResolved) {
         // alive to receive the live broadcast.
         showPendingStudyUpdateNoticeIfAny();
 
+        // A password-join study may have had its password rotated; background sync flags it but
+        // cannot prompt, so ask for the new password here while the app is open.
+        showPendingReauthIfAny();
+
         permissions_ok = true;
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
             for (String p : REQUIRED_PERMISSIONS) {
@@ -1890,6 +2073,8 @@ private void enableAccessibilityService(final Runnable onResolved) {
             } catch (PackageManager.NameNotFoundException e) {
                 e.printStackTrace();
             }
+
+            showDataDeliveryStatus();
 
             // Prompt for the accessibility service and the OS-level Location toggle the joined study
             // needs. Shown as in-app dialogs (no tray notification) so the request is contextual and
@@ -2016,10 +2201,10 @@ private void enableAccessibilityService(final Runnable onResolved) {
         if (!isFinishing) {
             if (isBatteryOptimizationIgnored(this, "com.aware.phone")) {
                 Log.d("AWARE-Client", "AWARE stopped from background: may be caused by battery optimization");
-                Aware.debug(this, "AWARE stopped from background: may be caused by battery optimization");
+                Aware.debug(this, Aware.LogType.LIFECYCLE, "AWARE stopped from background: may be caused by battery optimization");
             } else {
                 Log.d("AWARE-Client", "AWARE stopped from background: may be caused by system settings");
-                Aware.debug(this, "AWARE stopped from background: may be caused by system settings");
+                Aware.debug(this, Aware.LogType.LIFECYCLE, "AWARE stopped from background: may be caused by system settings");
             }
         }
         super.onStop();
@@ -2034,7 +2219,7 @@ private void enableAccessibilityService(final Runnable onResolved) {
         // Handle based on whether it's user-initiated or system-initiated closure
         if (isFinishing) {
             // User initiated closure
-            Aware.debug(this, "AWARE interface cleaned from the list of frequently used apps");
+            Aware.debug(this, Aware.LogType.LIFECYCLE, "AWARE interface cleaned from the list of frequently used apps");
         }
         Log.d("AWARE_Client", "AWARE interface cleaned from the list of frequently used apps");
         super.onDestroy();
@@ -2045,6 +2230,7 @@ private void enableAccessibilityService(final Runnable onResolved) {
         unregisterReceiver(screenshotServiceStoppedReceiver);
         unregisterReceiver(noteStatusReceiver);
         unregisterReceiver(studyConfigUpdatedReceiver);
+        unregisterReceiver(reauthRequiredReceiver);
     }
 
     private void hideUnusedPreferences() {

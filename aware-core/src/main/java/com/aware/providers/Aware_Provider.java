@@ -19,10 +19,6 @@ import com.aware.Aware;
 import com.aware.utils.DatabaseHelper;
 
 import java.util.HashMap;
-import java.net.HttpURLConnection;
-import java.net.URL;
-import java.util.concurrent.ExecutorService;
-import java.util.concurrent.Executors;
 
 /**
  * AWARE framework content provider - Device information - Framework settings -
@@ -32,7 +28,7 @@ import java.util.concurrent.Executors;
  */
 public class Aware_Provider extends ContentProvider {
 
-    public static final int DATABASE_VERSION = 18;
+    public static final int DATABASE_VERSION = 19;
 
     /**
      * AWARE framework content authority
@@ -50,6 +46,8 @@ public class Aware_Provider extends ContentProvider {
     private final int STUDY_ID = 8;
     private final int LOG = 9;
     private final int LOG_ID = 10;
+    private final int SYNC_MARKER = 11;
+    private final int SYNC_MARKER_ID = 12;
 
     /**
      * Information about the device in which the framework is installed.
@@ -67,18 +65,14 @@ public class Aware_Provider extends ContentProvider {
         public static final String TIMESTAMP = "timestamp";
         public static final String DEVICE_ID = "device_id";
         public static final String BOARD = "board";
-        public static final String BRAND = "brand";
         public static final String DEVICE = "device";
         public static final String BUILD_ID = "build_id";
         public static final String HARDWARE = "hardware";
         public static final String MANUFACTURER = "manufacturer";
         public static final String MODEL = "model";
         public static final String PRODUCT = "product";
-        public static final String SERIAL = "serial";
         public static final String RELEASE = "release";
-        public static final String RELEASE_TYPE = "release_type";
         public static final String SDK = "sdk";
-        public static final String LABEL = "label";
     }
 
     /**
@@ -142,7 +136,8 @@ public class Aware_Provider extends ContentProvider {
         public static final String STUDY_TITLE = "study_title";
         public static final String STUDY_DESCRIPTION = "study_description";
         public static final String STUDY_JOINED = "double_join";
-        public static final String STUDY_UPDATED = "double_updated"; // TODO RIO: Use this date for all relevant study updates
+        /** When the study configuration on this device was last replaced by a server version. */
+        public static final String STUDY_UPDATED = "double_updated";
         public static final String STUDY_EXIT = "double_exit";
         public static final String STUDY_COMPLIANCE = "study_compliance";
     }
@@ -159,28 +154,57 @@ public class Aware_Provider extends ContentProvider {
         public static final String LOG_TIMESTAMP = "timestamp";
         public static final String LOG_DEVICE_ID = "device_id";
         public static final String LOG_MESSAGE = "log_message";
+
+        /**
+         * What kind of record a row is, so the log can be filtered and counted by kind rather than
+         * by matching the text of {@link #LOG_MESSAGE}. See {@link com.aware.Aware.LogType} for the
+         * vocabulary.
+         */
+        public static final String LOG_TYPE = "log_type";
+    }
+
+    /**
+     * How far each table has been uploaded, one row per table.
+     *
+     * Kept apart from {@link Aware_Log} because the two have opposite lifetimes: a log entry is
+     * uploaded and then cleared, while a marker has to outlive every sync that reads it. Holding
+     * them in one table meant the log's own cleanup removed the markers, and every table whose rows
+     * are retained locally was then uploaded again from the beginning on the following sync.
+     *
+     * Local only — this is the phone's bookkeeping, and the server keeps its own copy of the data
+     * these markers describe.
+     */
+    public static final class Aware_Sync_Markers implements BaseColumns {
+        private Aware_Sync_Markers() {
+        }
+
+        public static final Uri CONTENT_URI = Uri.parse("content://" + Aware_Provider.AUTHORITY + "/aware_sync_markers");
+        public static final String CONTENT_TYPE = "vnd.android.cursor.dir/vnd.aware.sync_markers";
+        public static final String CONTENT_ITEM_TYPE = "vnd.android.cursor.item/vnd.aware.sync_markers";
+
+        public static final String MARKER_ID = "_id";
+        /** Name of the table this marker describes; one row per table. */
+        public static final String MARKER_TABLE = "table_name";
+        /** Timestamp of the last row the server acknowledged for that table. */
+        public static final String MARKER_LAST_SYNCED = "last_sync_timestamp";
     }
 
     public static String DATABASE_NAME = "aware.db";
-    public static final String[] DATABASE_TABLES = {"aware_device", "aware_settings", "aware_plugins", "aware_studies", "aware_log"};
+    public static final String[] DATABASE_TABLES = {"aware_device", "aware_settings", "aware_plugins", "aware_studies", "aware_log", "aware_sync_markers"};
     public static final String[] TABLES_FIELDS = {
             // Device information
             Aware_Device._ID + " integer primary key autoincrement,"
                     + Aware_Device.TIMESTAMP + " real default 0,"
                     + Aware_Device.DEVICE_ID + " text default '',"
                     + Aware_Device.BOARD + " text default '',"
-                    + Aware_Device.BRAND + " text default '',"
                     + Aware_Device.DEVICE + " text default '',"
                     + Aware_Device.BUILD_ID + " text default '',"
                     + Aware_Device.HARDWARE + " text default '',"
                     + Aware_Device.MANUFACTURER + " text default '',"
                     + Aware_Device.MODEL + " text default '',"
                     + Aware_Device.PRODUCT + " text default '',"
-                    + Aware_Device.SERIAL + " text default '',"
                     + Aware_Device.RELEASE + " text default '',"
-                    + Aware_Device.RELEASE_TYPE + " text default '',"
                     + Aware_Device.SDK + " text default '',"
-                    + Aware_Device.LABEL + " text default '',"
                     + "UNIQUE(" + Aware_Device.DEVICE_ID + ")",
 
             // Settings
@@ -211,13 +235,21 @@ public class Aware_Provider extends ContentProvider {
                     Aware_Studies.STUDY_TITLE + " text default ''," +
                     Aware_Studies.STUDY_DESCRIPTION + " text default ''," +
                     Aware_Studies.STUDY_JOINED + " real default 0," +
+                    Aware_Studies.STUDY_UPDATED + " real default 0," +
                     Aware_Studies.STUDY_EXIT + " real default 0," +
                     Aware_Studies.STUDY_COMPLIANCE + " text default ''",
 
             Aware_Log.LOG_ID + " integer primary key autoincrement," +
                     Aware_Log.LOG_TIMESTAMP + " real default 0," +
                     Aware_Log.LOG_DEVICE_ID + " text default ''," +
-                    Aware_Log.LOG_MESSAGE + " text default ''"
+                    Aware_Log.LOG_TYPE + " text default ''," +
+                    Aware_Log.LOG_MESSAGE + " text default ''",
+
+            // Sync markers
+            Aware_Sync_Markers.MARKER_ID + " integer primary key autoincrement," +
+                    Aware_Sync_Markers.MARKER_TABLE + " text default ''," +
+                    Aware_Sync_Markers.MARKER_LAST_SYNCED + " real default 0," +
+                    "UNIQUE(" + Aware_Sync_Markers.MARKER_TABLE + ")"
     };
 
     private UriMatcher sUriMatcher;
@@ -226,6 +258,7 @@ public class Aware_Provider extends ContentProvider {
     private HashMap<String, String> pluginsMap;
     private HashMap<String, String> studiesMap;
     private HashMap<String, String> logMap;
+    private HashMap<String, String> syncMarkersMap;
 
     private DatabaseHelper dbHelper;
     private static SQLiteDatabase database;
@@ -265,6 +298,9 @@ public class Aware_Provider extends ContentProvider {
             case LOG:
                 count = database.delete(DATABASE_TABLES[4], selection, selectionArgs);
                 break;
+            case SYNC_MARKER:
+                count = database.delete(DATABASE_TABLES[5], selection, selectionArgs);
+                break;
             default:
                 database.endTransaction();
                 throw new IllegalArgumentException("Unknown URI " + uri);
@@ -301,6 +337,10 @@ public class Aware_Provider extends ContentProvider {
                 return Aware_Log.CONTENT_TYPE;
             case LOG_ID:
                 return Aware_Log.CONTENT_ITEM_TYPE;
+            case SYNC_MARKER:
+                return Aware_Sync_Markers.CONTENT_TYPE;
+            case SYNC_MARKER_ID:
+                return Aware_Sync_Markers.CONTENT_ITEM_TYPE;
             default:
                 throw new IllegalArgumentException("Unknown URI " + uri);
         }
@@ -322,36 +362,12 @@ public class Aware_Provider extends ContentProvider {
         switch (sUriMatcher.match(uri)) {
             case DEVICE_INFO:
                 long dev_id = database.insertWithOnConflict(DATABASE_TABLES[0], Aware_Device.DEVICE_ID, values, SQLiteDatabase.CONFLICT_IGNORE);
-                try{
-
-                    ExecutorService executorService = Executors.newSingleThreadExecutor();
-                    executorService.execute(new Runnable() {
-                        @Override
-                        public void run() {
-                            try{
-                                URL url = new URL("https://awareframework.com/aware_installation_counter.php?data=" + values.toString());
-                                HttpURLConnection connection = (HttpURLConnection) url.openConnection();
-                                connection.setRequestMethod("GET");
-                                int responseCode = connection.getResponseCode();
-                                connection.disconnect();}
-                            catch (Exception e){
-                                Log.e("Aware", Log.getStackTraceString(e));
-                            }
-                        }
-                    });
-                }   catch (Exception e){
-                    Log.e("Aware", e.toString());
-                }
                 if (dev_id > 0) {
                     Uri devUri = ContentUris.withAppendedId(
                             Aware_Device.CONTENT_URI, dev_id);
                     getContext().getContentResolver().notifyChange(devUri, null, false);
                     database.setTransactionSuccessful();
                     database.endTransaction();
-
-
-
-
                     return devUri;
                 }
                 database.endTransaction();
@@ -401,6 +417,19 @@ public class Aware_Provider extends ContentProvider {
                 }
                 database.endTransaction();
                 throw new SQLException("Failed to insert row into " + uri);
+            case SYNC_MARKER:
+                // CONFLICT_REPLACE, so writing a table's marker supersedes its previous one and the
+                // table holds one row per synced table.
+                long marker_id = database.insertWithOnConflict(DATABASE_TABLES[5], Aware_Sync_Markers.MARKER_TABLE, values, SQLiteDatabase.CONFLICT_REPLACE);
+                if (marker_id > 0) {
+                    Uri markerUri = ContentUris.withAppendedId(Aware_Sync_Markers.CONTENT_URI, marker_id);
+                    getContext().getContentResolver().notifyChange(markerUri, null, false);
+                    database.setTransactionSuccessful();
+                    database.endTransaction();
+                    return markerUri;
+                }
+                database.endTransaction();
+                throw new SQLException("Failed to insert row into " + uri);
             default:
                 database.endTransaction();
                 throw new IllegalArgumentException("Unknown URI " + uri);
@@ -431,24 +460,22 @@ public class Aware_Provider extends ContentProvider {
         sUriMatcher.addURI(Aware_Provider.AUTHORITY, DATABASE_TABLES[3] + "/#", STUDY_ID);
         sUriMatcher.addURI(Aware_Provider.AUTHORITY, DATABASE_TABLES[4], LOG);
         sUriMatcher.addURI(Aware_Provider.AUTHORITY, DATABASE_TABLES[4] + "/#", LOG_ID);
+        sUriMatcher.addURI(Aware_Provider.AUTHORITY, DATABASE_TABLES[5], SYNC_MARKER);
+        sUriMatcher.addURI(Aware_Provider.AUTHORITY, DATABASE_TABLES[5] + "/#", SYNC_MARKER_ID);
 
         deviceMap = new HashMap<>();
         deviceMap.put(Aware_Device._ID, Aware_Device._ID);
         deviceMap.put(Aware_Device.TIMESTAMP, Aware_Device.TIMESTAMP);
         deviceMap.put(Aware_Device.DEVICE_ID, Aware_Device.DEVICE_ID);
         deviceMap.put(Aware_Device.BOARD, Aware_Device.BOARD);
-        deviceMap.put(Aware_Device.BRAND, Aware_Device.BRAND);
         deviceMap.put(Aware_Device.DEVICE, Aware_Device.DEVICE);
         deviceMap.put(Aware_Device.BUILD_ID, Aware_Device.BUILD_ID);
         deviceMap.put(Aware_Device.HARDWARE, Aware_Device.HARDWARE);
         deviceMap.put(Aware_Device.MANUFACTURER, Aware_Device.MANUFACTURER);
         deviceMap.put(Aware_Device.MODEL, Aware_Device.MODEL);
         deviceMap.put(Aware_Device.PRODUCT, Aware_Device.PRODUCT);
-        deviceMap.put(Aware_Device.SERIAL, Aware_Device.SERIAL);
         deviceMap.put(Aware_Device.RELEASE, Aware_Device.RELEASE);
-        deviceMap.put(Aware_Device.RELEASE_TYPE, Aware_Device.RELEASE_TYPE);
         deviceMap.put(Aware_Device.SDK, Aware_Device.SDK);
-        deviceMap.put(Aware_Device.LABEL, Aware_Device.LABEL);
 
         settingsMap = new HashMap<>();
         settingsMap.put(Aware_Settings.SETTING_ID, Aware_Settings.SETTING_ID);
@@ -478,6 +505,7 @@ public class Aware_Provider extends ContentProvider {
         studiesMap.put(Aware_Studies.STUDY_TITLE, Aware_Studies.STUDY_TITLE);
         studiesMap.put(Aware_Studies.STUDY_DESCRIPTION, Aware_Studies.STUDY_DESCRIPTION);
         studiesMap.put(Aware_Studies.STUDY_JOINED, Aware_Studies.STUDY_JOINED);
+        studiesMap.put(Aware_Studies.STUDY_UPDATED, Aware_Studies.STUDY_UPDATED);
         studiesMap.put(Aware_Studies.STUDY_EXIT, Aware_Studies.STUDY_EXIT);
         studiesMap.put(Aware_Studies.STUDY_COMPLIANCE, Aware_Studies.STUDY_COMPLIANCE);
 
@@ -485,7 +513,13 @@ public class Aware_Provider extends ContentProvider {
         logMap.put(Aware_Log.LOG_ID, Aware_Log.LOG_ID);
         logMap.put(Aware_Log.LOG_TIMESTAMP, Aware_Log.LOG_TIMESTAMP);
         logMap.put(Aware_Log.LOG_DEVICE_ID, Aware_Log.LOG_DEVICE_ID);
+        logMap.put(Aware_Log.LOG_TYPE, Aware_Log.LOG_TYPE);
         logMap.put(Aware_Log.LOG_MESSAGE, Aware_Log.LOG_MESSAGE);
+
+        syncMarkersMap = new HashMap<>();
+        syncMarkersMap.put(Aware_Sync_Markers.MARKER_ID, Aware_Sync_Markers.MARKER_ID);
+        syncMarkersMap.put(Aware_Sync_Markers.MARKER_TABLE, Aware_Sync_Markers.MARKER_TABLE);
+        syncMarkersMap.put(Aware_Sync_Markers.MARKER_LAST_SYNCED, Aware_Sync_Markers.MARKER_LAST_SYNCED);
 
         return true;
     }
@@ -522,6 +556,10 @@ public class Aware_Provider extends ContentProvider {
             case LOG:
                 qb.setTables(DATABASE_TABLES[4]);
                 qb.setProjectionMap(logMap);
+                break;
+            case SYNC_MARKER:
+                qb.setTables(DATABASE_TABLES[5]);
+                qb.setProjectionMap(syncMarkersMap);
                 break;
             default:
                 throw new IllegalArgumentException("Unknown URI " + uri);
@@ -563,6 +601,9 @@ public class Aware_Provider extends ContentProvider {
                 break;
             case LOG:
                 count = database.update(DATABASE_TABLES[4], values, selection, selectionArgs);
+                break;
+            case SYNC_MARKER:
+                count = database.update(DATABASE_TABLES[5], values, selection, selectionArgs);
                 break;
             default:
                 database.endTransaction();

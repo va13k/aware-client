@@ -22,7 +22,7 @@ import java.util.ArrayList;
 
 /**
  * Created by denzil on 10/01/2017.
- * <p>
+ *
  * This sensor is used to track device significant motion.
  * Also used internally by AWARE if available to save battery when the device is still with high-frequency sensors
  * Based of:

@@ -27,6 +27,7 @@ import com.aware.Aware_Preferences;
 import com.aware.providers.Aware_Provider;
 import com.aware.utils.Http;
 import com.aware.utils.Https;
+import com.aware.utils.LogRedactor;
 import com.aware.utils.SSLManager;
 
 import org.json.JSONArray;
@@ -95,7 +96,8 @@ public class Aware_QRCode extends Aware_Activity implements ZBarScannerView.Resu
     @Override
     public void handleResult(Result result) {
         Log.d(Aware.TAG, "QR Code result: " + result.getContents());
-        new StudyData().execute(result.getContents());
+        new StudyData().executeOnExecutor(
+                AsyncTask.THREAD_POOL_EXECUTOR, result.getContents());
     }
 
     /**
@@ -146,9 +148,10 @@ public class Aware_QRCode extends Aware_Activity implements ZBarScannerView.Resu
                     //Note: Joining a study always downloads the certificate.
                     SSLManager.handleUrl(getApplicationContext(), study_url, true);
 
-                    while(!SSLManager.hasCertificate(getApplicationContext(), study_uri.getHost())) {
-                        //wait until we have the certificate downloaded
-                    }
+                    // handleUrl(..., true) already blocks until the download attempt completes.
+                    // An unreachable host must fail the join instead of spinning forever.
+                    if (!SSLManager.hasCertificate(getApplicationContext(), study_uri.getHost()))
+                        return null;
 
                     try {
                         request = new Https(SSLManager.getHTTPS(getApplicationContext(), study_url)).dataGET(study_url.substring(0, study_url.indexOf("/index.php")) + "/index.php/webservice/client_get_study_info/" + study_api_key, true);
@@ -245,7 +248,7 @@ public class Aware_QRCode extends Aware_Activity implements ZBarScannerView.Resu
                     Cursor dbStudy = Aware.getStudy(getApplicationContext(), study_url);
 
                     if (Aware.DEBUG)
-                        Log.d(Aware.TAG, DatabaseUtils.dumpCursorToString(dbStudy));
+                        Log.d(Aware.TAG, LogRedactor.redact(DatabaseUtils.dumpCursorToString(dbStudy)));
 
                     if (dbStudy == null || !dbStudy.moveToFirst()) {
                         ContentValues studyData = new ContentValues();

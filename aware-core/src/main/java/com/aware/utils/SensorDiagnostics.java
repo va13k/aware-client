@@ -212,39 +212,55 @@ public final class SensorDiagnostics {
                 false
             )
         );
+        GATES.put(
+            Aware_Preferences.STATUS_PLUGIN_AMBIENT_NOISE,
+            new Gate(
+                new String[]{Manifest.permission.RECORD_AUDIO},
+                false,
+                false
+            )
+        );
+        GATES.put(
+            Aware_Preferences.STATUS_PLUGIN_OPENWEATHER,
+            new Gate(
+                new String[]{Manifest.permission.ACCESS_COARSE_LOCATION},
+                false,
+                false
+            )
+        );
 
         sampled(Aware_Preferences.STATUS_ACCELEROMETER, ".provider.accelerometer",
-                "sensor_accelerometer", Aware_Preferences.FREQUENCY_ACCELEROMETER,
+                "accelerometer", Aware_Preferences.FREQUENCY_ACCELEROMETER,
                 200000, SensorFreshness.Unit.MICROSECONDS);
         sampled(Aware_Preferences.STATUS_LINEAR_ACCELEROMETER, ".provider.accelerometer.linear",
-                "sensor_accelerometer_linear", Aware_Preferences.FREQUENCY_LINEAR_ACCELEROMETER,
+                "linear_accelerometer", Aware_Preferences.FREQUENCY_LINEAR_ACCELEROMETER,
                 200000, SensorFreshness.Unit.MICROSECONDS);
         sampled(Aware_Preferences.STATUS_BAROMETER, ".provider.barometer",
-                "sensor_barometer", Aware_Preferences.FREQUENCY_BAROMETER,
+                "barometer", Aware_Preferences.FREQUENCY_BAROMETER,
                 200000, SensorFreshness.Unit.MICROSECONDS);
         sampled(Aware_Preferences.STATUS_GRAVITY, ".provider.gravity",
-                "sensor_gravity", Aware_Preferences.FREQUENCY_GRAVITY,
+                "gravity", Aware_Preferences.FREQUENCY_GRAVITY,
                 200000, SensorFreshness.Unit.MICROSECONDS);
         sampled(Aware_Preferences.STATUS_GYROSCOPE, ".provider.gyroscope",
-                "sensor_gyroscope", Aware_Preferences.FREQUENCY_GYROSCOPE,
+                "gyroscope", Aware_Preferences.FREQUENCY_GYROSCOPE,
                 200000, SensorFreshness.Unit.MICROSECONDS);
         sampled(Aware_Preferences.STATUS_LIGHT, ".provider.light",
-                "sensor_light", Aware_Preferences.FREQUENCY_LIGHT,
+                "light", Aware_Preferences.FREQUENCY_LIGHT,
                 200000, SensorFreshness.Unit.MICROSECONDS);
         sampled(Aware_Preferences.STATUS_MAGNETOMETER, ".provider.magnetometer",
-                "sensor_magnetometer", Aware_Preferences.FREQUENCY_MAGNETOMETER,
+                "magnetometer", Aware_Preferences.FREQUENCY_MAGNETOMETER,
                 200000, SensorFreshness.Unit.MICROSECONDS);
         sampled(Aware_Preferences.STATUS_PROXIMITY, ".provider.proximity",
-                "sensor_proximity", Aware_Preferences.FREQUENCY_PROXIMITY,
+                "proximity", Aware_Preferences.FREQUENCY_PROXIMITY,
                 200000, SensorFreshness.Unit.MICROSECONDS);
         sampled(Aware_Preferences.STATUS_ROTATION, ".provider.rotation",
-                "sensor_rotation", Aware_Preferences.FREQUENCY_ROTATION,
+                "rotation", Aware_Preferences.FREQUENCY_ROTATION,
                 200000, SensorFreshness.Unit.MICROSECONDS);
         sampled(Aware_Preferences.STATUS_TEMPERATURE, ".provider.temperature",
-                "sensor_temperature", Aware_Preferences.FREQUENCY_TEMPERATURE,
+                "temperature", Aware_Preferences.FREQUENCY_TEMPERATURE,
                 200000, SensorFreshness.Unit.MICROSECONDS);
         sampled(Aware_Preferences.STATUS_BLUETOOTH, ".provider.bluetooth",
-                "sensor_bluetooth", Aware_Preferences.FREQUENCY_BLUETOOTH,
+                "bluetooth", Aware_Preferences.FREQUENCY_BLUETOOTH,
                 60, SensorFreshness.Unit.SECONDS);
         sampled(Aware_Preferences.STATUS_PROCESSOR, ".provider.processor",
                 "processor", Aware_Preferences.FREQUENCY_PROCESSOR,
@@ -377,7 +393,7 @@ public final class SensorDiagnostics {
                     + " expected_within_ms=" + freshnessWindow
                     + " excluded=" + excluded
                     + " reason=\"" + reason.replace("\"", "'") + "\"";
-            Aware.debug(context, line);
+            Aware.debug(context, Aware.LogType.DIAGNOSTICS, line);
         }
     }
 
@@ -405,7 +421,33 @@ public final class SensorDiagnostics {
         return "";
     }
 
+    /**
+     * The most recent moment this sensor is known to have produced data.
+     *
+     * Taken as the later of the newest local row and the point the upload bookmark says was
+     * delivered. The local table alone is not enough: with {@code webservice_remove_data} on,
+     * acknowledged rows are deleted after upload, so a sensor that is collecting and delivering
+     * normally can hold no local rows at all. Reading only the table then reports 0, which
+     * {@link #stateFor} turns into {@code waiting_first_sample} — a sensor that has been working for
+     * hours described as never having started, in the participant's status text and in the
+     * diagnostics uploaded to the researcher.
+     *
+     * The bookmark is a truthful lower bound: if data up to T reached the database, data existed
+     * at T. It recovers exactly the fact deletion destroyed.
+     */
     private static long latestTimestamp(Context context, Source source) {
+        return observedLatest(newestLocalRow(context, source), deliveredUpTo(context, source.table));
+    }
+
+    /**
+     * Reconciles the two records of when a sensor last produced data. Pure, so the case that caused
+     * the bug — nothing local, something delivered — is covered by a unit test.
+     */
+    static long observedLatest(long newestLocalRow, long deliveredUpTo) {
+        return Math.max(newestLocalRow, deliveredUpTo);
+    }
+
+    private static long newestLocalRow(Context context, Source source) {
         Uri uri = Uri.parse("content://" + context.getPackageName()
                 + source.authoritySuffix + "/" + source.table);
         Cursor cursor = null;
@@ -417,6 +459,28 @@ public final class SensorDiagnostics {
             // Missing/unreadable provider is represented as no sample yet.
         } finally {
             if (cursor != null) cursor.close();
+        }
+        return 0;
+    }
+
+    /**
+     * The timestamp this table's upload bookmark reports as delivered, or 0 when there is none.
+     * A bookmark keyed by a name no longer in use simply yields 0, leaving the local row as the
+     * only evidence — the behaviour before this lookup existed.
+     */
+    private static long deliveredUpTo(Context context, String table) {
+        Cursor marker = null;
+        try {
+            marker = context.getContentResolver().query(
+                    Aware_Provider.Aware_Sync_Markers.CONTENT_URI,
+                    new String[]{Aware_Provider.Aware_Sync_Markers.MARKER_LAST_SYNCED},
+                    Aware_Provider.Aware_Sync_Markers.MARKER_TABLE + "=?",
+                    new String[]{table}, null);
+            if (marker != null && marker.moveToFirst()) return (long) marker.getDouble(0);
+        } catch (Exception ignored) {
+            // No bookmark yet — nothing delivered.
+        } finally {
+            if (marker != null) marker.close();
         }
         return 0;
     }

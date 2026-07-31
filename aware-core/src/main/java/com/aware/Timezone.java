@@ -26,7 +26,7 @@ import java.util.TimeZone;
  *
  * @author Denzil
  *         Made sensor event-based, instead of polling data.
- *         <p>
+ *
  *         Original @author Nikola
  */
 public class Timezone extends Aware_Sensor {

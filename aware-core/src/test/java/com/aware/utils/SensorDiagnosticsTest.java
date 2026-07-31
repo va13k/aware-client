@@ -101,4 +101,48 @@ public class SensorDiagnosticsTest {
                 "Missing permission: ACCESS_FINE_LOCATION", false, false,
                 1_000_000L, 999_999L, 120_000L));
     }
+
+    // --- When a sensor last produced data ---
+    //
+    // Two records disagree once data has been uploaded: the local table is emptied by
+    // webservice_remove_data, while the upload bookmark keeps the delivered timestamp. Reading only
+    // the table reports a working sensor as never having collected, in the participant's status text
+    // and in the diagnostics uploaded to the researcher.
+
+    @Test
+    public void deliveredDataCountsWhenTheLocalRowsAreGone() {
+        // The bug: uploaded and cleaned up, so nothing local — but the database holds data up to
+        // 999_999, so the sensor plainly has collected.
+        assertEquals(999_999L, SensorDiagnostics.observedLatest(0L, 999_999L));
+    }
+
+    @Test
+    public void aWorkingSensorIsNeverReportedAsWaitingForItsFirstSample() {
+        // Ties the reconciliation to the decision it feeds: 0 means waiting_first_sample, so any
+        // evidence of delivery has to survive into that call.
+        long observed = SensorDiagnostics.observedLatest(0L, 999_999L);
+        assertEquals("collecting", SensorDiagnostics.stateGiven(
+                "", true, false, 1_000_000L, observed, 120_000L));
+    }
+
+    @Test
+    public void localRowsCountWhenNothingHasBeenDeliveredYet() {
+        // A fresh enrolment, or an upload outage: the local table is the only record.
+        assertEquals(999_999L, SensorDiagnostics.observedLatest(999_999L, 0L));
+    }
+
+    @Test
+    public void theLaterOfTheTwoWins() {
+        // Local rows are newer than the bookmark whenever data has arrived since the last upload.
+        assertEquals(999_999L, SensorDiagnostics.observedLatest(999_999L, 500_000L));
+        assertEquals(999_999L, SensorDiagnostics.observedLatest(500_000L, 999_999L));
+    }
+
+    @Test
+    public void noDataAnywhereIsStillNever() {
+        // The genuine case must survive: a sensor that really has not collected reports 0.
+        assertEquals(0L, SensorDiagnostics.observedLatest(0L, 0L));
+        assertEquals("waiting_first_sample", SensorDiagnostics.stateGiven(
+                "", true, false, 1_000_000L, 0L, 120_000L));
+    }
 }
