@@ -65,9 +65,13 @@ public class Aware_Join_Study extends Aware_Activity {
 
 
 
-    private static String study_url;
+    // Instance-scoped (not static): each launch of this screen must use only the study URL and
+    // password from its own intent. When these were static, a plugin-install relaunch (or a second
+    // study visited in the same process) could surface a previous study's URL/password in the
+    // re-shown join dialog — the "old one, not the current one" the participant sees.
+    private String study_url;
     private JSONArray study_configs;
-    private static String input_password;
+    private String input_password;
     private boolean consentDone;
 
 
@@ -126,7 +130,14 @@ public class Aware_Join_Study extends Aware_Activity {
 
         // Fetch study config if not passed in intent
         if (studyConfigStr == null) {
-            new JoinStudyDialog(Aware_Join_Study.this).validateStudy(study_url);  // TODO TEST 1
+            // Re-validate with the password the participant already entered, carried across
+            // config-less re-entries (e.g. the plugin-install relaunch below), not an empty one.
+            // Otherwise a password-protected study reports PASSWORD_REQUIRED and re-opens the join
+            // dialog even though the correct password was already given. Genuine first-time entries
+            // (deep link, QR, settings toggle) carry no password, so this stays empty and the
+            // prompt still appears for them as intended.
+            new JoinStudyDialog(Aware_Join_Study.this)
+                    .validateStudy(new JoinStudyDialog.ValidationRequest(study_url, input_password));
         } else {
             Cursor qry = Aware.getStudy(this, study_url);
             if (qry == null || !qry.moveToFirst()) {
@@ -554,19 +565,22 @@ public class Aware_Join_Study extends Aware_Activity {
         }
     }
 
-    private static PluginCompliance pluginCompliance = new PluginCompliance();
+    private final PluginCompliance pluginCompliance = new PluginCompliance();
 
     @Override
     public void onSharedPreferenceChanged(SharedPreferences sharedPreferences, String key) {
         //no-op, dummy from Aware_Activity super class interface
     }
 
-    public static class PluginCompliance extends BroadcastReceiver {
+    private class PluginCompliance extends BroadcastReceiver {
         @Override
         public void onReceive(Context context, Intent intent) {
             if (intent.getAction().equalsIgnoreCase(Aware.ACTION_AWARE_PLUGIN_INSTALLED)) {
                 Intent joinStudy = new Intent(context, Aware_Join_Study.class);
                 joinStudy.putExtra(EXTRA_STUDY_URL, study_url);
+                // Carry the already-entered password so the relaunched screen re-validates with it
+                // instead of re-prompting the participant (see the config-less branch in onCreate).
+                joinStudy.putExtra(INPUT_PASSWORD, input_password);
                 context.startActivity(joinStudy);
             }
         }
