@@ -108,6 +108,17 @@ public class AwareSyncAdapter extends AbstractThreadedSyncAdapter {
             return;
         }
 
+        // Nothing uploads without an identity to attribute it to. syncBatch() repairs a row stored
+        // before the UUID resolved, but only when it has one to repair it with -- so this is the case
+        // that repair cannot cover, refused here rather than left to the payload. An install with no
+        // UUID has also never joined a study, so in practice offloadData() already returns on the
+        // empty webservice address; stating the rule here is what stops that staying true by
+        // coincidence.
+        if (DeviceId.trimToEmpty(Aware.getDeviceID(mContext)).isEmpty()) {
+            Log.w(Aware.TAG, "Skipping data sync: this install has no device_id yet, so no row can be attributed.");
+            return;
+        }
+
         if (!Aware.getSetting(mContext, Aware_Preferences.WEBSERVICE_SILENT).equals("true"))
             notManager = (NotificationManager) mContext.getSystemService(Context.NOTIFICATION_SERVICE);
 
