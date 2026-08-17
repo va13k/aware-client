@@ -32,14 +32,12 @@ import androidx.annotation.RequiresApi;
 import androidx.core.app.NotificationCompat;
 
 import com.aware.phone.R;
+import com.aware.utils.UtcTime;
 
 import java.io.File;
 import java.io.FileOutputStream;
 import java.io.IOException;
 import java.nio.ByteBuffer;
-import java.text.SimpleDateFormat;
-import java.util.Date;
-import java.util.Locale;
 
 public class ScreenshotCaptureService extends Service {
     private static final String TAG = "ScreenCaptureService";
@@ -296,7 +294,7 @@ public class ScreenshotCaptureService extends Service {
             return;
         }
 
-        String timestamp = new SimpleDateFormat("yyyyMMdd_HHmmss", Locale.US).format(new Date());
+        String timestamp = UtcTime.fileStamp(System.currentTimeMillis());
         File path = new File(downloadsDirectory, "screenshot_" + timestamp + ".jpg");
         try (FileOutputStream fos = new FileOutputStream(path)) {
             bitmap.compress(Bitmap.CompressFormat.JPEG, compressionRate, fos); // Use the selected compression rate
