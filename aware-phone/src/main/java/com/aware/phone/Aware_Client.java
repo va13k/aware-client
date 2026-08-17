@@ -317,7 +317,7 @@ public class Aware_Client extends Aware_Activity implements SharedPreferences.On
 
         } else {
 
-            if (prefs.getAll().isEmpty() && Aware.getSetting(getApplicationContext(), Aware_Preferences.DEVICE_ID).length() == 0) {
+            if (prefs.getAll().isEmpty() && Aware.getDeviceID(getApplicationContext()).length() == 0) {
                 PreferenceManager.setDefaultValues(getApplicationContext(), "com.aware.phone", Context.MODE_PRIVATE, com.aware.R.xml.aware_preferences, true);
                 prefs.edit().commit();
             } else {
@@ -335,7 +335,7 @@ public class Aware_Client extends Aware_Activity implements SharedPreferences.On
                 }
             }
 
-            if (Aware.getSetting(getApplicationContext(), Aware_Preferences.DEVICE_ID).length() == 0) {
+            if (Aware.getDeviceID(getApplicationContext()).length() == 0) {
                 UUID uuid = UUID.randomUUID();
                 Aware.setSetting(getApplicationContext(), Aware_Preferences.DEVICE_ID, uuid.toString(), "com.aware.phone");
             }
@@ -464,7 +464,7 @@ public class Aware_Client extends Aware_Activity implements SharedPreferences.On
 
             //Ping AWARE's server with getApplicationContext() device's information for framework's statistics log
             Hashtable<String, String> device_ping = new Hashtable<>();
-            device_ping.put(Aware_Preferences.DEVICE_ID, Aware.getSetting(getApplicationContext(), Aware_Preferences.DEVICE_ID));
+            device_ping.put(Aware_Preferences.DEVICE_ID, Aware.getDeviceID(getApplicationContext()));
             device_ping.put("ping", String.valueOf(System.currentTimeMillis()));
             device_ping.put("platform", "android");
             try {

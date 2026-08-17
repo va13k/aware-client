@@ -120,7 +120,7 @@ public class Accelerometer extends Aware_Sensor implements SensorEventListener {
         LAST_VALUES = new Float[]{event.values[0], event.values[1], event.values[2]};
 
         ContentValues rowData = new ContentValues();
-        rowData.put(Accelerometer_Data.DEVICE_ID, Aware.getSetting(getApplicationContext(), Aware_Preferences.DEVICE_ID));
+        rowData.put(Accelerometer_Data.DEVICE_ID, Aware.getDeviceID(getApplicationContext()));
         rowData.put(Accelerometer_Data.TIMESTAMP, TS);
         rowData.put(Accelerometer_Data.VALUES_0, event.values[0]);
         rowData.put(Accelerometer_Data.VALUES_1, event.values[1]);
@@ -195,7 +195,7 @@ public class Accelerometer extends Aware_Sensor implements SensorEventListener {
         Cursor accelInfo = getContentResolver().query(Accelerometer_Sensor.CONTENT_URI, null, null, null, null);
         if (accelInfo == null || !accelInfo.moveToFirst()) {
             ContentValues rowData = new ContentValues();
-            rowData.put(Accelerometer_Sensor.DEVICE_ID, Aware.getSetting(getApplicationContext(), Aware_Preferences.DEVICE_ID));
+            rowData.put(Accelerometer_Sensor.DEVICE_ID, Aware.getDeviceID(getApplicationContext()));
             rowData.put(Accelerometer_Sensor.TIMESTAMP, System.currentTimeMillis());
             rowData.put(Accelerometer_Sensor.MAXIMUM_RANGE, acc.getMaximumRange());
             rowData.put(Accelerometer_Sensor.MINIMUM_DELAY, acc.getMinDelay());

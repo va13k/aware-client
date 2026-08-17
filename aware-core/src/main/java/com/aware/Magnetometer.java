@@ -108,7 +108,7 @@ public class Magnetometer extends Aware_Sensor implements SensorEventListener {
         LAST_VALUES = new Float[]{event.values[0], event.values[1], event.values[2]};
 
         ContentValues rowData = new ContentValues();
-        rowData.put(Magnetometer_Data.DEVICE_ID, Aware.getSetting(getApplicationContext(), Aware_Preferences.DEVICE_ID));
+        rowData.put(Magnetometer_Data.DEVICE_ID, Aware.getDeviceID(getApplicationContext()));
         rowData.put(Magnetometer_Data.TIMESTAMP, TS);
         rowData.put(Magnetometer_Data.VALUES_0, event.values[0]);
         rowData.put(Magnetometer_Data.VALUES_1, event.values[1]);
@@ -184,7 +184,7 @@ public class Magnetometer extends Aware_Sensor implements SensorEventListener {
         Cursor sensorInfo = getContentResolver().query(Magnetometer_Sensor.CONTENT_URI, null, null, null, null);
         if (sensorInfo == null || !sensorInfo.moveToFirst()) {
             ContentValues rowData = new ContentValues();
-            rowData.put(Magnetometer_Sensor.DEVICE_ID, Aware.getSetting(getApplicationContext(), Aware_Preferences.DEVICE_ID));
+            rowData.put(Magnetometer_Sensor.DEVICE_ID, Aware.getDeviceID(getApplicationContext()));
             rowData.put(Magnetometer_Sensor.TIMESTAMP, System.currentTimeMillis());
             rowData.put(Magnetometer_Sensor.MAXIMUM_RANGE, sensor.getMaximumRange());
             rowData.put(Magnetometer_Sensor.MINIMUM_DELAY, sensor.getMinDelay());

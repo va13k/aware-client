@@ -431,7 +431,7 @@ public class ScreenShot extends Aware_Sensor {
     private void storeScreenshotMetadata(byte[] imageData, long timestamp) {
         ContentValues values = new ContentValues();
         values.put(ScreenShot_Provider.ScreenshotData.TIMESTAMP, timestamp);
-        values.put(ScreenShot_Provider.ScreenshotData.DEVICE_ID, Aware.getSetting(getApplicationContext(), Aware_Preferences.DEVICE_ID));
+        values.put(ScreenShot_Provider.ScreenshotData.DEVICE_ID, Aware.getDeviceID(getApplicationContext()));
         values.put(ScreenShot_Provider.ScreenshotData.IMAGE_DATA, imageData);
         values.put(ScreenShot_Provider.ScreenshotData.PACKAGE_NAME, foregroundApp);
         values.put(ScreenShot_Provider.ScreenshotData.APPLICATION_NAME, application_name);

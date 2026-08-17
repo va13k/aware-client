@@ -179,7 +179,7 @@ public class Plugin extends Aware_Plugin implements GoogleApiClient.ConnectionCa
 
                                     ContentValues weather_data = new ContentValues();
                                     weather_data.put(Provider.OpenWeather_Data.TIMESTAMP, System.currentTimeMillis());
-                                    weather_data.put(Provider.OpenWeather_Data.DEVICE_ID, Aware.getSetting(getApplicationContext(), Aware_Preferences.DEVICE_ID));
+                                    weather_data.put(Provider.OpenWeather_Data.DEVICE_ID, Aware.getDeviceID(getApplicationContext()));
                                     weather_data.put(Provider.OpenWeather_Data.CITY, raw_data.getString("name"));
                                     weather_data.put(Provider.OpenWeather_Data.TEMPERATURE, weather_characteristics.getDouble("temp"));
                                     weather_data.put(Provider.OpenWeather_Data.TEMPERATURE_MAX, weather_characteristics.getDouble("temp_max"));

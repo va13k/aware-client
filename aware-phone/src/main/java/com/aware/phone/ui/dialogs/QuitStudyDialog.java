@@ -71,7 +71,7 @@ public class QuitStudyDialog extends DialogFragment {
                         if (dbStudy != null && dbStudy.moveToFirst()) {
                             ContentValues complianceEntry = new ContentValues();
                             complianceEntry.put(Aware_Provider.Aware_Studies.STUDY_TIMESTAMP, System.currentTimeMillis());
-                            complianceEntry.put(Aware_Provider.Aware_Studies.STUDY_DEVICE_ID, Aware.getSetting(mActivity, Aware_Preferences.DEVICE_ID));
+                            complianceEntry.put(Aware_Provider.Aware_Studies.STUDY_DEVICE_ID, Aware.getDeviceID(mActivity));
                             complianceEntry.put(Aware_Provider.Aware_Studies.STUDY_KEY, dbStudy.getInt(dbStudy.getColumnIndex(Aware_Provider.Aware_Studies.STUDY_KEY)));
                             complianceEntry.put(Aware_Provider.Aware_Studies.STUDY_API, dbStudy.getString(dbStudy.getColumnIndex(Aware_Provider.Aware_Studies.STUDY_API)));
                             complianceEntry.put(Aware_Provider.Aware_Studies.STUDY_URL, dbStudy.getString(dbStudy.getColumnIndex(Aware_Provider.Aware_Studies.STUDY_URL)));
@@ -116,7 +116,7 @@ public class QuitStudyDialog extends DialogFragment {
         if (dbStudy != null && dbStudy.moveToFirst()) {
             ContentValues complianceEntry = new ContentValues();
             complianceEntry.put(Aware_Provider.Aware_Studies.STUDY_TIMESTAMP, System.currentTimeMillis());
-            complianceEntry.put(Aware_Provider.Aware_Studies.STUDY_DEVICE_ID, Aware.getSetting(mActivity, Aware_Preferences.DEVICE_ID));
+            complianceEntry.put(Aware_Provider.Aware_Studies.STUDY_DEVICE_ID, Aware.getDeviceID(mActivity));
             complianceEntry.put(Aware_Provider.Aware_Studies.STUDY_KEY, dbStudy.getInt(dbStudy.getColumnIndex(Aware_Provider.Aware_Studies.STUDY_KEY)));
             complianceEntry.put(Aware_Provider.Aware_Studies.STUDY_API, dbStudy.getString(dbStudy.getColumnIndex(Aware_Provider.Aware_Studies.STUDY_API)));
             complianceEntry.put(Aware_Provider.Aware_Studies.STUDY_URL, dbStudy.getString(dbStudy.getColumnIndex(Aware_Provider.Aware_Studies.STUDY_URL)));
@@ -198,7 +198,7 @@ public class QuitStudyDialog extends DialogFragment {
         ContentValues entry = new ContentValues();
         entry.put(Aware_Provider.Aware_Studies.STUDY_TIMESTAMP, System.currentTimeMillis());
         entry.put(Aware_Provider.Aware_Studies.STUDY_DEVICE_ID,
-                Aware.getSetting(mActivity, Aware_Preferences.DEVICE_ID));
+                Aware.getDeviceID(mActivity));
         entry.put(Aware_Provider.Aware_Studies.STUDY_KEY,
                 dbStudy.getInt(dbStudy.getColumnIndex(Aware_Provider.Aware_Studies.STUDY_KEY)));
         entry.put(Aware_Provider.Aware_Studies.STUDY_API,

@@ -186,7 +186,7 @@ public class Telephony extends Aware_Sensor {
 
             if (lastSignalStrength == null) return;
 
-            String device_id = Aware.getSetting(getApplicationContext(), Aware_Preferences.DEVICE_ID);
+            String device_id = Aware.getDeviceID(getApplicationContext());
 
             if (location instanceof GsmCellLocation) {
                 GsmCellLocation loc = (GsmCellLocation) location;

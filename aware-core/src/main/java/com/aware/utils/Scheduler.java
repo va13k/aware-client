@@ -135,7 +135,7 @@ public class Scheduler extends Aware_Sensor {
 
                 String original_id = schedule.getScheduleID();
                 String random_seed = original_id;
-                random_seed += "-" + Aware.getSetting(context, Aware_Preferences.DEVICE_ID);
+                random_seed += "-" + Aware.getDeviceID(context);
                 // Get the random events for today
                 ArrayList<Long> randoms = random_times(start, end, random.getInt(RANDOM_TIMES), random.getInt(RANDOM_INTERVAL), random_seed);
                 // Remove events that are in the past
@@ -177,7 +177,7 @@ public class Scheduler extends Aware_Sensor {
             } else {
                 ContentValues data = new ContentValues();
                 data.put(Scheduler_Provider.Scheduler_Data.TIMESTAMP, System.currentTimeMillis());
-                data.put(Scheduler_Provider.Scheduler_Data.DEVICE_ID, Aware.getSetting(context, Aware_Preferences.DEVICE_ID));
+                data.put(Scheduler_Provider.Scheduler_Data.DEVICE_ID, Aware.getDeviceID(context));
                 data.put(Scheduler_Provider.Scheduler_Data.SCHEDULE_ID, schedule.getScheduleID());
                 data.put(Scheduler_Provider.Scheduler_Data.SCHEDULE, schedule.build().toString());
                 data.put(Scheduler_Provider.Scheduler_Data.PACKAGE_NAME, (is_global) ? "com.aware.phone" : context.getPackageName());
@@ -244,7 +244,7 @@ public class Scheduler extends Aware_Sensor {
 
                 String original_id = schedule.getScheduleID();
                 String random_seed = original_id;
-                random_seed += "-" + Aware.getSetting(context, Aware_Preferences.DEVICE_ID);
+                random_seed += "-" + Aware.getDeviceID(context);
                 // Get the random events for today
                 ArrayList<Long> randoms = random_times(start, end, random.getInt(RANDOM_TIMES), random.getInt(RANDOM_INTERVAL), random_seed);
                 // Remove events that are in the past
@@ -287,7 +287,7 @@ public class Scheduler extends Aware_Sensor {
             } else {
                 ContentValues data = new ContentValues();
                 data.put(Scheduler_Provider.Scheduler_Data.TIMESTAMP, System.currentTimeMillis());
-                data.put(Scheduler_Provider.Scheduler_Data.DEVICE_ID, Aware.getSetting(context, Aware_Preferences.DEVICE_ID));
+                data.put(Scheduler_Provider.Scheduler_Data.DEVICE_ID, Aware.getDeviceID(context));
                 data.put(Scheduler_Provider.Scheduler_Data.SCHEDULE_ID, schedule.getScheduleID());
                 data.put(Scheduler_Provider.Scheduler_Data.SCHEDULE, schedule.build().toString());
                 data.put(Scheduler_Provider.Scheduler_Data.PACKAGE_NAME, package_name);
@@ -345,7 +345,7 @@ public class Scheduler extends Aware_Sensor {
 
             String original_id = schedule.getScheduleID();
             String random_seed = original_id;
-            random_seed += "-" + Aware.getSetting(context, Aware_Preferences.DEVICE_ID);
+            random_seed += "-" + Aware.getDeviceID(context);
             ArrayList<Long> randoms = random_times(start, end, random.getInt(RANDOM_TIMES), random.getInt(RANDOM_INTERVAL), random_seed);
 
             long max = getLastRandom(randoms);
@@ -366,7 +366,7 @@ public class Scheduler extends Aware_Sensor {
 
                 ContentValues data = new ContentValues();
                 data.put(Scheduler_Provider.Scheduler_Data.TIMESTAMP, System.currentTimeMillis());
-                data.put(Scheduler_Provider.Scheduler_Data.DEVICE_ID, Aware.getSetting(context, Aware_Preferences.DEVICE_ID));
+                data.put(Scheduler_Provider.Scheduler_Data.DEVICE_ID, Aware.getDeviceID(context));
                 data.put(Scheduler_Provider.Scheduler_Data.SCHEDULE_ID, newSchedule.getScheduleID());
                 data.put(Scheduler_Provider.Scheduler_Data.SCHEDULE, newSchedule.build().toString());
                 data.put(Scheduler_Provider.Scheduler_Data.PACKAGE_NAME, context.getPackageName());

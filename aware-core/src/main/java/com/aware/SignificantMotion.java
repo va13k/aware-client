@@ -90,7 +90,7 @@ public class SignificantMotion extends Aware_Sensor implements SensorEventListen
             @Override
             public void onContext() {
                 ContentValues rowData = new ContentValues();
-                rowData.put(Significant_Provider.Significant_Data.DEVICE_ID, Aware.getSetting(getApplicationContext(), Aware_Preferences.DEVICE_ID));
+                rowData.put(Significant_Provider.Significant_Data.DEVICE_ID, Aware.getDeviceID(getApplicationContext()));
                 rowData.put(Significant_Provider.Significant_Data.TIMESTAMP, System.currentTimeMillis());
                 rowData.put(Significant_Provider.Significant_Data.IS_MOVING, CURRENT_SIGMOTION_STATE);
                 getContentResolver().insert(Significant_Provider.Significant_Data.CONTENT_URI, rowData);

@@ -388,7 +388,7 @@ public class ESM extends Aware_Sensor {
 
                 ContentValues rowData = new ContentValues();
                 rowData.put(ESM_Data.TIMESTAMP, esm_timestamp + i); //fix issue with synching and support ordering
-                rowData.put(ESM_Data.DEVICE_ID, Aware.getSetting(context, Aware_Preferences.DEVICE_ID));
+                rowData.put(ESM_Data.DEVICE_ID, Aware.getDeviceID(context));
                 rowData.put(ESM_Data.JSON, esm.toString());
                 rowData.put(ESM_Data.EXPIRATION_THRESHOLD, esm.optInt(ESM_Data.EXPIRATION_THRESHOLD)); //optional, defaults to 0
                 rowData.put(ESM_Data.NOTIFICATION_TIMEOUT, esm.optInt(ESM_Data.NOTIFICATION_TIMEOUT)); //optional, defaults to 0
@@ -674,7 +674,7 @@ public class ESM extends Aware_Sensor {
                         //Queued ESM
                         ContentValues rowData = new ContentValues();
                         rowData.put(ESM_Data.TIMESTAMP, System.currentTimeMillis()); //fixed issue with synching and support ordering of esms by timestamp
-                        rowData.put(ESM_Data.DEVICE_ID, Aware.getSetting(context, Aware_Preferences.DEVICE_ID));
+                        rowData.put(ESM_Data.DEVICE_ID, Aware.getDeviceID(context));
                         rowData.put(ESM_Data.JSON, nextESM.toString());
                         rowData.put(ESM_Data.EXPIRATION_THRESHOLD, nextESM.optInt(ESM_Data.EXPIRATION_THRESHOLD)); //optional, defaults to 0
                         rowData.put(ESM_Data.NOTIFICATION_TIMEOUT, nextESM.optInt(ESM_Data.NOTIFICATION_TIMEOUT)); //optional, defaults to 0
@@ -689,7 +689,7 @@ public class ESM extends Aware_Sensor {
                         //Branched ESM
                         ContentValues rowData = new ContentValues();
                         rowData.put(ESM_Data.TIMESTAMP, System.currentTimeMillis()); //fixed issue with synching and support ordering of esms by timestamp
-                        rowData.put(ESM_Data.DEVICE_ID, Aware.getSetting(context, Aware_Preferences.DEVICE_ID));
+                        rowData.put(ESM_Data.DEVICE_ID, Aware.getDeviceID(context));
                         rowData.put(ESM_Data.JSON, nextESM.toString());
                         rowData.put(ESM_Data.EXPIRATION_THRESHOLD, nextESM.optInt(ESM_Data.EXPIRATION_THRESHOLD)); //optional, defaults to 0
                         rowData.put(ESM_Data.NOTIFICATION_TIMEOUT, nextESM.optInt(ESM_Data.NOTIFICATION_TIMEOUT)); //optional, defaults to 0

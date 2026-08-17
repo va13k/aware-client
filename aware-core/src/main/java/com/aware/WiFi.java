@@ -204,7 +204,7 @@ public class WiFi extends Aware_Sensor {
         @Override
         public String call() throws Exception {
             ContentValues rowData = new ContentValues();
-            rowData.put(WiFi_Sensor.DEVICE_ID, Aware.getSetting(mContext, Aware_Preferences.DEVICE_ID));
+            rowData.put(WiFi_Sensor.DEVICE_ID, Aware.getDeviceID(mContext));
             rowData.put(WiFi_Sensor.TIMESTAMP, System.currentTimeMillis());
             rowData.put(WiFi_Sensor.MAC_ADDRESS, Encrypter.hashMac(mContext, mWifi.getMacAddress()));
             rowData.put(WiFi_Sensor.BSSID, Encrypter.hashMac(mContext, mWifi.getBSSID()));
@@ -248,7 +248,7 @@ public class WiFi extends Aware_Sensor {
 
             for (ScanResult ap : mAPS) {
                 ContentValues rowData = new ContentValues();
-                rowData.put(WiFi_Data.DEVICE_ID, Aware.getSetting(mContext, Aware_Preferences.DEVICE_ID));
+                rowData.put(WiFi_Data.DEVICE_ID, Aware.getDeviceID(mContext));
                 rowData.put(WiFi_Data.TIMESTAMP, currentScan);
                 rowData.put(WiFi_Data.BSSID, Encrypter.hashMac(mContext, ap.BSSID));
                 rowData.put(WiFi_Data.SSID, Encrypter.hashSsid(mContext, ap.SSID));
@@ -321,7 +321,7 @@ public class WiFi extends Aware_Sensor {
                             }
 
                             ContentValues rowData = new ContentValues();
-                            rowData.put(WiFi_Data.DEVICE_ID, Aware.getSetting(getApplicationContext(), Aware_Preferences.DEVICE_ID));
+                            rowData.put(WiFi_Data.DEVICE_ID, Aware.getDeviceID(getApplicationContext()));
                             rowData.put(WiFi_Data.TIMESTAMP, System.currentTimeMillis());
                             rowData.put(WiFi_Data.LABEL, "disabled");
 
@@ -339,7 +339,7 @@ public class WiFi extends Aware_Sensor {
                         }
 
                         ContentValues rowData = new ContentValues();
-                        rowData.put(WiFi_Data.DEVICE_ID, Aware.getSetting(getApplicationContext(), Aware_Preferences.DEVICE_ID));
+                        rowData.put(WiFi_Data.DEVICE_ID, Aware.getDeviceID(getApplicationContext()));
                         rowData.put(WiFi_Data.TIMESTAMP, System.currentTimeMillis());
                         rowData.put(WiFi_Data.LABEL, "disabled");
 

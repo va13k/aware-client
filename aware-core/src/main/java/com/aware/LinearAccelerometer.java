@@ -130,7 +130,7 @@ public class LinearAccelerometer extends Aware_Sensor implements SensorEventList
         LAST_VALUES = new Float[]{event.values[0], event.values[1], event.values[2]};
 
         ContentValues rowData = new ContentValues();
-        rowData.put(Linear_Accelerometer_Data.DEVICE_ID, Aware.getSetting(getApplicationContext(), Aware_Preferences.DEVICE_ID));
+        rowData.put(Linear_Accelerometer_Data.DEVICE_ID, Aware.getDeviceID(getApplicationContext()));
         rowData.put(Linear_Accelerometer_Data.TIMESTAMP, TS);
         rowData.put(Linear_Accelerometer_Data.VALUES_0, event.values[0]);
         rowData.put(Linear_Accelerometer_Data.VALUES_1, event.values[1]);
@@ -206,7 +206,7 @@ public class LinearAccelerometer extends Aware_Sensor implements SensorEventList
         Cursor accelInfo = getContentResolver().query(Linear_Accelerometer_Sensor.CONTENT_URI, null, null, null, null);
         if (accelInfo == null || !accelInfo.moveToFirst()) {
             ContentValues rowData = new ContentValues();
-            rowData.put(Linear_Accelerometer_Sensor.DEVICE_ID, Aware.getSetting(getApplicationContext(), Aware_Preferences.DEVICE_ID));
+            rowData.put(Linear_Accelerometer_Sensor.DEVICE_ID, Aware.getDeviceID(getApplicationContext()));
             rowData.put(Linear_Accelerometer_Sensor.TIMESTAMP, System.currentTimeMillis());
             rowData.put(Linear_Accelerometer_Sensor.MAXIMUM_RANGE, acc.getMaximumRange());
             rowData.put(Linear_Accelerometer_Sensor.MINIMUM_DELAY, acc.getMinDelay());

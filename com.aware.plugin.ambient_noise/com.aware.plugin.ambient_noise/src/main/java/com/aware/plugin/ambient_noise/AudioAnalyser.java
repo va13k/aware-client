@@ -15,7 +15,6 @@ import android.os.Build;
 import android.util.Log;
 
 import com.aware.Aware;
-import com.aware.Aware_Preferences;
 
 import java.io.File;
 import java.nio.ByteBuffer;
@@ -115,7 +114,7 @@ public class AudioAnalyser extends IntentService {
 
                 ContentValues data = new ContentValues();
                 data.put(Provider.AmbientNoise_Data.TIMESTAMP, System.currentTimeMillis());
-                data.put(Provider.AmbientNoise_Data.DEVICE_ID, Aware.getSetting(getApplicationContext(), Aware_Preferences.DEVICE_ID));
+                data.put(Provider.AmbientNoise_Data.DEVICE_ID, Aware.getDeviceID(getApplicationContext()));
                 data.put(Provider.AmbientNoise_Data.FREQUENCY, sound_frequency);
                 data.put(Provider.AmbientNoise_Data.DECIBELS, sound_db);
                 data.put(Provider.AmbientNoise_Data.RMS, sound_rms);

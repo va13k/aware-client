@@ -100,7 +100,7 @@ public class Proximity extends Aware_Sensor implements SensorEventListener {
         LAST_VALUE = event.values[0];
 
         ContentValues rowData = new ContentValues();
-        rowData.put(Proximity_Data.DEVICE_ID, Aware.getSetting(getApplicationContext(), Aware_Preferences.DEVICE_ID));
+        rowData.put(Proximity_Data.DEVICE_ID, Aware.getDeviceID(getApplicationContext()));
         rowData.put(Proximity_Data.TIMESTAMP, TS);
         rowData.put(Proximity_Data.PROXIMITY, event.values[0]);
         rowData.put(Proximity_Data.ACCURACY, event.accuracy);
@@ -173,7 +173,7 @@ public class Proximity extends Aware_Sensor implements SensorEventListener {
         Cursor sensorInfo = getContentResolver().query(Proximity_Sensor.CONTENT_URI, null, null, null, null);
         if (sensorInfo == null || !sensorInfo.moveToFirst()) {
             ContentValues rowData = new ContentValues();
-            rowData.put(Proximity_Sensor.DEVICE_ID, Aware.getSetting(getApplicationContext(), Aware_Preferences.DEVICE_ID));
+            rowData.put(Proximity_Sensor.DEVICE_ID, Aware.getDeviceID(getApplicationContext()));
             rowData.put(Proximity_Sensor.TIMESTAMP, System.currentTimeMillis());
             rowData.put(Proximity_Sensor.MAXIMUM_RANGE, sensor.getMaximumRange());
             rowData.put(Proximity_Sensor.MINIMUM_DELAY, sensor.getMinDelay());

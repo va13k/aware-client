@@ -117,7 +117,7 @@ public class StudyUtils extends IntentService {
 
                 //Request study settings
                 Hashtable<String, String> data = new Hashtable<>();
-                data.put(Aware_Preferences.DEVICE_ID, Aware.getSetting(getApplicationContext(), Aware_Preferences.DEVICE_ID));
+                data.put(Aware_Preferences.DEVICE_ID, Aware.getDeviceID(getApplicationContext()));
                 data.put("platform", "android");
                 try {
                     PackageInfo package_info = getApplicationContext().getPackageManager().getPackageInfo(getApplicationContext().getPackageName(), 0);
@@ -159,7 +159,7 @@ public class StudyUtils extends IntentService {
 
                 if (dbStudy == null || !dbStudy.moveToFirst()) {
                     ContentValues studyData = new ContentValues();
-                    studyData.put(Aware_Provider.Aware_Studies.STUDY_DEVICE_ID, Aware.getSetting(getApplicationContext(), Aware_Preferences.DEVICE_ID));
+                    studyData.put(Aware_Provider.Aware_Studies.STUDY_DEVICE_ID, Aware.getDeviceID(getApplicationContext()));
                     studyData.put(Aware_Provider.Aware_Studies.STUDY_TIMESTAMP, System.currentTimeMillis());
                     studyData.put(Aware_Provider.Aware_Studies.STUDY_JOINED, System.currentTimeMillis());
                     studyData.put(Aware_Provider.Aware_Studies.STUDY_KEY, study_id);
@@ -178,7 +178,7 @@ public class StudyUtils extends IntentService {
                 } else {
                     //User rejoined a study he was already part of. Mark as abandoned.
                     ContentValues complianceEntry = new ContentValues();
-                    complianceEntry.put(Aware_Provider.Aware_Studies.STUDY_DEVICE_ID, Aware.getSetting(getApplicationContext(), Aware_Preferences.DEVICE_ID));
+                    complianceEntry.put(Aware_Provider.Aware_Studies.STUDY_DEVICE_ID, Aware.getDeviceID(getApplicationContext()));
                     complianceEntry.put(Aware_Provider.Aware_Studies.STUDY_TIMESTAMP, System.currentTimeMillis());
                     complianceEntry.put(Aware_Provider.Aware_Studies.STUDY_KEY, dbStudy.getInt(dbStudy.getColumnIndex(Aware_Provider.Aware_Studies.STUDY_KEY)));
                     complianceEntry.put(Aware_Provider.Aware_Studies.STUDY_API, dbStudy.getString(dbStudy.getColumnIndex(Aware_Provider.Aware_Studies.STUDY_API)));
@@ -194,7 +194,7 @@ public class StudyUtils extends IntentService {
 
                     //Update the information to the latest
                     ContentValues studyData = new ContentValues();
-                    studyData.put(Aware_Provider.Aware_Studies.STUDY_DEVICE_ID, Aware.getSetting(getApplicationContext(), Aware_Preferences.DEVICE_ID));
+                    studyData.put(Aware_Provider.Aware_Studies.STUDY_DEVICE_ID, Aware.getDeviceID(getApplicationContext()));
                     studyData.put(Aware_Provider.Aware_Studies.STUDY_TIMESTAMP, System.currentTimeMillis());
                     studyData.put(Aware_Provider.Aware_Studies.STUDY_JOINED, System.currentTimeMillis());
                     studyData.put(Aware_Provider.Aware_Studies.STUDY_KEY, study_id);
@@ -285,7 +285,7 @@ public class StudyUtils extends IntentService {
     private static ContentValues complianceRow(Context context, Cursor study, String compliance) {
         ContentValues cv = new ContentValues();
         cv.put(Aware_Provider.Aware_Studies.STUDY_DEVICE_ID,
-                Aware.getSetting(context, Aware_Preferences.DEVICE_ID));
+                Aware.getDeviceID(context));
         cv.put(Aware_Provider.Aware_Studies.STUDY_TIMESTAMP, System.currentTimeMillis());
         cv.put(Aware_Provider.Aware_Studies.STUDY_KEY,
                 study.getInt(study.getColumnIndex(Aware_Provider.Aware_Studies.STUDY_KEY)));
@@ -489,7 +489,7 @@ public class StudyUtils extends IntentService {
             if (insertCompliance) {
                 try {
                     ContentValues studyData = new ContentValues();
-                    studyData.put(Aware_Provider.Aware_Studies.STUDY_DEVICE_ID, Aware.getSetting(context, Aware_Preferences.DEVICE_ID));
+                    studyData.put(Aware_Provider.Aware_Studies.STUDY_DEVICE_ID, Aware.getDeviceID(context));
                     studyData.put(Aware_Provider.Aware_Studies.STUDY_TIMESTAMP, System.currentTimeMillis());
                     studyData.put(Aware_Provider.Aware_Studies.STUDY_API, "");
                     studyData.put(Aware_Provider.Aware_Studies.STUDY_URL, webserviceServer);

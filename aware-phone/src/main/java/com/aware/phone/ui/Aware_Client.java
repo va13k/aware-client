@@ -2028,7 +2028,7 @@ private void enableAccessibilityService(final Runnable onResolved) {
 
         } else {
 
-            if (prefs.getAll().isEmpty() && Aware.getSetting(getApplicationContext(), Aware_Preferences.DEVICE_ID).length() == 0) {
+            if (prefs.getAll().isEmpty() && Aware.getDeviceID(getApplicationContext()).length() == 0) {
                 PreferenceManager.setDefaultValues(getApplicationContext(), "com.aware.phone", Context.MODE_PRIVATE, R.xml.aware_preferences, true);
                 prefs.edit().commit();
             } else {
@@ -2048,7 +2048,7 @@ private void enableAccessibilityService(final Runnable onResolved) {
                 }
             }
 
-            if (Aware.getSetting(getApplicationContext(), Aware_Preferences.DEVICE_ID).length() == 0) {
+            if (Aware.getDeviceID(getApplicationContext()).length() == 0) {
                 UUID uuid = UUID.randomUUID();
                 Aware.setSetting(getApplicationContext(), Aware_Preferences.DEVICE_ID, uuid.toString(), "com.aware.phone");
             }
