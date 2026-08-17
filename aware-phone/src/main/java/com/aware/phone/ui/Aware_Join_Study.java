@@ -258,7 +258,7 @@ public class Aware_Join_Study extends Aware_Activity {
                 if (dbStudy != null && dbStudy.moveToFirst()) {
                     ContentValues complianceEntry = new ContentValues();
                     complianceEntry.put(Aware_Provider.Aware_Studies.STUDY_TIMESTAMP, System.currentTimeMillis());
-                    complianceEntry.put(Aware_Provider.Aware_Studies.STUDY_DEVICE_ID, Aware.getSetting(getApplicationContext(), Aware_Preferences.DEVICE_ID));
+                    complianceEntry.put(Aware_Provider.Aware_Studies.STUDY_DEVICE_ID, Aware.getDeviceID(getApplicationContext()));
                     complianceEntry.put(Aware_Provider.Aware_Studies.STUDY_KEY, dbStudy.getInt(dbStudy.getColumnIndex(Aware_Provider.Aware_Studies.STUDY_KEY)));
                     complianceEntry.put(Aware_Provider.Aware_Studies.STUDY_API, dbStudy.getString(dbStudy.getColumnIndex(Aware_Provider.Aware_Studies.STUDY_API)));
                     complianceEntry.put(Aware_Provider.Aware_Studies.STUDY_URL, dbStudy.getString(dbStudy.getColumnIndex(Aware_Provider.Aware_Studies.STUDY_URL)));
@@ -289,7 +289,7 @@ public class Aware_Join_Study extends Aware_Activity {
                                 if (dbStudy != null && dbStudy.moveToFirst()) {
                                     complianceEntry = new ContentValues();
                                     complianceEntry.put(Aware_Provider.Aware_Studies.STUDY_TIMESTAMP, System.currentTimeMillis());
-                                    complianceEntry.put(Aware_Provider.Aware_Studies.STUDY_DEVICE_ID, Aware.getSetting(getApplicationContext(), Aware_Preferences.DEVICE_ID));
+                                    complianceEntry.put(Aware_Provider.Aware_Studies.STUDY_DEVICE_ID, Aware.getDeviceID(getApplicationContext()));
                                     complianceEntry.put(Aware_Provider.Aware_Studies.STUDY_KEY, dbStudy.getInt(dbStudy.getColumnIndex(Aware_Provider.Aware_Studies.STUDY_KEY)));
                                     complianceEntry.put(Aware_Provider.Aware_Studies.STUDY_API, dbStudy.getString(dbStudy.getColumnIndex(Aware_Provider.Aware_Studies.STUDY_API)));
                                     complianceEntry.put(Aware_Provider.Aware_Studies.STUDY_URL, dbStudy.getString(dbStudy.getColumnIndex(Aware_Provider.Aware_Studies.STUDY_URL)));
@@ -317,7 +317,7 @@ public class Aware_Join_Study extends Aware_Activity {
                                 if (dbStudy != null && dbStudy.moveToFirst()) {
                                     ContentValues complianceEntry = new ContentValues();
                                     complianceEntry.put(Aware_Provider.Aware_Studies.STUDY_TIMESTAMP, System.currentTimeMillis());
-                                    complianceEntry.put(Aware_Provider.Aware_Studies.STUDY_DEVICE_ID, Aware.getSetting(getApplicationContext(), Aware_Preferences.DEVICE_ID));
+                                    complianceEntry.put(Aware_Provider.Aware_Studies.STUDY_DEVICE_ID, Aware.getDeviceID(getApplicationContext()));
                                     complianceEntry.put(Aware_Provider.Aware_Studies.STUDY_KEY, dbStudy.getInt(dbStudy.getColumnIndex(Aware_Provider.Aware_Studies.STUDY_KEY)));
                                     complianceEntry.put(Aware_Provider.Aware_Studies.STUDY_API, dbStudy.getString(dbStudy.getColumnIndex(Aware_Provider.Aware_Studies.STUDY_API)));
                                     complianceEntry.put(Aware_Provider.Aware_Studies.STUDY_URL, dbStudy.getString(dbStudy.getColumnIndex(Aware_Provider.Aware_Studies.STUDY_URL)));
@@ -423,7 +423,7 @@ public class Aware_Join_Study extends Aware_Activity {
 
                     if (dbStudy == null || !dbStudy.moveToFirst()) {
                         ContentValues studyData = new ContentValues();
-                        studyData.put(Aware_Provider.Aware_Studies.STUDY_DEVICE_ID, Aware.getSetting(getApplicationContext(), Aware_Preferences.DEVICE_ID));
+                        studyData.put(Aware_Provider.Aware_Studies.STUDY_DEVICE_ID, Aware.getDeviceID(getApplicationContext()));
                         studyData.put(Aware_Provider.Aware_Studies.STUDY_TIMESTAMP, System.currentTimeMillis());
                         studyData.put(Aware_Provider.Aware_Studies.STUDY_API, study_api_key);
                         studyData.put(Aware_Provider.Aware_Studies.STUDY_URL, study_url);
@@ -441,7 +441,7 @@ public class Aware_Join_Study extends Aware_Activity {
                     } else {
                         //Update the information to the latest
                         ContentValues studyData = new ContentValues();
-                        studyData.put(Aware_Provider.Aware_Studies.STUDY_DEVICE_ID, Aware.getSetting(getApplicationContext(), Aware_Preferences.DEVICE_ID));
+                        studyData.put(Aware_Provider.Aware_Studies.STUDY_DEVICE_ID, Aware.getDeviceID(getApplicationContext()));
                         studyData.put(Aware_Provider.Aware_Studies.STUDY_TIMESTAMP, System.currentTimeMillis());
                         studyData.put(Aware_Provider.Aware_Studies.STUDY_JOINED, 0);
                         studyData.put(Aware_Provider.Aware_Studies.STUDY_EXIT, 0);

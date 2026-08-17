@@ -66,7 +66,7 @@ public class Traffic extends Aware_Sensor {
 
             ContentValues wifi = new ContentValues();
             wifi.put(Traffic_Data.TIMESTAMP, System.currentTimeMillis());
-            wifi.put(Traffic_Data.DEVICE_ID, Aware.getSetting(getApplicationContext(), Aware_Preferences.DEVICE_ID));
+            wifi.put(Traffic_Data.DEVICE_ID, Aware.getDeviceID(getApplicationContext()));
             wifi.put(Traffic_Data.NETWORK_TYPE, NETWORK_TYPE_WIFI);
             wifi.put(Traffic_Data.RECEIVED_BYTES, d_wifiRxBytes);
             wifi.put(Traffic_Data.SENT_BYTES, d_wifiTxBytes);
@@ -80,7 +80,7 @@ public class Traffic extends Aware_Sensor {
 
             ContentValues network = new ContentValues();
             network.put(Traffic_Data.TIMESTAMP, System.currentTimeMillis());
-            network.put(Traffic_Data.DEVICE_ID, Aware.getSetting(getApplicationContext(), Aware_Preferences.DEVICE_ID));
+            network.put(Traffic_Data.DEVICE_ID, Aware.getDeviceID(getApplicationContext()));
             network.put(Traffic_Data.NETWORK_TYPE, NETWORK_TYPE_MOBILE);
             network.put(Traffic_Data.RECEIVED_BYTES, d_mobileRxBytes);
             network.put(Traffic_Data.SENT_BYTES, d_mobileTxBytes);

@@ -75,7 +75,7 @@ public class Locations extends Aware_Sensor implements LocationListener {
                     if (bestLocation != null) {
                         ContentValues rowData = new ContentValues();
                         rowData.put(Locations_Data.TIMESTAMP, System.currentTimeMillis());
-                        rowData.put(Locations_Data.DEVICE_ID, Aware.getSetting(getApplicationContext(), Aware_Preferences.DEVICE_ID));
+                        rowData.put(Locations_Data.DEVICE_ID, Aware.getDeviceID(getApplicationContext()));
                         rowData.put(Locations_Data.PROVIDER, bestLocation.getProvider());
                         if (permitted) {
                             rowData.put(Locations_Data.LATITUDE, bestLocation.getLatitude());
@@ -354,7 +354,7 @@ public class Locations extends Aware_Sensor implements LocationListener {
                 } else {
                     ContentValues rowData = new ContentValues();
                     rowData.put(Locations_Data.TIMESTAMP, System.currentTimeMillis());
-                    rowData.put(Locations_Data.DEVICE_ID, Aware.getSetting(getApplicationContext(), Aware_Preferences.DEVICE_ID));
+                    rowData.put(Locations_Data.DEVICE_ID, Aware.getDeviceID(getApplicationContext()));
                     rowData.put(Locations_Data.PROVIDER, LocationManager.GPS_PROVIDER);
                     rowData.put(Locations_Data.LABEL, "disabled");
                     try {
@@ -383,7 +383,7 @@ public class Locations extends Aware_Sensor implements LocationListener {
                 } else {
                     ContentValues rowData = new ContentValues();
                     rowData.put(Locations_Data.TIMESTAMP, System.currentTimeMillis());
-                    rowData.put(Locations_Data.DEVICE_ID, Aware.getSetting(getApplicationContext(), Aware_Preferences.DEVICE_ID));
+                    rowData.put(Locations_Data.DEVICE_ID, Aware.getDeviceID(getApplicationContext()));
                     rowData.put(Locations_Data.PROVIDER, LocationManager.NETWORK_PROVIDER);
                     rowData.put(Locations_Data.LABEL, "disabled");
                     try {
@@ -413,7 +413,7 @@ public class Locations extends Aware_Sensor implements LocationListener {
                 } else {
                     ContentValues rowData = new ContentValues();
                     rowData.put(Locations_Data.TIMESTAMP, System.currentTimeMillis());
-                    rowData.put(Locations_Data.DEVICE_ID, Aware.getSetting(getApplicationContext(), Aware_Preferences.DEVICE_ID));
+                    rowData.put(Locations_Data.DEVICE_ID, Aware.getDeviceID(getApplicationContext()));
                     rowData.put(Locations_Data.PROVIDER, LocationManager.PASSIVE_PROVIDER);
                     rowData.put(Locations_Data.LABEL, "disabled");
                     try {
@@ -496,7 +496,7 @@ public class Locations extends Aware_Sensor implements LocationListener {
 
             ContentValues rowData = new ContentValues();
             rowData.put(Locations_Data.TIMESTAMP, System.currentTimeMillis());
-            rowData.put(Locations_Data.DEVICE_ID, Aware.getSetting(getApplicationContext(), Aware_Preferences.DEVICE_ID));
+            rowData.put(Locations_Data.DEVICE_ID, Aware.getDeviceID(getApplicationContext()));
             rowData.put(Locations_Data.PROVIDER, LocationManager.GPS_PROVIDER);
             rowData.put(Locations_Data.LABEL, "disabled");
             getContentResolver().insert(Locations_Data.CONTENT_URI, rowData);
@@ -508,7 +508,7 @@ public class Locations extends Aware_Sensor implements LocationListener {
 
             ContentValues rowData = new ContentValues();
             rowData.put(Locations_Data.TIMESTAMP, System.currentTimeMillis());
-            rowData.put(Locations_Data.DEVICE_ID, Aware.getSetting(getApplicationContext(), Aware_Preferences.DEVICE_ID));
+            rowData.put(Locations_Data.DEVICE_ID, Aware.getDeviceID(getApplicationContext()));
             rowData.put(Locations_Data.PROVIDER, LocationManager.NETWORK_PROVIDER);
             rowData.put(Locations_Data.LABEL, "disabled");
             getContentResolver().insert(Locations_Data.CONTENT_URI, rowData);
@@ -526,7 +526,7 @@ public class Locations extends Aware_Sensor implements LocationListener {
 
             ContentValues rowData = new ContentValues();
             rowData.put(Locations_Data.TIMESTAMP, System.currentTimeMillis());
-            rowData.put(Locations_Data.DEVICE_ID, Aware.getSetting(getApplicationContext(), Aware_Preferences.DEVICE_ID));
+            rowData.put(Locations_Data.DEVICE_ID, Aware.getDeviceID(getApplicationContext()));
             rowData.put(Locations_Data.PROVIDER, LocationManager.GPS_PROVIDER);
             rowData.put(Locations_Data.LABEL, "enabled");
             getContentResolver().insert(Locations_Data.CONTENT_URI, rowData);
@@ -538,7 +538,7 @@ public class Locations extends Aware_Sensor implements LocationListener {
 
             ContentValues rowData = new ContentValues();
             rowData.put(Locations_Data.TIMESTAMP, System.currentTimeMillis());
-            rowData.put(Locations_Data.DEVICE_ID, Aware.getSetting(getApplicationContext(), Aware_Preferences.DEVICE_ID));
+            rowData.put(Locations_Data.DEVICE_ID, Aware.getDeviceID(getApplicationContext()));
             rowData.put(Locations_Data.PROVIDER, LocationManager.NETWORK_PROVIDER);
             rowData.put(Locations_Data.LABEL, "enabled");
             getContentResolver().insert(Locations_Data.CONTENT_URI, rowData);
@@ -610,7 +610,7 @@ public class Locations extends Aware_Sensor implements LocationListener {
 
         ContentValues rowData = new ContentValues();
         rowData.put(Locations_Data.TIMESTAMP, System.currentTimeMillis());
-        rowData.put(Locations_Data.DEVICE_ID, Aware.getSetting(getApplicationContext(), Aware_Preferences.DEVICE_ID));
+        rowData.put(Locations_Data.DEVICE_ID, Aware.getDeviceID(getApplicationContext()));
         rowData.put(Locations_Data.PROVIDER, bestLocation.getProvider());
         if (permitted) {
             rowData.put(Locations_Data.LATITUDE, bestLocation.getLatitude());

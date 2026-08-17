@@ -81,7 +81,7 @@ public class Processor extends Aware_Sensor {
 
             ContentValues rowData = new ContentValues();
             rowData.put(Processor_Data.TIMESTAMP, System.currentTimeMillis());
-            rowData.put(Processor_Data.DEVICE_ID, Aware.getSetting(getApplicationContext(), Aware_Preferences.DEVICE_ID));
+            rowData.put(Processor_Data.DEVICE_ID, Aware.getDeviceID(getApplicationContext()));
             rowData.put(Processor_Data.LAST_USER, processorNow.get("user"));
             rowData.put(Processor_Data.LAST_SYSTEM, processorNow.get("system"));
             rowData.put(Processor_Data.LAST_IDLE, processorNow.get("idle"));

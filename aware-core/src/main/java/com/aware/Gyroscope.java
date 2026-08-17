@@ -136,7 +136,7 @@ public class Gyroscope extends Aware_Sensor implements SensorEventListener {
 
         // Proceed with saving as usual.
         ContentValues rowData = new ContentValues();
-        rowData.put(Gyroscope_Data.DEVICE_ID, Aware.getSetting(getApplicationContext(), Aware_Preferences.DEVICE_ID));
+        rowData.put(Gyroscope_Data.DEVICE_ID, Aware.getDeviceID(getApplicationContext()));
         rowData.put(Gyroscope_Data.TIMESTAMP, TS);
         rowData.put(Gyroscope_Data.VALUES_0, event.values[0]);
         rowData.put(Gyroscope_Data.VALUES_1, event.values[1]);
@@ -211,7 +211,7 @@ public class Gyroscope extends Aware_Sensor implements SensorEventListener {
         Cursor gyroInfo = getContentResolver().query(Gyroscope_Sensor.CONTENT_URI, null, null, null, null);
         if (gyroInfo == null || !gyroInfo.moveToFirst()) {
             ContentValues rowData = new ContentValues();
-            rowData.put(Gyroscope_Sensor.DEVICE_ID, Aware.getSetting(getApplicationContext(), Aware_Preferences.DEVICE_ID));
+            rowData.put(Gyroscope_Sensor.DEVICE_ID, Aware.getDeviceID(getApplicationContext()));
             rowData.put(Gyroscope_Sensor.TIMESTAMP, System.currentTimeMillis());
             rowData.put(Gyroscope_Sensor.MAXIMUM_RANGE, gyro.getMaximumRange());
             rowData.put(Gyroscope_Sensor.MINIMUM_DELAY, gyro.getMinDelay());

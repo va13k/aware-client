@@ -33,15 +33,14 @@ import androidx.core.app.NotificationCompat;
 import com.aware.providers.ScreenShot_Provider;
 import com.aware.providers.ScreenText_Provider;
 import com.aware.utils.Aware_Sensor;
+import com.aware.utils.UtcTime;
 import java.io.ByteArrayOutputStream;
 import java.io.File;
 import java.io.FileOutputStream;
 import java.io.IOException;
 import java.nio.ByteBuffer;
-import java.text.SimpleDateFormat;
 import java.util.ArrayList;
 import java.util.List;
-import java.util.Locale;
 
 public class ScreenShot extends Aware_Sensor {
     public static final String CAPTURE_TIME_INTERVAL = "capture_time_interval";
@@ -395,7 +394,7 @@ public class ScreenShot extends Aware_Sensor {
         }
 
 
-        String formattedTimestamp = new SimpleDateFormat("yyyyMMdd_HHmmss", Locale.US).format(timestamp);
+        String formattedTimestamp = UtcTime.fileStamp(timestamp);
         File path = new File(downloadsDirectory, "screenshot_" + formattedTimestamp + ".jpg");
         try (FileOutputStream fos = new FileOutputStream(path)) {
             bitmap.compress(Bitmap.CompressFormat.JPEG, compressionRate, fos); // Use the selected compression rate
@@ -431,7 +430,7 @@ public class ScreenShot extends Aware_Sensor {
     private void storeScreenshotMetadata(byte[] imageData, long timestamp) {
         ContentValues values = new ContentValues();
         values.put(ScreenShot_Provider.ScreenshotData.TIMESTAMP, timestamp);
-        values.put(ScreenShot_Provider.ScreenshotData.DEVICE_ID, Aware.getSetting(getApplicationContext(), Aware_Preferences.DEVICE_ID));
+        values.put(ScreenShot_Provider.ScreenshotData.DEVICE_ID, Aware.getDeviceID(getApplicationContext()));
         values.put(ScreenShot_Provider.ScreenshotData.IMAGE_DATA, imageData);
         values.put(ScreenShot_Provider.ScreenshotData.PACKAGE_NAME, foregroundApp);
         values.put(ScreenShot_Provider.ScreenshotData.APPLICATION_NAME, application_name);

@@ -107,7 +107,7 @@ public class Light extends Aware_Sensor implements SensorEventListener {
         LAST_VALUE = event.values[0];
 
         ContentValues rowData = new ContentValues();
-        rowData.put(Light_Data.DEVICE_ID, Aware.getSetting(getApplicationContext(), Aware_Preferences.DEVICE_ID));
+        rowData.put(Light_Data.DEVICE_ID, Aware.getDeviceID(getApplicationContext()));
         rowData.put(Light_Data.TIMESTAMP, TS);
         rowData.put(Light_Data.LIGHT_LUX, event.values[0]);
         rowData.put(Light_Data.ACCURACY, event.accuracy);
@@ -181,7 +181,7 @@ public class Light extends Aware_Sensor implements SensorEventListener {
         Cursor sensorInfo = getContentResolver().query(Light_Sensor.CONTENT_URI, null, null, null, null);
         if (sensorInfo == null || !sensorInfo.moveToFirst()) {
             ContentValues rowData = new ContentValues();
-            rowData.put(Light_Sensor.DEVICE_ID, Aware.getSetting(getApplicationContext(), Aware_Preferences.DEVICE_ID));
+            rowData.put(Light_Sensor.DEVICE_ID, Aware.getDeviceID(getApplicationContext()));
             rowData.put(Light_Sensor.TIMESTAMP, System.currentTimeMillis());
             rowData.put(Light_Sensor.MAXIMUM_RANGE, sensor.getMaximumRange());
             rowData.put(Light_Sensor.MINIMUM_DELAY, sensor.getMinDelay());

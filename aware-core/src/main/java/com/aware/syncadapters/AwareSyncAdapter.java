@@ -21,6 +21,7 @@ import com.aware.Aware;
 import com.aware.Aware_Preferences;
 import com.aware.R;
 import com.aware.providers.Aware_Provider;
+import com.aware.utils.DeviceId;
 import com.aware.utils.Http;
 import com.aware.utils.Https;
 import com.aware.utils.Jdbc;
@@ -107,6 +108,17 @@ public class AwareSyncAdapter extends AbstractThreadedSyncAdapter {
             return;
         }
 
+        // Nothing uploads without an identity to attribute it to. syncBatch() repairs a row stored
+        // before the UUID resolved, but only when it has one to repair it with -- so this is the case
+        // that repair cannot cover, refused here rather than left to the payload. An install with no
+        // UUID has also never joined a study, so in practice offloadData() already returns on the
+        // empty webservice address; stating the rule here is what stops that staying true by
+        // coincidence.
+        if (DeviceId.trimToEmpty(Aware.getDeviceID(mContext)).isEmpty()) {
+            Log.w(Aware.TAG, "Skipping data sync: this install has no device_id yet, so no row can be attributed.");
+            return;
+        }
+
         if (!Aware.getSetting(mContext, Aware_Preferences.WEBSERVICE_SILENT).equals("true"))
             notManager = (NotificationManager) mContext.getSystemService(Context.NOTIFICATION_SERVICE);
 
@@ -167,7 +179,7 @@ public class AwareSyncAdapter extends AbstractThreadedSyncAdapter {
         if (Aware.DEBUG)
             Log.d(Aware.TAG, "Syncing " + database_table + " to: " + web_server + " in batches of " + MAX_POST_SIZE);
 
-        String device_id = Aware.getSetting(context, Aware_Preferences.DEVICE_ID);
+        String device_id = Aware.getDeviceID(context);
         boolean DEBUG = Aware.getSetting(context, Aware_Preferences.DEBUG_FLAG).equals("true");
 
         try {
@@ -641,6 +653,15 @@ public class AwareSyncAdapter extends AbstractThreadedSyncAdapter {
                         String str = "";
                         if (!context_data.isNull(context_data.getColumnIndex(c_name))) { // Fixes nulls and batch inserts not being possible
                             str = context_data.getString(context_data.getColumnIndex(c_name));
+                        }
+                        // Last line of defence for a row stored before device_id could be resolved.
+                        // Uploading it blank puts a row on the server that no participant can be
+                        // matched to, and the stored copy is the only place left to repair it from.
+                        if (c_name.equals("device_id") && DeviceId.trimToEmpty(str).isEmpty()
+                                && !DeviceId.trimToEmpty(DEVICE_ID).isEmpty()) {
+                            str = DEVICE_ID;
+                            if (DEBUG) Log.d(Aware.TAG, DATABASE_TABLE
+                                    + ": stamped a row that had no device_id before uploading it");
                         }
                         row.put(c_name, str);
                         rowBytes += SyncBatchBudget.columnBytes(c_name, str.length());

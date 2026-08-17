@@ -171,7 +171,7 @@ public class Aware_QRCode extends Aware_Activity implements ZBarScannerView.Resu
 
                         //Automatically register this device on the study and create credentials for this device ID!
                         Hashtable<String, String> data = new Hashtable<>();
-                        data.put(Aware_Preferences.DEVICE_ID, Aware.getSetting(getApplicationContext(), Aware_Preferences.DEVICE_ID));
+                        data.put(Aware_Preferences.DEVICE_ID, Aware.getDeviceID(getApplicationContext()));
                         data.put("platform", "android");
                         try {
                             PackageInfo package_info = getApplicationContext().getPackageManager().getPackageInfo(getApplicationContext().getPackageName(), 0);
@@ -252,7 +252,7 @@ public class Aware_QRCode extends Aware_Activity implements ZBarScannerView.Resu
 
                     if (dbStudy == null || !dbStudy.moveToFirst()) {
                         ContentValues studyData = new ContentValues();
-                        studyData.put(Aware_Provider.Aware_Studies.STUDY_DEVICE_ID, Aware.getSetting(getApplicationContext(), Aware_Preferences.DEVICE_ID));
+                        studyData.put(Aware_Provider.Aware_Studies.STUDY_DEVICE_ID, Aware.getDeviceID(getApplicationContext()));
                         studyData.put(Aware_Provider.Aware_Studies.STUDY_TIMESTAMP, System.currentTimeMillis());
                         studyData.put(Aware_Provider.Aware_Studies.STUDY_KEY, study_id);
                         studyData.put(Aware_Provider.Aware_Studies.STUDY_API, study_api_key);
@@ -270,7 +270,7 @@ public class Aware_QRCode extends Aware_Activity implements ZBarScannerView.Resu
                     } else {
                         //Update the information to the latest
                         ContentValues studyData = new ContentValues();
-                        studyData.put(Aware_Provider.Aware_Studies.STUDY_DEVICE_ID, Aware.getSetting(getApplicationContext(), Aware_Preferences.DEVICE_ID));
+                        studyData.put(Aware_Provider.Aware_Studies.STUDY_DEVICE_ID, Aware.getDeviceID(getApplicationContext()));
                         studyData.put(Aware_Provider.Aware_Studies.STUDY_TIMESTAMP, System.currentTimeMillis());
                         studyData.put(Aware_Provider.Aware_Studies.STUDY_JOINED, 0);
                         studyData.put(Aware_Provider.Aware_Studies.STUDY_EXIT, 0);

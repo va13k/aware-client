@@ -99,7 +99,7 @@ public class Timezone extends Aware_Sensor {
         lastTimezone = TimeZone.getDefault().getID();
         ContentValues rowData = new ContentValues();
         rowData.put(TimeZone_Data.TIMESTAMP, System.currentTimeMillis());
-        rowData.put(TimeZone_Data.DEVICE_ID, Aware.getSetting(getApplicationContext(), Aware_Preferences.DEVICE_ID));
+        rowData.put(TimeZone_Data.DEVICE_ID, Aware.getDeviceID(getApplicationContext()));
         rowData.put(TimeZone_Data.TIMEZONE, lastTimezone);
 
         try {

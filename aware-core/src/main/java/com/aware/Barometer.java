@@ -94,7 +94,7 @@ public class Barometer extends Aware_Sensor implements SensorEventListener {
 
         // Proceed with saving as usual.
         ContentValues rowData = new ContentValues();
-        rowData.put(Barometer_Data.DEVICE_ID, Aware.getSetting(getApplicationContext(), Aware_Preferences.DEVICE_ID));
+        rowData.put(Barometer_Data.DEVICE_ID, Aware.getDeviceID(getApplicationContext()));
         rowData.put(Barometer_Data.TIMESTAMP, TS);
         rowData.put(Barometer_Data.AMBIENT_PRESSURE, event.values[0]);
         rowData.put(Barometer_Data.ACCURACY, event.accuracy);
@@ -169,7 +169,7 @@ public class Barometer extends Aware_Sensor implements SensorEventListener {
         Cursor sensorInfo = getContentResolver().query(Barometer_Sensor.CONTENT_URI, null, null, null, null);
         if (sensorInfo == null || !sensorInfo.moveToFirst()) {
             ContentValues rowData = new ContentValues();
-            rowData.put(Barometer_Sensor.DEVICE_ID, Aware.getSetting(getApplicationContext(), Aware_Preferences.DEVICE_ID));
+            rowData.put(Barometer_Sensor.DEVICE_ID, Aware.getDeviceID(getApplicationContext()));
             rowData.put(Barometer_Sensor.TIMESTAMP, System.currentTimeMillis());
             rowData.put(Barometer_Sensor.MAXIMUM_RANGE, sensor.getMaximumRange());
             rowData.put(Barometer_Sensor.MINIMUM_DELAY, sensor.getMinDelay());

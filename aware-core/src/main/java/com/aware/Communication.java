@@ -131,7 +131,7 @@ public class Communication extends Aware_Sensor {
                             if (Aware.getSetting(getApplicationContext(), Aware_Preferences.STATUS_CALLS).equals("true")) {
                                 ContentValues received = new ContentValues();
                                 received.put(Calls_Data.TIMESTAMP, lastCall.getLong(lastCall.getColumnIndex(Calls.DATE)));
-                                received.put(Calls_Data.DEVICE_ID, Aware.getSetting(getApplicationContext(), Aware_Preferences.DEVICE_ID));
+                                received.put(Calls_Data.DEVICE_ID, Aware.getDeviceID(getApplicationContext()));
                                 received.put(Calls_Data.TYPE, Calls.INCOMING_TYPE);
                                 received.put(Calls_Data.DURATION, lastCall.getInt(lastCall.getColumnIndex(Calls.DURATION)));
                                 received.put(Calls_Data.TRACE, Encrypter.hashPhone(getApplicationContext(), lastCall.getString(lastCall.getColumnIndex(Calls.NUMBER))));
@@ -159,7 +159,7 @@ public class Communication extends Aware_Sensor {
                             if (Aware.getSetting(getApplicationContext(), Aware_Preferences.STATUS_CALLS).equals("true")) {
                                 ContentValues missed = new ContentValues();
                                 missed.put(Calls_Data.TIMESTAMP, lastCall.getLong(lastCall.getColumnIndex(Calls.DATE)));
-                                missed.put(Calls_Data.DEVICE_ID, Aware.getSetting(getApplicationContext(), Aware_Preferences.DEVICE_ID));
+                                missed.put(Calls_Data.DEVICE_ID, Aware.getDeviceID(getApplicationContext()));
                                 missed.put(Calls_Data.TYPE, Calls.MISSED_TYPE);
                                 missed.put(Calls_Data.DURATION, lastCall.getInt(lastCall.getColumnIndex(Calls.DURATION)));
                                 missed.put(Calls_Data.TRACE, Encrypter.hashPhone(getApplicationContext(), lastCall.getString(lastCall.getColumnIndex(Calls.NUMBER))));
@@ -185,7 +185,7 @@ public class Communication extends Aware_Sensor {
                             if (Aware.getSetting(getApplicationContext(), Aware_Preferences.STATUS_CALLS).equals("true")) {
                                 ContentValues outgoing = new ContentValues();
                                 outgoing.put(Calls_Data.TIMESTAMP, lastCall.getLong(lastCall.getColumnIndex(Calls.DATE)));
-                                outgoing.put(Calls_Data.DEVICE_ID, Aware.getSetting(getApplicationContext(), Aware_Preferences.DEVICE_ID));
+                                outgoing.put(Calls_Data.DEVICE_ID, Aware.getDeviceID(getApplicationContext()));
                                 outgoing.put(Calls_Data.TYPE, Calls.OUTGOING_TYPE);
                                 outgoing.put(Calls_Data.DURATION, lastCall.getInt(lastCall.getColumnIndex(Calls.DURATION)));
                                 outgoing.put(Calls_Data.TRACE, Encrypter.hashPhone(getApplicationContext(), lastCall.getString(lastCall.getColumnIndex(Calls.NUMBER))));
@@ -235,7 +235,7 @@ public class Communication extends Aware_Sensor {
                             if (Aware.getSetting(getApplicationContext(), Aware_Preferences.STATUS_MESSAGES).equals("true")) {
                                 ContentValues inbox = new ContentValues();
                                 inbox.put(Messages_Data.TIMESTAMP, lastMessage.getLong(lastMessage.getColumnIndex("date")));
-                                inbox.put(Messages_Data.DEVICE_ID, Aware.getSetting(getApplicationContext(), Aware_Preferences.DEVICE_ID));
+                                inbox.put(Messages_Data.DEVICE_ID, Aware.getDeviceID(getApplicationContext()));
                                 inbox.put(Messages_Data.TYPE, MESSAGE_INBOX);
                                 inbox.put(Messages_Data.TRACE, Encrypter.hashPhone(getApplicationContext(), lastMessage.getString(lastMessage.getColumnIndex("address"))));
 
@@ -261,7 +261,7 @@ public class Communication extends Aware_Sensor {
                             if (Aware.getSetting(getApplicationContext(), Aware_Preferences.STATUS_MESSAGES).equals("true")) {
                                 ContentValues sent = new ContentValues();
                                 sent.put(Messages_Data.TIMESTAMP, lastMessage.getLong(lastMessage.getColumnIndex("date")));
-                                sent.put(Messages_Data.DEVICE_ID, Aware.getSetting(getApplicationContext(), Aware_Preferences.DEVICE_ID));
+                                sent.put(Messages_Data.DEVICE_ID, Aware.getDeviceID(getApplicationContext()));
                                 sent.put(Messages_Data.TYPE, MESSAGE_SENT);
                                 sent.put(Messages_Data.TRACE, Encrypter.hashPhone(getApplicationContext(), lastMessage.getString(lastMessage.getColumnIndex("address"))));
 

@@ -105,7 +105,7 @@ public class Temperature extends Aware_Sensor implements SensorEventListener {
         LAST_VALUE = event.values[0];
 
         ContentValues rowData = new ContentValues();
-        rowData.put(Temperature_Data.DEVICE_ID, Aware.getSetting(getApplicationContext(), Aware_Preferences.DEVICE_ID));
+        rowData.put(Temperature_Data.DEVICE_ID, Aware.getDeviceID(getApplicationContext()));
         rowData.put(Temperature_Data.TIMESTAMP, TS);
         rowData.put(Temperature_Data.TEMPERATURE_CELSIUS, event.values[0]);
         rowData.put(Temperature_Data.ACCURACY, event.accuracy);
@@ -179,7 +179,7 @@ public class Temperature extends Aware_Sensor implements SensorEventListener {
         Cursor sensorInfo = getContentResolver().query(Temperature_Sensor.CONTENT_URI, null, null, null, null);
         if (sensorInfo == null || !sensorInfo.moveToFirst()) {
             ContentValues rowData = new ContentValues();
-            rowData.put(Temperature_Sensor.DEVICE_ID, Aware.getSetting(getApplicationContext(), Aware_Preferences.DEVICE_ID));
+            rowData.put(Temperature_Sensor.DEVICE_ID, Aware.getDeviceID(getApplicationContext()));
             rowData.put(Temperature_Sensor.TIMESTAMP, System.currentTimeMillis());
             rowData.put(Temperature_Sensor.MAXIMUM_RANGE, sensor.getMaximumRange());
             rowData.put(Temperature_Sensor.MINIMUM_DELAY, sensor.getMinDelay());
