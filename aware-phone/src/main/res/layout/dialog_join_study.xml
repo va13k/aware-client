@@ -27,6 +27,8 @@
         android:layout_marginLeft="16dp"
         android:layout_marginRight="16dp"
         android:id="@+id/et_join_study_url"
+        android:hint="Paste the study link"
+        android:inputType="textUri"
         />
 
     <TextView
