@@ -61,7 +61,11 @@ import okhttp3.Response;
  * Note: joins a study without requiring a QRCode, just the study URL
  */
 public class StudyUtils extends IntentService {
-    private static final String[] REQUIRED_STUDY_CONFIG_KEYS = {"database", "questions",
+    // "database" is not here: a study whose data goes through the webservice ships no
+    // database block at all, deliberately, so that the phone never holds a credential
+    // for a database it does not contact. It is required on the direct path only --
+    // see firstMissingRequirement.
+    private static final String[] REQUIRED_STUDY_CONFIG_KEYS = {"questions",
             "schedules", "sensors", "study_info"};
     private static final long MAX_STUDY_CONFIG_BYTES = 5L * 1024L * 1024L;
     private static final OkHttpClient STUDY_CONFIG_HTTP = new OkHttpClient.Builder()
@@ -252,8 +256,15 @@ public class StudyUtils extends IntentService {
             for (Map.Entry<String, Object> value : exitEntry.valueSet()) {
                 row.put(value.getKey(), value.getValue());
             }
-            return Jdbc.insertDataFastFail(context, "aware_studies",
-                    new JSONArray().put(row), STUDY_EXIT_UPLOAD_TIMEOUT_SECONDS);
+            // Whichever path the study uses. The server derives every enrolment window
+            // from `aware_studies`, so a study event that does not arrive leaves the
+            // window open and the participant looking like they never left.
+            JSONArray rows = new JSONArray().put(row);
+            return Webservice.enabled(context)
+                    ? Webservice.insertDataFastFail(context, "aware_studies", rows,
+                            STUDY_EXIT_UPLOAD_TIMEOUT_SECONDS)
+                    : Jdbc.insertDataFastFail(context, "aware_studies", rows,
+                            STUDY_EXIT_UPLOAD_TIMEOUT_SECONDS);
         } catch (Exception e) {
             Log.e(Aware.TAG, "Study-exit notification could not be built", e);
             return false;
@@ -350,7 +361,12 @@ public class StudyUtils extends IntentService {
                     for (Map.Entry<String, Object> e : resumedRow.valueSet()) {
                         json.put(e.getKey(), e.getValue());
                     }
-                    Jdbc.insertData(context, "aware_studies", new JSONArray().put(json));
+                    JSONArray audit = new JSONArray().put(json);
+                    if (Webservice.enabled(context)) {
+                        Webservice.insertData(context, "aware_studies", audit);
+                    } else {
+                        Jdbc.insertData(context, "aware_studies", audit);
+                    }
                 } catch (Exception e) {
                     Log.e(Aware.TAG, "Failed to upload re-auth audit row", e);
                 }
@@ -1696,6 +1712,16 @@ public class StudyUtils extends IntentService {
             return StudyConfigValidation.INVALID_CONFIG;
         }
 
+        if (usesWebservice(config)) {
+            // No credential to verify, so reachability is the whole question. A study
+            // URL that does not answer now is the same problem a rejected password
+            // would be: the participant cannot join, and telling them so at the QR
+            // code is better than a phone that collects and never delivers.
+            return Webservice.reachable(settingValue(config, "webservice_server"))
+                    ? StudyConfigValidation.OK
+                    : StudyConfigValidation.UNREACHABLE;
+        }
+
         JSONObject dbInfo = config.optJSONObject("database");
         // config_without_password=true means the config deliberately ships no password and the
         // participant supplies it; false means the config carries its own.
@@ -1765,6 +1791,14 @@ public class StudyUtils extends IntentService {
             if (!config.has(key)) return key;
         }
 
+        if (usesWebservice(config)) {
+            // The study URL is this path's whole address: the phone posts its rows to
+            // it and fetches its config from it, and there is nothing else to check.
+            return settingValue(config, "webservice_server").isEmpty()
+                    ? "webservice_server"
+                    : null;
+        }
+
         JSONObject dbInfo = config.optJSONObject("database");
         if (dbInfo == null) return "database";
 
@@ -1772,6 +1806,40 @@ public class StudyUtils extends IntentService {
             if (dbInfo.optString(field, "").isEmpty()) return field;
         }
         return null;
+    }
+
+    /**
+     * A named setting's value from a study config's sensors list, or "" when absent.
+     * Pure, so it is unit-testable.
+     */
+    static String settingValue(JSONObject config, String setting) {
+        if (config == null) return "";
+        JSONArray sensors = config.optJSONArray("sensors");
+        if (sensors == null) return "";
+        for (int i = 0; i < sensors.length(); i++) {
+            JSONObject entry = sensors.optJSONObject(i);
+            if (entry != null && setting.equals(entry.optString("setting", ""))) {
+                return entry.optString("value", "");
+            }
+        }
+        return "";
+    }
+
+    /**
+     * Whether this configuration uploads through the webservice rather than opening
+     * the database.
+     *
+     * The declared field first, then the channel setting the server derives from the
+     * same choice -- so a config written before the field existed still reads
+     * correctly, which is every config an already-enrolled phone is holding. Pure, so
+     * it is unit-testable.
+     */
+    static boolean usesWebservice(JSONObject config) {
+        if (config == null) return false;
+        String declared = config.optString("dataflow", "");
+        if ("webservice".equalsIgnoreCase(declared)) return true;
+        if ("direct".equalsIgnoreCase(declared)) return false;
+        return "true".equalsIgnoreCase(settingValue(config, "status_webservice"));
     }
 
     /**

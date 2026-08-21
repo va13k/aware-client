@@ -27,6 +27,7 @@ import com.aware.utils.Https;
 import com.aware.utils.Jdbc;
 import com.aware.utils.SSLManager;
 import com.aware.utils.SyncBatchBudget;
+import com.aware.utils.Webservice;
 import com.aware.utils.UploadHealth;
 import org.json.JSONArray;
 import org.json.JSONException;
@@ -700,14 +701,21 @@ public class AwareSyncAdapter extends AbstractThreadedSyncAdapter {
                 }
             }
 
-            boolean dataInserted = Jdbc.insertData(mContext, DATABASE_TABLE, rows);
+            // Which path carries the rows is the study's choice, and both answer the same
+            // question: did the server take them. On the webservice path the phone holds
+            // no database credential at all, which is what lets the database stay private.
+            boolean viaWebservice = Webservice.enabled(mContext);
+            boolean dataInserted = viaWebservice
+                    ? Webservice.insertData(mContext, DATABASE_TABLE, rows)
+                    : Jdbc.insertData(mContext, DATABASE_TABLE, rows);
 
-            // The database did not acknowledge the batch. Jdbc has already logged the underlying
-            // cause; unreachable server, rejected credentials and a rejected statement all arrive
-            // here alike, so this line does not guess between them.
+            // The server did not acknowledge the batch. The path taken has already logged the
+            // underlying cause; unreachable server, rejected credentials and a rejected
+            // statement all arrive here alike, so this line does not guess between them.
             if (!dataInserted) {
                 if (DEBUG) Log.d(Aware.TAG, DATABASE_TABLE + ": batch of " + rows.length()
-                        + " row(s) / ~" + (payloadBytes / 1024) + " KB was not acknowledged. See the JDBC log above.");
+                        + " row(s) / ~" + (payloadBytes / 1024) + " KB was not acknowledged. See the "
+                        + (viaWebservice ? "webservice" : "JDBC") + " log above.");
                 // Records the outage once rather than once per table per tick, and notifies the
                 // participant only if it lasts. The table name is the reason: which one first failed
                 // is the useful part, and it carries no credentials.
